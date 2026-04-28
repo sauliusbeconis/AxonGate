@@ -1,0 +1,11 @@
+{
+  "agent_name": "AxonGate",
+  "basename": "axongate.base.eth",
+  "payment_protocol": "x402-draft",
+  "supported_networks": [
+    "base-mainnet"
+  ],
+  "unit_economics": {
+    "base_fee_usdc": 0.02
+  }
+}

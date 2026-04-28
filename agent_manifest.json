@@ -1,0 +1,24 @@
+{
+    "agent_name": "AxonGate API Brokerage",
+    "sovereign_identity": "axongate.base.eth",
+    "vault_address": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
+    "network": "base-mainnet",
+    "capabilities": ["llm_inference", "data_analysis", "compute_brokerage"],
+    "protocols": {
+      "payment": "x402",
+      "minimum_viable_fee_eth": 0.0026
+    },
+    "endpoints": {
+      "compute": {
+        "url": "http://<YOUR_PUBLIC_IP_OR_DOMAIN>:8000/v1/broker/compute",
+        "method": "POST",
+        "headers_required": ["x402-token"],
+        "payload_schema": {
+          "agent_id": "string",
+          "task_payload": "object",
+          "offered_fee": "float"
+        }
+      }
+    },
+    "status": "active"
+  }
