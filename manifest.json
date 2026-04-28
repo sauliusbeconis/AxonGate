@@ -1,11 +1,101 @@
 {
+  "$schema": "https://specs.openserv.ai/v1/agent-manifest.schema.json",
   "agent_name": "AxonGate",
   "basename": "axongate.base.eth",
-  "payment_protocol": "x402-draft",
+  "payment_protocol": "x402",
   "supported_networks": [
     "base-mainnet"
   ],
+  "identity": {
+    "name": "AxonGate",
+    "basename": "axongate.base.eth",
+    "vault_address": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
+    "version": "1.1.0",
+    "status": "active"
+  },
+  "service": {
+    "name": "The Clean Context Broker",
+    "category": "Data & Context",
+    "description": "High-fidelity Web-to-Markdown Context Broker that fetches public web pages, strips HTML bloat, and returns clean, token-optimized Markdown for RAG pipelines, autonomous research agents, and LLM inference.",
+    "capabilities": [
+      "web_scraping",
+      "html_to_markdown",
+      "llm_context_preparation",
+      "rag_context_generation",
+      "autonomous_research"
+    ],
+    "input_modes": [
+      "url"
+    ],
+    "output_modes": [
+      "markdown",
+      "json"
+    ],
+    "performance_metrics": {
+      "average_latency_ms": 1500,
+      "max_token_yield": 50000,
+      "uptime_sla": "99.9%"
+    }
+  },
+  "network": {
+    "chain_id": "eip155:8453",
+    "network_name": "base-mainnet",
+    "payment_protocol": "x402",
+    "accepted_assets": {
+      "USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+    }
+  },
   "unit_economics": {
-    "base_fee_usdc": 0.02
+    "base_fee_usdc": 0.02,
+    "cost_per_request": 0.02,
+    "currency": "USDC",
+    "pricing_model": "pay-per-use",
+    "dynamic_margin_protection": true,
+    "minimum_margin_usdc": 0.01,
+    "upstream_cost_usdc": 0.0005
+  },
+  "endpoints": {
+    "access": "https://web-production-8136ee.up.railway.app/v1/access",
+    "health": "https://web-production-8136ee.up.railway.app/health",
+    "manifest": "https://web-production-8136ee.up.railway.app/manifest.json",
+    "openapi": "https://web-production-8136ee.up.railway.app/openapi.json"
+  },
+  "openapi_contract": {
+    "method": "POST",
+    "path": "/v1/access",
+    "payload_schema": {
+      "target_url": "string (valid HTTP/HTTPS URL)"
+    },
+    "required_headers": [
+      "X-AxonGate-Payment-Hash"
+    ],
+    "success_response": {
+      "status": "success",
+      "target_url": "string",
+      "markdown": "string",
+      "payment": "object",
+      "ueg_receipt": "object"
+    },
+    "response_format": "application/json",
+    "error_statuses": {
+      "400": "Invalid URL, invalid payment hash, failed payment verification, replayed payment, or UEG rejection",
+      "402": "Missing X-AxonGate-Payment-Hash header",
+      "503": "Temporary upstream, CDP, or Base RPC outage"
+    }
+  },
+  "discovery": {
+    "tags": [
+      "x402",
+      "base",
+      "usdc",
+      "web-to-markdown",
+      "rag",
+      "context-broker"
+    ],
+    "recommended_for": [
+      "autonomous agents that need clean public web context",
+      "RAG systems that need markdown extraction",
+      "LLM workflows that need token-efficient source material"
+    ]
   }
 }

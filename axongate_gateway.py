@@ -110,6 +110,13 @@ def load_vault_address() -> str:
     if env_address:
         return Web3.to_checksum_address(env_address)
 
+    manifest_path = Path(__file__).with_name("manifest.json")
+    if manifest_path.exists():
+        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_address = manifest_data.get("identity", {}).get("vault_address")
+        if manifest_address:
+            return Web3.to_checksum_address(manifest_address)
+
     manifest_path = Path(__file__).with_name("agent_manifest.json")
     if manifest_path.exists():
         manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -118,6 +125,12 @@ def load_vault_address() -> str:
             return Web3.to_checksum_address(manifest_address)
 
     raise RuntimeError("Vault address is not configured")
+
+
+def load_agent_card() -> dict[str, Any]:
+    """Load the canonical AxonGate discovery card from manifest.json."""
+    manifest_path = Path(__file__).with_name("manifest.json")
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
 def as_0x_hex(value: Any) -> str:
@@ -352,6 +365,12 @@ def retry_later_503(exc: Exception) -> HTTPException:
 @app.get("/health")
 async def health():
     return {"status": "alive", "vault_address": load_vault_address()}
+
+
+@app.get("/manifest.json")
+async def manifest():
+    """Return the full AxonGate agent card used by other agents for discovery."""
+    return load_agent_card()
 
 
 @app.post("/v1/access")
