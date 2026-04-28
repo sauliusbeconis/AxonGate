@@ -804,6 +804,22 @@ async def metrics_snapshot():
     }
 
 
+@app.get("/v1/x402/access")
+async def access_context_broker_x402_probe():
+    """
+    Return a machine-readable x402 challenge for directory probes.
+
+    The paid Clean Context Broker operation is POST-only because it requires a
+    target_url body. Some service directories probe submitted paths with GET, so
+    this companion route advertises the same payment requirements without
+    triggering upstream work or accepting payment for a body-less request.
+    """
+    inc_metric("requests_total")
+    inc_metric("payment_required_total")
+    detail = "Payment Required. Use POST with PAYMENT-SIGNATURE and a JSON target_url body."
+    raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
+
+
 @app.post("/v1/x402/access")
 async def access_context_broker_x402(
     request: Request,

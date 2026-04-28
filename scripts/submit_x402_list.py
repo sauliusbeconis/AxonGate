@@ -19,19 +19,23 @@ AXONGATE_BASE_URL = "https://web-production-8136ee.up.railway.app"
 
 def build_payload(email: str) -> dict:
     return {
-        "url": AXONGATE_BASE_URL,
+        "service_name": "AxonGate",
+        "service_url": AXONGATE_BASE_URL,
+        "website_url": f"{AXONGATE_BASE_URL}/manifest.json",
         "email": email,
-        "notes": (
+        "category": "Data",
+        "description": (
             "AxonGate is an x402-paid Clean Context Broker on Base. "
             "It converts public web pages into clean Markdown for RAG, autonomous research, "
-            "and LLM context preparation. Manifest: "
-            f"{AXONGATE_BASE_URL}/manifest.json"
+            "and LLM context preparation."
         ),
-        "endpoint_paths": [
-            "/v1/x402/access",
-            "/.well-known/x402",
-            "/discovery/resources",
-        ],
+        "endpoints": "/v1/x402/access",
+        "notes": (
+            "Basename axongate.base.eth resolves to the AxonGate vault and advertises "
+            "the manifest URL in its text records. The standard x402 endpoint supports "
+            "tiered pricing via ?tier= or X-AxonGate-Tier. Discovery metadata is available "
+            "at /.well-known/x402, /.well-known/agent.json, and /discovery/resources."
+        ),
     }
 
 
@@ -52,7 +56,7 @@ def main() -> int:
         print("\nDry run only. Add --submit to send this to x402-list.com.")
         return 0
 
-    response = httpx.post(SUBMIT_URL, json=payload, timeout=30)
+    response = httpx.post(SUBMIT_URL, data=payload, timeout=30, follow_redirects=True)
     print(f"\nHTTP {response.status_code}")
     print(response.text)
     return 0 if response.status_code in {200, 201, 202} else 1
