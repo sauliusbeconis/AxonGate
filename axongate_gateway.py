@@ -804,6 +804,7 @@ async def metrics_snapshot():
     }
 
 
+@app.head("/v1/x402/access")
 @app.get("/v1/x402/access")
 async def access_context_broker_x402_probe():
     """
