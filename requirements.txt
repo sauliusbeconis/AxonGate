@@ -4,3 +4,5 @@ cdp-sdk
 web3
 python-dotenv
 httpx
+x402
+redis

@@ -1,5 +1,7 @@
 import asyncio
 import base64
+import hashlib
+import ipaddress
 import inspect
 import json
 import os
@@ -14,7 +16,7 @@ from urllib.parse import urlparse
 import httpx
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
@@ -25,6 +27,29 @@ try:
 except ImportError:  # pragma: no cover - Railway installs cdp-sdk from requirements.txt.
     CdpClient = None
     EvmClient = None
+
+try:
+    import redis.asyncio as redis
+except ImportError:  # pragma: no cover - optional when REDIS_URL is unset.
+    redis = None
+
+try:
+    from x402.http import FacilitatorConfig, HTTPFacilitatorClient, PaymentOption
+    from x402.http.middleware.fastapi import PaymentMiddlewareASGI
+    from x402.http.types import HTTPRequestContext, RouteConfig
+    from x402.mechanisms.evm.exact import ExactEvmServerScheme
+    from x402.schemas import AssetAmount
+    from x402.server import x402ResourceServer
+except ImportError:  # pragma: no cover - Railway installs x402 from requirements.txt.
+    FacilitatorConfig = None
+    HTTPFacilitatorClient = None
+    PaymentOption = None
+    PaymentMiddlewareASGI = None
+    HTTPRequestContext = None
+    RouteConfig = None
+    ExactEvmServerScheme = None
+    AssetAmount = None
+    x402ResourceServer = None
 
 load_dotenv()
 
@@ -37,6 +62,8 @@ BASE_USDC_ADDRESS = Web3.to_checksum_address(
     os.getenv("BASE_USDC_ADDRESS", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
 )
 PAYAI_FACILITATOR_URL = os.getenv("PAYAI_FACILITATOR_URL", "https://facilitator.payai.network")
+REDIS_URL = os.getenv("REDIS_URL")
+DEFAULT_CACHE_TTL_SECONDS = int(os.getenv("AXONGATE_CACHE_TTL_SECONDS", "3600"))
 
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
@@ -45,6 +72,11 @@ JINA_TIMEOUT_SECONDS = float(os.getenv("JINA_TIMEOUT_SECONDS", "20"))
 USDC_DECIMALS = 6
 REQUIRED_USDC_FEE = Decimal(os.getenv("AXONGATE_BASE_FEE_USDC", "0.02"))
 REQUIRED_USDC_AMOUNT = int(REQUIRED_USDC_FEE * (Decimal(10) ** USDC_DECIMALS))
+TIER_PRICING_USDC = {
+    "basic": Decimal(os.getenv("AXONGATE_BASIC_PRICE_USDC", "0.02")),
+    "fresh": Decimal(os.getenv("AXONGATE_FRESH_PRICE_USDC", "0.03")),
+    "deep": Decimal(os.getenv("AXONGATE_DEEP_PRICE_USDC", "0.05")),
+}
 
 JINA_API_COST_USDC = Decimal(
     os.getenv("AXONGATE_JINA_API_COST_USDC", os.getenv("AXONGATE_FIXED_API_OVERHEAD_USDC", "0.0005"))
@@ -67,11 +99,27 @@ web3 = Web3(
 
 processed_txs: set[str] = set()
 processed_txs_lock = asyncio.Lock()
+markdown_cache: dict[str, tuple[float, str]] = {}
+markdown_cache_lock = asyncio.Lock()
+redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and REDIS_URL else None
+metrics: dict[str, int] = {
+    "requests_total": 0,
+    "legacy_access_requests_total": 0,
+    "x402_access_requests_total": 0,
+    "payment_required_total": 0,
+    "payment_verified_total": 0,
+    "jina_requests_total": 0,
+    "cache_hits_total": 0,
+    "cache_misses_total": 0,
+    "errors_total": 0,
+}
 CDP_TRANSACTION_METHOD_NAMES = ("get_transaction", "get_evm_transaction", "get_transaction_receipt")
 
 
 class AccessRequest(BaseModel):
     target_url: str = Field(..., description="HTTP or HTTPS URL to convert into clean markdown")
+    tier: str = Field("basic", description="Pricing tier: basic, fresh, or deep")
+    force_refresh: bool = Field(False, description="Bypass cache when true")
 
 
 class ComputeRequest(BaseModel):
@@ -136,13 +184,42 @@ def load_agent_card() -> dict[str, Any]:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
-def build_x402_accepts() -> list[dict[str, Any]]:
+def inc_metric(name: str, amount: int = 1) -> None:
+    metrics[name] = metrics.get(name, 0) + amount
+
+
+def normalize_tier(tier: Optional[str]) -> str:
+    normalized = (tier or "basic").strip().lower()
+    if normalized not in TIER_PRICING_USDC:
+        raise PaymentValidationError("Unsupported tier. Use basic, fresh, or deep.")
+    return normalized
+
+
+def usdc_units(amount: Decimal) -> int:
+    return int(amount * (Decimal(10) ** USDC_DECIMALS))
+
+
+def price_for_tier(tier: Optional[str]) -> Decimal:
+    return TIER_PRICING_USDC[normalize_tier(tier)]
+
+
+def cache_ttl_for_tier(tier: str, force_refresh: bool = False) -> int:
+    if force_refresh or tier == "fresh":
+        return 0
+    if tier == "deep":
+        return max(DEFAULT_CACHE_TTL_SECONDS // 2, 300)
+    return DEFAULT_CACHE_TTL_SECONDS
+
+
+def build_x402_accepts(tier: str = "basic") -> list[dict[str, Any]]:
     """Return PayAI/x402-compatible payment requirements for AxonGate."""
+    normalized_tier = normalize_tier(tier)
+    price = price_for_tier(normalized_tier)
     return [
         {
             "scheme": "exact",
             "network": "eip155:8453",
-            "amount": str(REQUIRED_USDC_AMOUNT),
+            "amount": str(usdc_units(price)),
             "asset": BASE_USDC_ADDRESS,
             "payTo": load_vault_address(),
             "maxTimeoutSeconds": 300,
@@ -150,9 +227,10 @@ def build_x402_accepts() -> list[dict[str, Any]]:
                 "name": "USDC",
                 "version": "2",
                 "decimals": USDC_DECIMALS,
-                "price": f"${REQUIRED_USDC_FEE}",
+                "price": f"${price}",
+                "tier": normalized_tier,
                 "mimeType": "application/json",
-                "resource": f"{PUBLIC_BASE_URL}/v1/access",
+                "resource": f"{PUBLIC_BASE_URL}/v1/x402/access",
                 "description": "Clean Web-to-Markdown context extraction for autonomous agents.",
             },
         }
@@ -162,7 +240,7 @@ def build_x402_accepts() -> list[dict[str, Any]]:
 def build_x402_resource() -> dict[str, Any]:
     """Build the resource object used by PayAI-style discovery endpoints."""
     return {
-        "resource": f"{PUBLIC_BASE_URL}/v1/access",
+        "resource": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "type": "http",
         "x402Version": 2,
         "method": "POST",
@@ -177,6 +255,15 @@ def build_x402_resource() -> dict[str, Any]:
             "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "facilitator": PAYAI_FACILITATOR_URL,
+            "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
+            "pricing": {
+                tier: {
+                    "amount": str(usdc_units(price)),
+                    "price": f"${price}",
+                    "currency": "USDC",
+                }
+                for tier, price in TIER_PRICING_USDC.items()
+            },
         },
         "inputSchema": {
             "type": "http",
@@ -187,6 +274,16 @@ def build_x402_resource() -> dict[str, Any]:
                     "type": "string",
                     "description": "Absolute HTTP/HTTPS URL to convert into clean markdown.",
                     "required": True,
+                },
+                "tier": {
+                    "type": "string",
+                    "description": "basic, fresh, or deep. For standard x402 payment, also pass tier as ?tier= or X-AxonGate-Tier.",
+                    "required": False,
+                },
+                "force_refresh": {
+                    "type": "boolean",
+                    "description": "Bypass cache for this request.",
+                    "required": False,
                 }
             },
         },
@@ -210,7 +307,7 @@ def build_payment_required_payload(error: str) -> dict[str, Any]:
         "x402Version": 2,
         "error": error,
         "resource": {
-            "url": f"{PUBLIC_BASE_URL}/v1/access",
+            "url": f"{PUBLIC_BASE_URL}/v1/x402/access",
             "description": "AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
             "mimeType": "application/json",
         },
@@ -219,6 +316,8 @@ def build_payment_required_payload(error: str) -> dict[str, Any]:
             "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
             "paymentHashHeader": "X-AxonGate-Payment-Hash",
+            "standardPaymentHeader": "PAYMENT-SIGNATURE",
+            "tierHeader": "X-AxonGate-Tier",
             "facilitator": PAYAI_FACILITATOR_URL,
         },
     }
@@ -233,6 +332,54 @@ def payment_required_headers(error: str) -> dict[str, str]:
         "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
         "X-AxonGate-Payment-Amount": str(REQUIRED_USDC_FEE),
     }
+
+
+def configure_standard_x402_middleware() -> None:
+    """Attach PayAI-compatible x402 settlement middleware for standard clients."""
+    if not all(
+        [
+            FacilitatorConfig,
+            HTTPFacilitatorClient,
+            PaymentOption,
+            PaymentMiddlewareASGI,
+            RouteConfig,
+            ExactEvmServerScheme,
+            x402ResourceServer,
+        ]
+    ):
+        print("[X402] Python x402 package unavailable; standard middleware disabled.")
+        return
+
+    facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=PAYAI_FACILITATOR_URL, timeout=30.0))
+    server = x402ResourceServer(facilitator)
+    server.register("eip155:8453", ExactEvmServerScheme())
+
+    routes = {
+        "POST /v1/x402/access": RouteConfig(
+            accepts=PaymentOption(
+                scheme="exact",
+                pay_to=load_vault_address(),
+                price=x402_dynamic_price,
+                network="eip155:8453",
+                max_timeout_seconds=300,
+                extra={
+                    "name": "USDC",
+                    "version": "2",
+                    "decimals": USDC_DECIMALS,
+                },
+            ),
+            resource=f"{PUBLIC_BASE_URL}/v1/x402/access",
+            description="AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
+            mime_type="application/json",
+            extensions={
+                "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
+                "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
+                "tiers": {tier: f"${price}" for tier, price in TIER_PRICING_USDC.items()},
+            },
+        )
+    }
+
+    app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
 
 def as_0x_hex(value: Any) -> str:
@@ -255,7 +402,75 @@ def validate_target_url(target_url: str) -> str:
     parsed = urlparse(target_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise PaymentValidationError("target_url must be an absolute http or https URL")
+
+    hostname = parsed.hostname or ""
+    if hostname.lower() in {"localhost", "ip6-localhost"}:
+        raise PaymentValidationError("target_url cannot point to localhost")
+
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip = None
+
+    if ip and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast):
+        raise PaymentValidationError("target_url cannot point to a private or local IP address")
+
     return target_url
+
+
+def cache_key(target_url: str, tier: str) -> str:
+    digest = hashlib.sha256(f"{tier}:{target_url}".encode("utf-8")).hexdigest()
+    return f"axongate:markdown:{digest}"
+
+
+async def get_cached_markdown(target_url: str, tier: str) -> Optional[str]:
+    key = cache_key(target_url, tier)
+
+    if redis_client:
+        return await redis_client.get(key)
+
+    async with markdown_cache_lock:
+        cached = markdown_cache.get(key)
+        if not cached:
+            return None
+        expires_at, markdown = cached
+        if expires_at <= time.time():
+            markdown_cache.pop(key, None)
+            return None
+        return markdown
+
+
+async def set_cached_markdown(target_url: str, tier: str, markdown: str, ttl_seconds: int) -> None:
+    if ttl_seconds <= 0:
+        return
+
+    key = cache_key(target_url, tier)
+
+    if redis_client:
+        await redis_client.setex(key, ttl_seconds, markdown)
+        return
+
+    async with markdown_cache_lock:
+        markdown_cache[key] = (time.time() + ttl_seconds, markdown)
+
+
+async def has_processed_tx(tx_hash: str) -> bool:
+    if redis_client:
+        return bool(await redis_client.exists(f"axongate:processed:{tx_hash}"))
+
+    async with processed_txs_lock:
+        return tx_hash in processed_txs
+
+
+async def reserve_processed_tx(tx_hash: str) -> bool:
+    if redis_client:
+        return bool(await redis_client.set(f"axongate:processed:{tx_hash}", "1", nx=True))
+
+    async with processed_txs_lock:
+        if tx_hash in processed_txs:
+            return False
+        processed_txs.add(tx_hash)
+        return True
 
 
 async def call_base_rpc(label: str, rpc_call):
@@ -342,13 +557,18 @@ async def fetch_current_base_fee_wei() -> int:
 
 async def calculate_profitability() -> UEGReceipt:
     """Calculate 0.02 USDC revenue minus live Base gas estimate and Jina cost."""
+    return await calculate_profitability_for_price(REQUIRED_USDC_FEE)
+
+
+async def calculate_profitability_for_price(revenue_usdc: Decimal) -> UEGReceipt:
+    """Calculate tier revenue minus live Base gas estimate and Jina cost."""
     base_fee_wei = await fetch_current_base_fee_wei()
     gas_cost_eth = Decimal(base_fee_wei * UEG_GAS_UNITS) / Decimal(10**18)
     dynamic_gas_cost_usdc = gas_cost_eth * ETH_USDC_PRICE
-    projected_profit = REQUIRED_USDC_FEE - (dynamic_gas_cost_usdc + JINA_API_COST_USDC)
+    projected_profit = revenue_usdc - (dynamic_gas_cost_usdc + JINA_API_COST_USDC)
 
     return UEGReceipt(
-        revenue_usdc=REQUIRED_USDC_FEE,
+        revenue_usdc=revenue_usdc,
         dynamic_gas_cost_usdc=dynamic_gas_cost_usdc,
         jina_api_cost_usdc=JINA_API_COST_USDC,
         projected_profit_usdc=projected_profit,
@@ -363,7 +583,30 @@ async def check_profitability() -> bool:
     return receipt.projected_profit_usdc > MIN_PROFIT_MARGIN_USDC
 
 
-async def verify_x402_payment(tx_hash: str) -> PaymentVerification:
+def x402_dynamic_price(context: HTTPRequestContext):
+    """Return tier-aware x402 price for PayAI middleware."""
+    tier = None
+    if context and context.adapter:
+        tier = context.adapter.get_query_param("tier") or context.adapter.get_header("x-axongate-tier")
+
+    normalized_tier = normalize_tier(tier)
+    price = price_for_tier(normalized_tier)
+    return AssetAmount(
+        amount=str(usdc_units(price)),
+        asset=BASE_USDC_ADDRESS,
+        extra={
+            "name": "USDC",
+            "version": "2",
+            "decimals": USDC_DECIMALS,
+            "tier": normalized_tier,
+        },
+    )
+
+
+configure_standard_x402_middleware()
+
+
+async def verify_x402_payment(tx_hash: str, expected_fee_usdc: Decimal = REQUIRED_USDC_FEE) -> PaymentVerification:
     """
     Verify the AxonGate x402 payment hash against Base mainnet.
 
@@ -376,11 +619,11 @@ async def verify_x402_payment(tx_hash: str) -> PaymentVerification:
     """
     normalized_hash = normalize_tx_hash(tx_hash)
 
-    async with processed_txs_lock:
-        if normalized_hash in processed_txs:
-            raise PaymentValidationError("Payment hash has already been processed")
+    if await has_processed_tx(normalized_hash):
+        raise PaymentValidationError("Payment hash has already been processed")
 
     vault_address = load_vault_address()
+    expected_amount = usdc_units(expected_fee_usdc)
     await maybe_query_cdp_transaction(normalized_hash)
     await ensure_base_rpc_ready()
 
@@ -415,24 +658,26 @@ async def verify_x402_payment(tx_hash: str) -> PaymentVerification:
 
         total_transferred_to_vault += int(as_0x_hex(log.get("data", "0x0")), 16)
 
-    if total_transferred_to_vault != REQUIRED_USDC_AMOUNT:
-        raise PaymentValidationError(f"Payment must transfer exactly {REQUIRED_USDC_FEE} USDC to AxonGate")
+    if total_transferred_to_vault != expected_amount:
+        raise PaymentValidationError(f"Payment must transfer exactly {expected_fee_usdc} USDC to AxonGate")
 
-    async with processed_txs_lock:
-        if normalized_hash in processed_txs:
-            raise PaymentValidationError("Payment hash has already been processed")
-        processed_txs.add(normalized_hash)
+    if not await reserve_processed_tx(normalized_hash):
+        raise PaymentValidationError("Payment hash has already been processed")
 
     return PaymentVerification(
         tx_hash=normalized_hash,
         vault_address=vault_address,
         token_address=BASE_USDC_ADDRESS,
-        amount_usdc=REQUIRED_USDC_FEE,
+        amount_usdc=expected_fee_usdc,
     )
 
 
 async def release_processed_tx(tx_hash: str) -> None:
     """Release a reserved payment hash when no paid response was delivered."""
+    if redis_client:
+        await redis_client.delete(f"axongate:processed:{tx_hash}")
+        return
+
     async with processed_txs_lock:
         processed_txs.discard(tx_hash)
 
@@ -442,6 +687,7 @@ async def fetch_clean_markdown(target_url: str) -> str:
     if not JINA_API_KEY:
         raise NetworkUnavailableError("Jina API key is not configured")
 
+    inc_metric("jina_requests_total")
     reader_url = f"{JINA_READER_BASE_URL.rstrip('/')}/{target_url}"
     headers = {"Authorization": f"Bearer {JINA_API_KEY}"}
 
@@ -456,12 +702,45 @@ async def fetch_clean_markdown(target_url: str) -> str:
         raise NetworkUnavailableError("Jina Reader request failed") from exc
 
 
+async def get_clean_markdown(target_url: str, tier: str, force_refresh: bool = False) -> tuple[str, bool]:
+    """Return cleaned markdown, using cache when the selected tier allows it."""
+    ttl = cache_ttl_for_tier(tier, force_refresh)
+    if ttl > 0:
+        cached = await get_cached_markdown(target_url, tier)
+        if cached is not None:
+            inc_metric("cache_hits_total")
+            return cached, True
+
+    inc_metric("cache_misses_total")
+    markdown = await fetch_clean_markdown(target_url)
+    await set_cached_markdown(target_url, tier, markdown, ttl)
+    return markdown, False
+
+
 def retry_later_503(exc: Exception) -> HTTPException:
+    inc_metric("errors_total")
     print(f"[UPSTREAM] Temporary failure: {exc}")
     return HTTPException(
         status_code=503,
         detail="Upstream service temporarily unavailable. Client agent should retry in 5 seconds.",
     )
+
+
+@app.get("/")
+async def root():
+    """Return a lightweight discovery index for crawlers and agent clients."""
+    return {
+        "status": "alive",
+        "agent": "AxonGate",
+        "service": "The Clean Context Broker",
+        "basename": "axongate.base.eth",
+        "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
+        "agent_card": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
+        "x402": f"{PUBLIC_BASE_URL}/.well-known/x402",
+        "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
+        "standard_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
+        "legacy_tx_hash_endpoint": f"{PUBLIC_BASE_URL}/v1/access",
+    }
 
 
 @app.get("/health")
@@ -510,6 +789,81 @@ async def discovery_resources(type: Optional[str] = None, limit: int = 20, offse
     }
 
 
+@app.get("/metrics")
+async def metrics_snapshot():
+    """Expose lightweight operational counters for conversion and margin tuning."""
+    return {
+        "status": "ok",
+        "metrics": metrics,
+        "cache": {
+            "backend": "redis" if redis_client else "memory",
+            "default_ttl_seconds": DEFAULT_CACHE_TTL_SECONDS,
+            "memory_entries": len(markdown_cache),
+        },
+        "pricing": {tier: float(price) for tier, price in TIER_PRICING_USDC.items()},
+    }
+
+
+@app.post("/v1/x402/access")
+async def access_context_broker_x402(
+    request: Request,
+    access_request: AccessRequest,
+    x_axongate_tier: Optional[str] = Header(None, alias="X-AxonGate-Tier"),
+):
+    """
+    Standard PayAI/x402 endpoint.
+
+    PaymentMiddlewareASGI verifies and settles PAYMENT-SIGNATURE before this
+    handler spends the Jina request. This path is what PayAI-style automated
+    buyers should prefer because it follows the standard x402 flow.
+    """
+    inc_metric("requests_total")
+    inc_metric("x402_access_requests_total")
+
+    if not hasattr(request.state, "payment_payload"):
+        inc_metric("payment_required_total")
+        detail = "Payment Required. Retry with PAYMENT-SIGNATURE for the selected x402 requirement."
+        raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
+
+    try:
+        target_url = validate_target_url(access_request.target_url)
+        tier = normalize_tier(x_axongate_tier or access_request.tier)
+        profitability = await calculate_profitability_for_price(price_for_tier(tier))
+        if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
+        markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
+        inc_metric("payment_verified_total")
+    except NetworkUnavailableError as exc:
+        raise retry_later_503(exc) from exc
+    except PaymentValidationError as exc:
+        inc_metric("errors_total")
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+    return {
+        "status": "success",
+        "target_url": target_url,
+        "tier": tier,
+        "markdown": markdown,
+        "cache": {"hit": cache_hit},
+        "payment": {
+            "mode": "x402-facilitator",
+            "network": "eip155:8453",
+            "vault_address": load_vault_address(),
+            "token_address": BASE_USDC_ADDRESS,
+            "amount_usdc": float(price_for_tier(tier)),
+        },
+        "ueg_receipt": {
+            "revenue_usdc": float(profitability.revenue_usdc),
+            "dynamic_gas_cost_usdc": float(profitability.dynamic_gas_cost_usdc),
+            "jina_api_cost_usdc": float(profitability.jina_api_cost_usdc),
+            "projected_profit_usdc": float(profitability.projected_profit_usdc),
+            "minimum_margin_usdc": float(MIN_PROFIT_MARGIN_USDC),
+            "base_fee_wei": profitability.base_fee_wei,
+            "gas_units": profitability.gas_units,
+        },
+    }
+
+
 @app.post("/v1/access")
 async def access_context_broker(
     request: AccessRequest,
@@ -522,7 +876,11 @@ async def access_context_broker(
     verifies the on-chain x402 payment and the dynamic UEG margin. Only then does
     it spend the upstream Jina Reader call and return cleaned markdown.
     """
+    inc_metric("requests_total")
+    inc_metric("legacy_access_requests_total")
+
     if not x_axongate_payment_hash:
+        inc_metric("payment_required_total")
         detail = "Payment Required. Provide X-AxonGate-Payment-Hash with a Base USDC transaction hash."
         raise HTTPException(
             status_code=402,
@@ -533,11 +891,14 @@ async def access_context_broker(
     payment: PaymentVerification | None = None
     try:
         target_url = validate_target_url(request.target_url)
-        payment = await verify_x402_payment(x_axongate_payment_hash)
-        profitability = await calculate_profitability()
+        tier = normalize_tier(request.tier)
+        price = price_for_tier(tier)
+        payment = await verify_x402_payment(x_axongate_payment_hash, price)
+        profitability = await calculate_profitability_for_price(payment.amount_usdc)
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
             raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
-        markdown = await fetch_clean_markdown(target_url)
+        markdown, cache_hit = await get_clean_markdown(target_url, tier, request.force_refresh)
+        inc_metric("payment_verified_total")
     except NetworkUnavailableError as exc:
         if payment is not None:
             await release_processed_tx(payment.tx_hash)
@@ -545,16 +906,20 @@ async def access_context_broker(
     except RuntimeError as exc:
         if payment is not None:
             await release_processed_tx(payment.tx_hash)
+        inc_metric("errors_total")
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except PaymentValidationError as exc:
         if payment is not None:
             await release_processed_tx(payment.tx_hash)
+        inc_metric("errors_total")
         raise HTTPException(status_code=400, detail=exc.detail) from exc
 
     return {
         "status": "success",
         "target_url": target_url,
+        "tier": tier,
         "markdown": markdown,
+        "cache": {"hit": cache_hit},
         "payment": {
             "tx_hash": payment.tx_hash,
             "network": "base-mainnet",

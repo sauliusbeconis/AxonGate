@@ -52,25 +52,43 @@
     "pricing_model": "pay-per-use",
     "dynamic_margin_protection": true,
     "minimum_margin_usdc": 0.01,
-    "upstream_cost_usdc": 0.0005
+    "upstream_cost_usdc": 0.0005,
+    "tiers": {
+      "basic": {
+        "price_usdc": 0.02,
+        "cache_policy": "cached"
+      },
+      "fresh": {
+        "price_usdc": 0.03,
+        "cache_policy": "bypass"
+      },
+      "deep": {
+        "price_usdc": 0.05,
+        "cache_policy": "short-cache"
+      }
+    }
   },
   "endpoints": {
-    "access": "https://web-production-8136ee.up.railway.app/v1/access",
+    "access": "https://web-production-8136ee.up.railway.app/v1/x402/access",
+    "legacy_access": "https://web-production-8136ee.up.railway.app/v1/access",
     "health": "https://web-production-8136ee.up.railway.app/health",
     "manifest": "https://web-production-8136ee.up.railway.app/manifest.json",
     "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
     "agent_card": "https://web-production-8136ee.up.railway.app/.well-known/agent.json",
     "x402": "https://web-production-8136ee.up.railway.app/.well-known/x402",
-    "discovery": "https://web-production-8136ee.up.railway.app/discovery/resources"
+    "discovery": "https://web-production-8136ee.up.railway.app/discovery/resources",
+    "metrics": "https://web-production-8136ee.up.railway.app/metrics"
   },
   "openapi_contract": {
     "method": "POST",
-    "path": "/v1/access",
+    "path": "/v1/x402/access",
     "payload_schema": {
-      "target_url": "string (valid HTTP/HTTPS URL)"
+      "target_url": "string (valid HTTP/HTTPS URL)",
+      "tier": "optional string (basic, fresh, or deep)",
+      "force_refresh": "optional boolean"
     },
     "required_headers": [
-      "X-AxonGate-Payment-Hash"
+      "PAYMENT-SIGNATURE"
     ],
     "success_response": {
       "status": "success",
@@ -82,14 +100,14 @@
     "response_format": "application/json",
     "error_statuses": {
       "400": "Invalid URL, invalid payment hash, failed payment verification, replayed payment, or UEG rejection",
-      "402": "Missing X-AxonGate-Payment-Hash header",
+      "402": "Missing or invalid x402 payment",
       "503": "Temporary upstream, CDP, or Base RPC outage"
     }
   },
   "discovery": {
     "payai": {
       "facilitator": "https://facilitator.payai.network",
-      "resource": "https://web-production-8136ee.up.railway.app/v1/access",
+      "resource": "https://web-production-8136ee.up.railway.app/v1/x402/access",
       "resource_type": "http",
       "x402_version": 2,
       "market_listing": "https://web-production-8136ee.up.railway.app/discovery/resources",
