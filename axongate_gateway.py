@@ -107,7 +107,18 @@ MIN_PROFIT_MARGIN_USDC = max(
     Decimal("0.01"),
 )
 UEG_GAS_UNITS = int(os.getenv("AXONGATE_UEG_GAS_UNITS", "65000"))
-ETH_USDC_PRICE = Decimal(os.getenv("AXONGATE_ETH_USDC_PRICE", "3500"))
+ETH_USDC_PRICE_FLOOR = Decimal(
+    os.getenv("AXONGATE_ETH_USDC_PRICE_FLOOR", os.getenv("AXONGATE_ETH_USDC_PRICE", "3500"))
+)
+ETH_USDC_PRICE_URL = os.getenv("AXONGATE_ETH_USDC_PRICE_URL", "https://api.coinbase.com/v2/prices/ETH-USD/spot")
+ETH_USDC_PRICE_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_ETH_USDC_PRICE_TIMEOUT_SECONDS", "5"))
+ETH_USDC_PRICE_CACHE_TTL_SECONDS = int(os.getenv("AXONGATE_ETH_USDC_PRICE_CACHE_TTL_SECONDS", "60"))
+ETH_USDC_PRICE_STALE_TTL_SECONDS = int(os.getenv("AXONGATE_ETH_USDC_PRICE_STALE_TTL_SECONDS", "3600"))
+ETH_USDC_ALLOW_STATIC_FALLBACK = os.getenv("AXONGATE_ETH_USDC_ALLOW_STATIC_FALLBACK", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").hex()
 
@@ -124,6 +135,8 @@ markdown_cache: dict[str, tuple[float, str]] = {}
 markdown_cache_lock = asyncio.Lock()
 delivery_credits: dict[str, dict[str, Any]] = {}
 delivery_credits_lock = asyncio.Lock()
+eth_usdc_price_cache: dict[str, Any] = {}
+eth_usdc_price_lock = asyncio.Lock()
 redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and REDIS_URL else None
 metrics: dict[str, int] = {
     "requests_total": 0,
@@ -138,6 +151,10 @@ metrics: dict[str, int] = {
     "target_preflight_total": 0,
     "target_preflight_rejections_total": 0,
     "ssrf_rejections_total": 0,
+    "eth_price_fetches_total": 0,
+    "eth_price_cache_hits_total": 0,
+    "eth_price_stale_hits_total": 0,
+    "eth_price_errors_total": 0,
     "supplier_rejections_total": 0,
     "delivery_credits_issued_total": 0,
     "delivery_credit_success_total": 0,
@@ -175,6 +192,9 @@ class UEGReceipt:
     base_fee_wei: int
     gas_units: int
     supplier_attempts: int = 1
+    eth_usdc_price: Decimal = Decimal("0")
+    eth_usdc_price_source: str = "unknown"
+    eth_usdc_floor_applied: bool = False
 
 
 @dataclass(frozen=True)
@@ -202,6 +222,14 @@ class TargetPreflight:
     content_type: Optional[str]
     content_length: Optional[int]
     redirects_followed: int
+
+
+@dataclass(frozen=True)
+class EthUsdQuote:
+    price: Decimal
+    source: str
+    fetched_at: int
+    floor_applied: bool
 
 
 class PaymentValidationError(Exception):
@@ -1023,6 +1051,153 @@ async def fetch_current_base_fee_wei() -> int:
     return int(base_fee)
 
 
+def eth_usdc_price_cache_key() -> str:
+    return "axongate:price:eth-usdc"
+
+
+def apply_eth_price_floor(price: Decimal, source: str, fetched_at: int) -> EthUsdQuote:
+    """Use live/stale ETH price, but never below the configured conservative floor."""
+    floor_applied = price < ETH_USDC_PRICE_FLOOR
+    guarded_price = max(price, ETH_USDC_PRICE_FLOOR)
+    return EthUsdQuote(
+        price=guarded_price,
+        source=f"{source}:floor" if floor_applied else source,
+        fetched_at=fetched_at,
+        floor_applied=floor_applied,
+    )
+
+
+def parse_eth_usdc_quote(payload: dict[str, Any]) -> Decimal:
+    try:
+        amount = payload["data"]["amount"]
+    except (KeyError, TypeError) as exc:
+        raise NetworkUnavailableError(
+            "ETH/USD price feed response did not include data.amount",
+            source="price_feed",
+            supplier_attempt_charged=False,
+        ) from exc
+
+    try:
+        price = Decimal(str(amount))
+    except Exception as exc:
+        raise NetworkUnavailableError(
+            "ETH/USD price feed returned an invalid amount",
+            source="price_feed",
+            supplier_attempt_charged=False,
+        ) from exc
+
+    if price <= 0:
+        raise NetworkUnavailableError(
+            "ETH/USD price feed returned a non-positive amount",
+            source="price_feed",
+            supplier_attempt_charged=False,
+        )
+
+    return price
+
+
+async def get_cached_eth_usdc_quote(max_age_seconds: int) -> Optional[EthUsdQuote]:
+    now = int(time.time())
+
+    if redis_client:
+        raw_quote = await redis_client.get(eth_usdc_price_cache_key())
+        if not raw_quote:
+            return None
+        quote_data = json.loads(raw_quote)
+    else:
+        async with eth_usdc_price_lock:
+            if not eth_usdc_price_cache:
+                return None
+            quote_data = dict(eth_usdc_price_cache)
+
+    fetched_at = int(quote_data.get("fetched_at", 0))
+    if now - fetched_at > max_age_seconds:
+        return None
+
+    return apply_eth_price_floor(Decimal(str(quote_data["price"])), str(quote_data["source"]), fetched_at)
+
+
+async def set_cached_eth_usdc_quote(price: Decimal, source: str) -> EthUsdQuote:
+    fetched_at = int(time.time())
+    quote_data = {
+        "price": str(price),
+        "source": source,
+        "fetched_at": fetched_at,
+    }
+
+    if redis_client:
+        await redis_client.setex(
+            eth_usdc_price_cache_key(),
+            ETH_USDC_PRICE_STALE_TTL_SECONDS,
+            json.dumps(quote_data, separators=(",", ":")),
+        )
+    else:
+        async with eth_usdc_price_lock:
+            eth_usdc_price_cache.clear()
+            eth_usdc_price_cache.update(quote_data)
+
+    return apply_eth_price_floor(price, source, fetched_at)
+
+
+async def fetch_live_eth_usdc_quote() -> EthUsdQuote:
+    """Fetch live ETH/USD spot price from Coinbase's unauthenticated Prices API."""
+    try:
+        async with httpx.AsyncClient(timeout=ETH_USDC_PRICE_TIMEOUT_SECONDS) as client:
+            response = await client.get(ETH_USDC_PRICE_URL)
+            response.raise_for_status()
+            price = parse_eth_usdc_quote(response.json())
+    except NetworkUnavailableError:
+        inc_metric("eth_price_errors_total")
+        raise
+    except (httpx.TimeoutException, httpx.HTTPError, json.JSONDecodeError) as exc:
+        inc_metric("eth_price_errors_total")
+        raise NetworkUnavailableError(
+            "ETH/USD price feed is temporarily unavailable",
+            source="price_feed",
+            supplier_attempt_charged=False,
+        ) from exc
+
+    inc_metric("eth_price_fetches_total")
+    return await set_cached_eth_usdc_quote(price, "coinbase_spot")
+
+
+async def fetch_eth_usdc_quote() -> EthUsdQuote:
+    """
+    Return the ETH/USD quote used by UEG.
+
+    The service uses a fresh Redis/memory cache first, then Coinbase live spot,
+    then stale cache. Static fallback is disabled by default so AxonGate fails
+    closed when it cannot price gas with either live or recently cached data.
+    """
+    fresh_quote = await get_cached_eth_usdc_quote(ETH_USDC_PRICE_CACHE_TTL_SECONDS)
+    if fresh_quote:
+        inc_metric("eth_price_cache_hits_total")
+        return fresh_quote
+
+    try:
+        return await fetch_live_eth_usdc_quote()
+    except NetworkUnavailableError:
+        stale_quote = await get_cached_eth_usdc_quote(ETH_USDC_PRICE_STALE_TTL_SECONDS)
+        if stale_quote:
+            inc_metric("eth_price_stale_hits_total")
+            return EthUsdQuote(
+                price=stale_quote.price,
+                source=f"stale_{stale_quote.source}",
+                fetched_at=stale_quote.fetched_at,
+                floor_applied=stale_quote.floor_applied,
+            )
+
+        if ETH_USDC_ALLOW_STATIC_FALLBACK:
+            return EthUsdQuote(
+                price=ETH_USDC_PRICE_FLOOR,
+                source="static_floor",
+                fetched_at=int(time.time()),
+                floor_applied=True,
+            )
+
+        raise
+
+
 async def calculate_profitability() -> UEGReceipt:
     """Calculate 0.02 USDC revenue minus live Base gas estimate and Jina cost."""
     return await calculate_profitability_for_price(REQUIRED_USDC_FEE)
@@ -1030,9 +1205,9 @@ async def calculate_profitability() -> UEGReceipt:
 
 async def calculate_profitability_for_price(revenue_usdc: Decimal, supplier_attempts: int = 1) -> UEGReceipt:
     """Calculate tier revenue minus live Base gas estimate and bounded supplier cost."""
-    base_fee_wei = await fetch_current_base_fee_wei()
+    base_fee_wei, eth_quote = await asyncio.gather(fetch_current_base_fee_wei(), fetch_eth_usdc_quote())
     gas_cost_eth = Decimal(base_fee_wei * UEG_GAS_UNITS) / Decimal(10**18)
-    dynamic_gas_cost_usdc = gas_cost_eth * ETH_USDC_PRICE
+    dynamic_gas_cost_usdc = gas_cost_eth * eth_quote.price
     bounded_supplier_attempts = max(1, int(supplier_attempts))
     total_jina_cost_usdc = JINA_API_COST_USDC * Decimal(bounded_supplier_attempts)
     projected_profit = revenue_usdc - (dynamic_gas_cost_usdc + total_jina_cost_usdc)
@@ -1045,6 +1220,9 @@ async def calculate_profitability_for_price(revenue_usdc: Decimal, supplier_atte
         base_fee_wei=base_fee_wei,
         gas_units=UEG_GAS_UNITS,
         supplier_attempts=bounded_supplier_attempts,
+        eth_usdc_price=eth_quote.price,
+        eth_usdc_price_source=eth_quote.source,
+        eth_usdc_floor_applied=eth_quote.floor_applied,
     )
 
 
@@ -1353,6 +1531,13 @@ async def metrics_snapshot():
             "max_content_bytes": PREFLIGHT_MAX_CONTENT_BYTES,
             "allowed_target_ports": sorted(ALLOWED_TARGET_PORTS),
         },
+        "price_feed": {
+            "eth_usdc_url": ETH_USDC_PRICE_URL,
+            "cache_ttl_seconds": ETH_USDC_PRICE_CACHE_TTL_SECONDS,
+            "stale_ttl_seconds": ETH_USDC_PRICE_STALE_TTL_SECONDS,
+            "price_floor_usdc": float(ETH_USDC_PRICE_FLOOR),
+            "static_fallback_enabled": ETH_USDC_ALLOW_STATIC_FALLBACK,
+        },
         "pricing": {tier: float(price) for tier, price in TIER_PRICING_USDC.items()},
     }
 
@@ -1445,6 +1630,9 @@ async def access_context_broker_x402(
             "base_fee_wei": profitability.base_fee_wei,
             "gas_units": profitability.gas_units,
             "supplier_attempts": profitability.supplier_attempts,
+            "eth_usdc_price": float(profitability.eth_usdc_price),
+            "eth_usdc_price_source": profitability.eth_usdc_price_source,
+            "eth_usdc_floor_applied": profitability.eth_usdc_floor_applied,
         },
     }
 
@@ -1544,6 +1732,9 @@ async def retry_context_broker_delivery(
             "base_fee_wei": profitability.base_fee_wei,
             "gas_units": profitability.gas_units,
             "supplier_attempts": profitability.supplier_attempts,
+            "eth_usdc_price": float(profitability.eth_usdc_price),
+            "eth_usdc_price_source": profitability.eth_usdc_price_source,
+            "eth_usdc_floor_applied": profitability.eth_usdc_floor_applied,
         },
     }
 
@@ -1627,6 +1818,9 @@ async def access_context_broker(
             "base_fee_wei": profitability.base_fee_wei,
             "gas_units": profitability.gas_units,
             "supplier_attempts": profitability.supplier_attempts,
+            "eth_usdc_price": float(profitability.eth_usdc_price),
+            "eth_usdc_price_source": profitability.eth_usdc_price_source,
+            "eth_usdc_floor_applied": profitability.eth_usdc_floor_applied,
         },
     }
 
@@ -1671,6 +1865,9 @@ async def process_task(request: ComputeRequest, x402_token: str = Header(None)):
             "fee_collected_usdc": float(offered_fee_usdc),
             "dynamic_gas_cost_usdc": float(profitability.dynamic_gas_cost_usdc),
             "net_profit_usdc": float(projected_profit),
+            "eth_usdc_price": float(profitability.eth_usdc_price),
+            "eth_usdc_price_source": profitability.eth_usdc_price_source,
+            "eth_usdc_floor_applied": profitability.eth_usdc_floor_applied,
             "timestamp": time.time(),
         },
     }

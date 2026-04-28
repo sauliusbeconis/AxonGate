@@ -60,6 +60,12 @@
       "target_preflight": true,
       "bad_supply_retry_credits": false
     },
+    "gas_pricing": {
+      "base_fee": "live Base RPC",
+      "eth_usdc": "Coinbase spot price with Redis cache",
+      "price_floor_usdc": 3500,
+      "static_fallback_default": false
+    },
     "tiers": {
       "basic": {
         "price_usdc": 0.02,
