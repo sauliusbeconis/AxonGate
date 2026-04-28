@@ -70,6 +70,7 @@
   },
   "endpoints": {
     "access": "https://web-production-8136ee.up.railway.app/v1/x402/access",
+    "retry": "https://web-production-8136ee.up.railway.app/v1/x402/retry",
     "legacy_access": "https://web-production-8136ee.up.railway.app/v1/access",
     "health": "https://web-production-8136ee.up.railway.app/health",
     "manifest": "https://web-production-8136ee.up.railway.app/manifest.json",
@@ -90,6 +91,9 @@
     "required_headers": [
       "PAYMENT-SIGNATURE"
     ],
+    "retry_headers": [
+      "X-AxonGate-Retry-Credit"
+    ],
     "success_response": {
       "status": "success",
       "target_url": "string",
@@ -101,7 +105,7 @@
     "error_statuses": {
       "400": "Invalid URL, invalid payment hash, failed payment verification, replayed payment, or UEG rejection",
       "402": "Missing or invalid x402 payment",
-      "503": "Temporary upstream, CDP, or Base RPC outage"
+      "503": "Temporary upstream, CDP, or Base RPC outage. Retryable post-payment outages may include X-AxonGate-Retry-Credit for /v1/x402/retry."
     }
   },
   "discovery": {

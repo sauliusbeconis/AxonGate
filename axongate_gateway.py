@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import re
+import secrets
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -64,6 +65,8 @@ BASE_USDC_ADDRESS = Web3.to_checksum_address(
 PAYAI_FACILITATOR_URL = os.getenv("PAYAI_FACILITATOR_URL", "https://facilitator.payai.network")
 REDIS_URL = os.getenv("REDIS_URL")
 DEFAULT_CACHE_TTL_SECONDS = int(os.getenv("AXONGATE_CACHE_TTL_SECONDS", "3600"))
+DELIVERY_CREDIT_TTL_SECONDS = int(os.getenv("AXONGATE_DELIVERY_CREDIT_TTL_SECONDS", "900"))
+DELIVERY_CREDIT_MAX_ATTEMPTS = int(os.getenv("AXONGATE_DELIVERY_CREDIT_MAX_ATTEMPTS", "2"))
 
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
@@ -101,19 +104,33 @@ processed_txs: set[str] = set()
 processed_txs_lock = asyncio.Lock()
 markdown_cache: dict[str, tuple[float, str]] = {}
 markdown_cache_lock = asyncio.Lock()
+delivery_credits: dict[str, dict[str, Any]] = {}
+delivery_credits_lock = asyncio.Lock()
 redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and REDIS_URL else None
 metrics: dict[str, int] = {
     "requests_total": 0,
     "legacy_access_requests_total": 0,
     "x402_access_requests_total": 0,
+    "delivery_credit_retries_total": 0,
     "payment_required_total": 0,
     "payment_verified_total": 0,
     "jina_requests_total": 0,
     "cache_hits_total": 0,
     "cache_misses_total": 0,
+    "supplier_rejections_total": 0,
+    "delivery_credits_issued_total": 0,
+    "delivery_credit_success_total": 0,
+    "delivery_credit_exhausted_total": 0,
     "errors_total": 0,
 }
 CDP_TRANSACTION_METHOD_NAMES = ("get_transaction", "get_evm_transaction", "get_transaction_receipt")
+PAYMENT_PROOF_HEADERS = (
+    "PAYMENT-SIGNATURE",
+    "X-PAYMENT",
+    "X-402-PAYMENT",
+    "X-Payment",
+    "X-Payment-Signature",
+)
 
 
 class AccessRequest(BaseModel):
@@ -136,6 +153,7 @@ class UEGReceipt:
     projected_profit_usdc: Decimal
     base_fee_wei: int
     gas_units: int
+    supplier_attempts: int = 1
 
 
 @dataclass(frozen=True)
@@ -146,14 +164,36 @@ class PaymentVerification:
     amount_usdc: Decimal
 
 
+@dataclass(frozen=True)
+class DeliveryCreditReservation:
+    token: str
+    key: str
+    record: dict[str, Any]
+    remaining_attempts: int
+    total_supplier_attempts: int
+
+
 class PaymentValidationError(Exception):
-    def __init__(self, detail: str):
+    def __init__(self, detail: str, *, consume_credit: bool = False):
         self.detail = detail
+        self.consume_credit = consume_credit
         super().__init__(detail)
 
 
 class NetworkUnavailableError(Exception):
-    pass
+    def __init__(
+        self,
+        detail: str,
+        *,
+        source: str = "network",
+        creditable: bool = True,
+        supplier_attempt_charged: bool = False,
+    ):
+        self.detail = detail
+        self.source = source
+        self.creditable = creditable
+        self.supplier_attempt_charged = supplier_attempt_charged
+        super().__init__(detail)
 
 
 def load_vault_address() -> str:
@@ -186,6 +226,10 @@ def load_agent_card() -> dict[str, Any]:
 
 def inc_metric(name: str, amount: int = 1) -> None:
     metrics[name] = metrics.get(name, 0) + amount
+
+
+def stable_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def normalize_tier(tier: Optional[str]) -> str:
@@ -256,6 +300,7 @@ def build_x402_resource() -> dict[str, Any]:
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "facilitator": PAYAI_FACILITATOR_URL,
             "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
+            "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
             "pricing": {
                 tier: {
                     "amount": str(usdc_units(price)),
@@ -318,6 +363,8 @@ def build_payment_required_payload(error: str) -> dict[str, Any]:
             "paymentHashHeader": "X-AxonGate-Payment-Hash",
             "standardPaymentHeader": "PAYMENT-SIGNATURE",
             "tierHeader": "X-AxonGate-Tier",
+            "retryCreditHeader": "X-AxonGate-Retry-Credit",
+            "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
             "facilitator": PAYAI_FACILITATOR_URL,
         },
     }
@@ -332,6 +379,21 @@ def payment_required_headers(error: str) -> dict[str, str]:
         "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
         "X-AxonGate-Payment-Amount": str(REQUIRED_USDC_FEE),
     }
+
+
+def payment_reference_from_request(request: Request) -> str:
+    """Build a non-secret reference for the settled x402 payment proof."""
+    for header_name in PAYMENT_PROOF_HEADERS:
+        header_value = request.headers.get(header_name)
+        if header_value:
+            return f"{header_name.lower()}:{stable_hash(header_value)}"
+
+    payment_payload = getattr(request.state, "payment_payload", None)
+    if payment_payload is not None:
+        payload_json = json.dumps(payment_payload, sort_keys=True, default=str)
+        return f"payment-payload:{stable_hash(payload_json)}"
+
+    return f"payment-state:{stable_hash(str(time.time_ns()))}"
 
 
 def configure_standard_x402_middleware() -> None:
@@ -454,6 +516,202 @@ async def set_cached_markdown(target_url: str, tier: str, markdown: str, ttl_sec
         markdown_cache[key] = (time.time() + ttl_seconds, markdown)
 
 
+def delivery_credit_key(token: str) -> str:
+    return f"axongate:delivery-credit:{stable_hash(token)}"
+
+
+def delivery_request_fingerprint(target_url: str, tier: str, force_refresh: bool) -> str:
+    payload = {
+        "target_url": target_url,
+        "tier": normalize_tier(tier),
+        "force_refresh": bool(force_refresh),
+    }
+    return stable_hash(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+
+
+def delivery_credit_response(token: str, remaining_attempts: int) -> dict[str, Any]:
+    return {
+        "token": token,
+        "retry_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
+        "expires_in_seconds": DELIVERY_CREDIT_TTL_SECONDS,
+        "remaining_attempts": remaining_attempts,
+    }
+
+
+def delivery_credit_headers(token: str, remaining_attempts: int) -> dict[str, str]:
+    return {
+        "X-AxonGate-Retry-Credit": token,
+        "X-AxonGate-Retry-Endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
+        "X-AxonGate-Retry-Attempts": str(remaining_attempts),
+    }
+
+
+async def create_delivery_credit(
+    *,
+    payment_reference: str,
+    target_url: str,
+    tier: str,
+    force_refresh: bool,
+    amount_usdc: Decimal,
+    mode: str,
+    reason: str,
+    supplier_attempts_used: int,
+) -> Optional[dict[str, Any]]:
+    """
+    Create a narrow post-payment delivery credit.
+
+    Credits are not refunds and are not transferable. They are short-lived bearer
+    tokens bound to the exact paid target URL, tier, force_refresh flag, and
+    payment reference. This keeps a bad upstream/source from becoming an
+    open-ended cost for AxonGate while still letting honest buyers retry a paid
+    request that failed because of temporary infrastructure.
+    """
+    if DELIVERY_CREDIT_TTL_SECONDS <= 0 or DELIVERY_CREDIT_MAX_ATTEMPTS <= 0:
+        return None
+
+    token = secrets.token_urlsafe(32)
+    key = delivery_credit_key(token)
+    now = int(time.time())
+    normalized_tier = normalize_tier(tier)
+    record = {
+        "payment_reference": payment_reference,
+        "request_fingerprint": delivery_request_fingerprint(target_url, normalized_tier, force_refresh),
+        "target_url": target_url,
+        "tier": normalized_tier,
+        "force_refresh": bool(force_refresh),
+        "amount_usdc": str(amount_usdc),
+        "mode": mode,
+        "reason": reason,
+        "supplier_attempts_used": max(0, int(supplier_attempts_used)),
+        "remaining_attempts": DELIVERY_CREDIT_MAX_ATTEMPTS,
+        "created_at": now,
+        "expires_at": now + DELIVERY_CREDIT_TTL_SECONDS,
+    }
+
+    if redis_client:
+        await redis_client.setex(key, DELIVERY_CREDIT_TTL_SECONDS, json.dumps(record, separators=(",", ":")))
+    else:
+        async with delivery_credits_lock:
+            delivery_credits[key] = record
+
+    inc_metric("delivery_credits_issued_total")
+    return delivery_credit_response(token, DELIVERY_CREDIT_MAX_ATTEMPTS)
+
+
+def validate_delivery_credit_record(record: dict[str, Any], target_url: str, tier: str, force_refresh: bool) -> None:
+    if int(record.get("expires_at", 0)) <= int(time.time()):
+        raise PaymentValidationError("Retry credit has expired")
+    if int(record.get("remaining_attempts", 0)) <= 0:
+        raise PaymentValidationError("Retry credit is exhausted")
+
+    expected_fingerprint = delivery_request_fingerprint(target_url, tier, force_refresh)
+    if record.get("request_fingerprint") != expected_fingerprint:
+        raise PaymentValidationError("Retry credit does not match this target URL, tier, and cache mode")
+
+
+async def reserve_delivery_credit(
+    token: str,
+    *,
+    target_url: str,
+    tier: str,
+    force_refresh: bool,
+) -> DeliveryCreditReservation:
+    """
+    Atomically reserve one retry attempt before spending upstream work.
+
+    The reservation decrements the remaining attempt count before Jina is called,
+    which prevents concurrent clients from stretching one credit into many free
+    supplier calls.
+    """
+    if not token:
+        raise PaymentValidationError("Missing retry credit")
+
+    key = delivery_credit_key(token)
+    normalized_tier = normalize_tier(tier)
+
+    if redis_client:
+        watch_error = getattr(redis, "WatchError", None)
+        if watch_error is None and hasattr(redis, "exceptions"):
+            watch_error = getattr(redis.exceptions, "WatchError", RuntimeError)
+
+        for _ in range(3):
+            async with redis_client.pipeline(transaction=True) as pipe:
+                try:
+                    await pipe.watch(key)
+                    raw_record = await pipe.get(key)
+                    if not raw_record:
+                        raise PaymentValidationError("Retry credit is invalid or expired")
+
+                    record = json.loads(raw_record)
+                    validate_delivery_credit_record(record, target_url, normalized_tier, force_refresh)
+                    record["remaining_attempts"] = int(record["remaining_attempts"]) - 1
+                    record["supplier_attempts_used"] = int(record.get("supplier_attempts_used", 0)) + 1
+                    ttl_seconds = max(1, int(record["expires_at"]) - int(time.time()))
+
+                    pipe.multi()
+                    pipe.setex(key, ttl_seconds, json.dumps(record, separators=(",", ":")))
+                    await pipe.execute()
+                    return DeliveryCreditReservation(
+                        token=token,
+                        key=key,
+                        record=record,
+                        remaining_attempts=int(record["remaining_attempts"]),
+                        total_supplier_attempts=int(record["supplier_attempts_used"]),
+                    )
+                except Exception as exc:
+                    if watch_error is not None and isinstance(exc, watch_error):
+                        continue
+                    raise
+
+        raise NetworkUnavailableError("Retry credit store was busy", source="redis", supplier_attempt_charged=False)
+
+    async with delivery_credits_lock:
+        record = delivery_credits.get(key)
+        if not record:
+            raise PaymentValidationError("Retry credit is invalid or expired")
+        validate_delivery_credit_record(record, target_url, normalized_tier, force_refresh)
+        record = dict(record)
+        record["remaining_attempts"] = int(record["remaining_attempts"]) - 1
+        record["supplier_attempts_used"] = int(record.get("supplier_attempts_used", 0)) + 1
+        delivery_credits[key] = record
+
+    return DeliveryCreditReservation(
+        token=token,
+        key=key,
+        record=record,
+        remaining_attempts=int(record["remaining_attempts"]),
+        total_supplier_attempts=int(record["supplier_attempts_used"]),
+    )
+
+
+async def restore_delivery_credit_attempt(reservation: DeliveryCreditReservation) -> None:
+    """Put a reserved attempt back when no supplier work was attempted."""
+    record = dict(reservation.record)
+    record["remaining_attempts"] = min(
+        DELIVERY_CREDIT_MAX_ATTEMPTS,
+        int(record.get("remaining_attempts", 0)) + 1,
+    )
+    record["supplier_attempts_used"] = max(0, int(record.get("supplier_attempts_used", 1)) - 1)
+    ttl_seconds = max(1, int(record["expires_at"]) - int(time.time()))
+
+    if redis_client:
+        await redis_client.setex(reservation.key, ttl_seconds, json.dumps(record, separators=(",", ":")))
+        return
+
+    async with delivery_credits_lock:
+        delivery_credits[reservation.key] = record
+
+
+async def delete_delivery_credit(token: str) -> None:
+    key = delivery_credit_key(token)
+    if redis_client:
+        await redis_client.delete(key)
+        return
+
+    async with delivery_credits_lock:
+        delivery_credits.pop(key, None)
+
+
 async def has_processed_tx(tx_hash: str) -> bool:
     if redis_client:
         return bool(await redis_client.exists(f"axongate:processed:{tx_hash}"))
@@ -560,20 +818,23 @@ async def calculate_profitability() -> UEGReceipt:
     return await calculate_profitability_for_price(REQUIRED_USDC_FEE)
 
 
-async def calculate_profitability_for_price(revenue_usdc: Decimal) -> UEGReceipt:
-    """Calculate tier revenue minus live Base gas estimate and Jina cost."""
+async def calculate_profitability_for_price(revenue_usdc: Decimal, supplier_attempts: int = 1) -> UEGReceipt:
+    """Calculate tier revenue minus live Base gas estimate and bounded supplier cost."""
     base_fee_wei = await fetch_current_base_fee_wei()
     gas_cost_eth = Decimal(base_fee_wei * UEG_GAS_UNITS) / Decimal(10**18)
     dynamic_gas_cost_usdc = gas_cost_eth * ETH_USDC_PRICE
-    projected_profit = revenue_usdc - (dynamic_gas_cost_usdc + JINA_API_COST_USDC)
+    bounded_supplier_attempts = max(1, int(supplier_attempts))
+    total_jina_cost_usdc = JINA_API_COST_USDC * Decimal(bounded_supplier_attempts)
+    projected_profit = revenue_usdc - (dynamic_gas_cost_usdc + total_jina_cost_usdc)
 
     return UEGReceipt(
         revenue_usdc=revenue_usdc,
         dynamic_gas_cost_usdc=dynamic_gas_cost_usdc,
-        jina_api_cost_usdc=JINA_API_COST_USDC,
+        jina_api_cost_usdc=total_jina_cost_usdc,
         projected_profit_usdc=projected_profit,
         base_fee_wei=base_fee_wei,
         gas_units=UEG_GAS_UNITS,
+        supplier_attempts=bounded_supplier_attempts,
     )
 
 
@@ -672,20 +933,14 @@ async def verify_x402_payment(tx_hash: str, expected_fee_usdc: Decimal = REQUIRE
     )
 
 
-async def release_processed_tx(tx_hash: str) -> None:
-    """Release a reserved payment hash when no paid response was delivered."""
-    if redis_client:
-        await redis_client.delete(f"axongate:processed:{tx_hash}")
-        return
-
-    async with processed_txs_lock:
-        processed_txs.discard(tx_hash)
-
-
 async def fetch_clean_markdown(target_url: str) -> str:
     """Call Jina Reader and return the upstream markdown body."""
     if not JINA_API_KEY:
-        raise NetworkUnavailableError("Jina API key is not configured")
+        raise NetworkUnavailableError(
+            "Jina API key is not configured",
+            source="jina_config",
+            supplier_attempt_charged=False,
+        )
 
     inc_metric("jina_requests_total")
     reader_url = f"{JINA_READER_BASE_URL.rstrip('/')}/{target_url}"
@@ -697,9 +952,31 @@ async def fetch_clean_markdown(target_url: str) -> str:
             response.raise_for_status()
             return response.text
     except httpx.TimeoutException as exc:
-        raise NetworkUnavailableError("Jina Reader timed out") from exc
-    except httpx.HTTPError as exc:
-        raise NetworkUnavailableError("Jina Reader request failed") from exc
+        raise NetworkUnavailableError(
+            "Jina Reader timed out",
+            source="jina",
+            supplier_attempt_charged=True,
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code == 408 or status_code == 429 or status_code >= 500:
+            raise NetworkUnavailableError(
+                f"Jina Reader temporarily failed with HTTP {status_code}",
+                source="jina",
+                supplier_attempt_charged=True,
+            ) from exc
+
+        inc_metric("supplier_rejections_total")
+        raise PaymentValidationError(
+            f"Jina Reader rejected target_url with HTTP {status_code}; no retry credit issued",
+            consume_credit=True,
+        ) from exc
+    except httpx.RequestError as exc:
+        raise NetworkUnavailableError(
+            "Jina Reader request failed",
+            source="jina",
+            supplier_attempt_charged=False,
+        ) from exc
 
 
 async def get_clean_markdown(target_url: str, tier: str, force_refresh: bool = False) -> tuple[str, bool]:
@@ -717,12 +994,62 @@ async def get_clean_markdown(target_url: str, tier: str, force_refresh: bool = F
     return markdown, False
 
 
-def retry_later_503(exc: Exception) -> HTTPException:
+async def maybe_issue_delivery_credit(
+    *,
+    exc: NetworkUnavailableError,
+    payment_reference: str,
+    target_url: str,
+    tier: str,
+    force_refresh: bool,
+    amount_usdc: Decimal,
+    mode: str,
+) -> Optional[dict[str, Any]]:
+    """Issue a bounded retry credit only for post-payment retryable failures."""
+    if not exc.creditable:
+        return None
+
+    supplier_attempts_used = 1 if exc.supplier_attempt_charged else 0
+    projected_retry_attempts = supplier_attempts_used + 1
+
+    try:
+        retry_receipt = await calculate_profitability_for_price(amount_usdc, projected_retry_attempts)
+        if retry_receipt.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            inc_metric("delivery_credit_exhausted_total")
+            return None
+    except NetworkUnavailableError:
+        # If Base RPC is the outage, the retry endpoint will enforce economics
+        # before spending supplier work. Do not strand a paid buyer here.
+        pass
+
+    return await create_delivery_credit(
+        payment_reference=payment_reference,
+        target_url=target_url,
+        tier=tier,
+        force_refresh=force_refresh,
+        amount_usdc=amount_usdc,
+        mode=mode,
+        reason=exc.detail,
+        supplier_attempts_used=supplier_attempts_used,
+    )
+
+
+def retry_later_503(exc: Exception, credit: Optional[dict[str, Any]] = None) -> HTTPException:
     inc_metric("errors_total")
     print(f"[UPSTREAM] Temporary failure: {exc}")
+    headers = {"Retry-After": "5"}
+    detail: Any = {
+        "message": "Upstream service temporarily unavailable. Client agent should retry in 5 seconds.",
+        "source": getattr(exc, "source", "network"),
+        "retry_after_seconds": 5,
+    }
+    if credit:
+        headers.update(delivery_credit_headers(credit["token"], int(credit["remaining_attempts"])))
+        detail["retry_credit"] = credit
+
     return HTTPException(
         status_code=503,
-        detail="Upstream service temporarily unavailable. Client agent should retry in 5 seconds.",
+        detail=detail,
+        headers=headers,
     )
 
 
@@ -740,6 +1067,7 @@ async def root():
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "standard_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "legacy_tx_hash_endpoint": f"{PUBLIC_BASE_URL}/v1/access",
+        "retry_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
     }
 
 
@@ -800,6 +1128,11 @@ async def metrics_snapshot():
             "default_ttl_seconds": DEFAULT_CACHE_TTL_SECONDS,
             "memory_entries": len(markdown_cache),
         },
+        "delivery_credits": {
+            "ttl_seconds": DELIVERY_CREDIT_TTL_SECONDS,
+            "max_attempts": DELIVERY_CREDIT_MAX_ATTEMPTS,
+            "memory_entries": len(delivery_credits),
+        },
         "pricing": {tier: float(price) for tier, price in TIER_PRICING_USDC.items()},
     }
 
@@ -842,6 +1175,9 @@ async def access_context_broker_x402(
         detail = "Payment Required. Retry with PAYMENT-SIGNATURE for the selected x402 requirement."
         raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
 
+    payment_reference = payment_reference_from_request(request)
+    target_url: Optional[str] = None
+    tier: Optional[str] = None
     try:
         target_url = validate_target_url(access_request.target_url)
         tier = normalize_tier(x_axongate_tier or access_request.tier)
@@ -851,7 +1187,18 @@ async def access_context_broker_x402(
         markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
         inc_metric("payment_verified_total")
     except NetworkUnavailableError as exc:
-        raise retry_later_503(exc) from exc
+        credit = None
+        if target_url and tier:
+            credit = await maybe_issue_delivery_credit(
+                exc=exc,
+                payment_reference=payment_reference,
+                target_url=target_url,
+                tier=tier,
+                force_refresh=access_request.force_refresh,
+                amount_usdc=price_for_tier(tier),
+                mode="x402-facilitator",
+            )
+        raise retry_later_503(exc, credit) from exc
     except PaymentValidationError as exc:
         inc_metric("errors_total")
         raise HTTPException(status_code=400, detail=exc.detail) from exc
@@ -877,6 +1224,106 @@ async def access_context_broker_x402(
             "minimum_margin_usdc": float(MIN_PROFIT_MARGIN_USDC),
             "base_fee_wei": profitability.base_fee_wei,
             "gas_units": profitability.gas_units,
+            "supplier_attempts": profitability.supplier_attempts,
+        },
+    }
+
+
+@app.post("/v1/x402/retry")
+async def retry_context_broker_delivery(
+    access_request: AccessRequest,
+    x_axongate_retry_credit: Optional[str] = Header(None, alias="X-AxonGate-Retry-Credit"),
+):
+    """
+    Retry a paid delivery without requiring a second payment.
+
+    This endpoint is intentionally separate from /v1/x402/access because the
+    standard x402 middleware may reject a replayed payment proof before the
+    application handler can inspect it. Instead, AxonGate returns a short-lived
+    X-AxonGate-Retry-Credit after retryable post-payment failures. The credit is
+    scoped to the original target URL, tier, and cache mode, and every retry is
+    still checked by the Unit Economic Guardian before Jina supplier work occurs.
+    """
+    inc_metric("requests_total")
+    inc_metric("delivery_credit_retries_total")
+
+    if not x_axongate_retry_credit:
+        inc_metric("payment_required_total")
+        detail = "Payment Required. Provide PAYMENT-SIGNATURE or a valid X-AxonGate-Retry-Credit."
+        raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
+
+    reservation: DeliveryCreditReservation | None = None
+    try:
+        target_url = validate_target_url(access_request.target_url)
+        tier = normalize_tier(access_request.tier)
+        reservation = await reserve_delivery_credit(
+            x_axongate_retry_credit,
+            target_url=target_url,
+            tier=tier,
+            force_refresh=access_request.force_refresh,
+        )
+
+        amount_usdc = Decimal(str(reservation.record["amount_usdc"]))
+        profitability = await calculate_profitability_for_price(
+            amount_usdc,
+            supplier_attempts=reservation.total_supplier_attempts,
+        )
+        if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            await restore_delivery_credit_attempt(reservation)
+            raise PaymentValidationError("Retry credit rejected; projected margin is below AxonGate guard")
+
+        markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
+        await delete_delivery_credit(reservation.token)
+        inc_metric("delivery_credit_success_total")
+        inc_metric("payment_verified_total")
+    except NetworkUnavailableError as exc:
+        credit = None
+        if reservation is not None:
+            remaining_attempts = reservation.remaining_attempts
+            if not exc.supplier_attempt_charged:
+                await restore_delivery_credit_attempt(reservation)
+                remaining_attempts = min(DELIVERY_CREDIT_MAX_ATTEMPTS, remaining_attempts + 1)
+
+            if exc.creditable and remaining_attempts > 0:
+                credit = delivery_credit_response(reservation.token, remaining_attempts)
+            else:
+                await delete_delivery_credit(reservation.token)
+                inc_metric("delivery_credit_exhausted_total")
+
+        raise retry_later_503(exc, credit) from exc
+    except PaymentValidationError as exc:
+        if reservation is not None:
+            if exc.consume_credit:
+                await delete_delivery_credit(reservation.token)
+                inc_metric("delivery_credit_exhausted_total")
+            else:
+                await restore_delivery_credit_attempt(reservation)
+        inc_metric("errors_total")
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+    return {
+        "status": "success",
+        "target_url": target_url,
+        "tier": tier,
+        "markdown": markdown,
+        "cache": {"hit": cache_hit},
+        "payment": {
+            "mode": "delivery-credit",
+            "original_mode": reservation.record.get("mode"),
+            "network": "eip155:8453",
+            "vault_address": load_vault_address(),
+            "token_address": BASE_USDC_ADDRESS,
+            "amount_usdc": float(amount_usdc),
+        },
+        "ueg_receipt": {
+            "revenue_usdc": float(profitability.revenue_usdc),
+            "dynamic_gas_cost_usdc": float(profitability.dynamic_gas_cost_usdc),
+            "jina_api_cost_usdc": float(profitability.jina_api_cost_usdc),
+            "projected_profit_usdc": float(profitability.projected_profit_usdc),
+            "minimum_margin_usdc": float(MIN_PROFIT_MARGIN_USDC),
+            "base_fee_wei": profitability.base_fee_wei,
+            "gas_units": profitability.gas_units,
+            "supplier_attempts": profitability.supplier_attempts,
         },
     }
 
@@ -906,6 +1353,8 @@ async def access_context_broker(
         )
 
     payment: PaymentVerification | None = None
+    target_url: Optional[str] = None
+    tier: Optional[str] = None
     try:
         target_url = validate_target_url(request.target_url)
         tier = normalize_tier(request.tier)
@@ -917,17 +1366,22 @@ async def access_context_broker(
         markdown, cache_hit = await get_clean_markdown(target_url, tier, request.force_refresh)
         inc_metric("payment_verified_total")
     except NetworkUnavailableError as exc:
-        if payment is not None:
-            await release_processed_tx(payment.tx_hash)
-        raise retry_later_503(exc) from exc
+        credit = None
+        if payment is not None and target_url and tier:
+            credit = await maybe_issue_delivery_credit(
+                exc=exc,
+                payment_reference=f"legacy-tx:{payment.tx_hash}",
+                target_url=target_url,
+                tier=tier,
+                force_refresh=request.force_refresh,
+                amount_usdc=payment.amount_usdc,
+                mode="legacy-tx-hash",
+            )
+        raise retry_later_503(exc, credit) from exc
     except RuntimeError as exc:
-        if payment is not None:
-            await release_processed_tx(payment.tx_hash)
         inc_metric("errors_total")
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except PaymentValidationError as exc:
-        if payment is not None:
-            await release_processed_tx(payment.tx_hash)
         inc_metric("errors_total")
         raise HTTPException(status_code=400, detail=exc.detail) from exc
 
@@ -952,6 +1406,7 @@ async def access_context_broker(
             "minimum_margin_usdc": float(MIN_PROFIT_MARGIN_USDC),
             "base_fee_wei": profitability.base_fee_wei,
             "gas_units": profitability.gas_units,
+            "supplier_attempts": profitability.supplier_attempts,
         },
     }
 
