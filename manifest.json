@@ -58,7 +58,10 @@
     "access": "https://web-production-8136ee.up.railway.app/v1/access",
     "health": "https://web-production-8136ee.up.railway.app/health",
     "manifest": "https://web-production-8136ee.up.railway.app/manifest.json",
-    "openapi": "https://web-production-8136ee.up.railway.app/openapi.json"
+    "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
+    "agent_card": "https://web-production-8136ee.up.railway.app/.well-known/agent.json",
+    "x402": "https://web-production-8136ee.up.railway.app/.well-known/x402",
+    "discovery": "https://web-production-8136ee.up.railway.app/discovery/resources"
   },
   "openapi_contract": {
     "method": "POST",
@@ -84,6 +87,14 @@
     }
   },
   "discovery": {
+    "payai": {
+      "facilitator": "https://facilitator.payai.network",
+      "resource": "https://web-production-8136ee.up.railway.app/v1/access",
+      "resource_type": "http",
+      "x402_version": 2,
+      "market_listing": "https://web-production-8136ee.up.railway.app/discovery/resources",
+      "payment_required_header": "PAYMENT-REQUIRED"
+    },
     "tags": [
       "x402",
       "base",

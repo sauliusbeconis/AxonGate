@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import inspect
 import json
 import os
@@ -29,11 +30,13 @@ load_dotenv()
 
 app = FastAPI(title="AxonGate Sovereign Gateway")
 
+PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", "https://web-production-8136ee.up.railway.app").rstrip("/")
 BASE_MAINNET_RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
 BASE_RPC_TIMEOUT_SECONDS = float(os.getenv("BASE_RPC_TIMEOUT_SECONDS", "5"))
 BASE_USDC_ADDRESS = Web3.to_checksum_address(
     os.getenv("BASE_USDC_ADDRESS", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
 )
+PAYAI_FACILITATOR_URL = os.getenv("PAYAI_FACILITATOR_URL", "https://facilitator.payai.network")
 
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
@@ -131,6 +134,105 @@ def load_agent_card() -> dict[str, Any]:
     """Load the canonical AxonGate discovery card from manifest.json."""
     manifest_path = Path(__file__).with_name("manifest.json")
     return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def build_x402_accepts() -> list[dict[str, Any]]:
+    """Return PayAI/x402-compatible payment requirements for AxonGate."""
+    return [
+        {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "amount": str(REQUIRED_USDC_AMOUNT),
+            "asset": BASE_USDC_ADDRESS,
+            "payTo": load_vault_address(),
+            "maxTimeoutSeconds": 300,
+            "extra": {
+                "name": "USDC",
+                "version": "2",
+                "decimals": USDC_DECIMALS,
+                "price": f"${REQUIRED_USDC_FEE}",
+                "mimeType": "application/json",
+                "resource": f"{PUBLIC_BASE_URL}/v1/access",
+                "description": "Clean Web-to-Markdown context extraction for autonomous agents.",
+            },
+        }
+    ]
+
+
+def build_x402_resource() -> dict[str, Any]:
+    """Build the resource object used by PayAI-style discovery endpoints."""
+    return {
+        "resource": f"{PUBLIC_BASE_URL}/v1/access",
+        "type": "http",
+        "x402Version": 2,
+        "method": "POST",
+        "accepts": build_x402_accepts(),
+        "lastUpdated": int(time.time()),
+        "metadata": {
+            "provider": "AxonGate",
+            "basename": "axongate.base.eth",
+            "category": "data-context",
+            "service": "The Clean Context Broker",
+            "description": "x402-paid Web-to-Markdown extraction for RAG and autonomous research agents.",
+            "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"],
+            "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
+            "facilitator": PAYAI_FACILITATOR_URL,
+        },
+        "inputSchema": {
+            "type": "http",
+            "method": "POST",
+            "contentType": "application/json",
+            "bodyFields": {
+                "target_url": {
+                    "type": "string",
+                    "description": "Absolute HTTP/HTTPS URL to convert into clean markdown.",
+                    "required": True,
+                }
+            },
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "target_url": {"type": "string"},
+                "markdown": {"type": "string"},
+                "payment": {"type": "object"},
+                "ueg_receipt": {"type": "object"},
+            },
+        },
+        "discoverable": True,
+    }
+
+
+def build_payment_required_payload(error: str) -> dict[str, Any]:
+    """Build the x402 PAYMENT-REQUIRED header payload for agent clients."""
+    return {
+        "x402Version": 2,
+        "error": error,
+        "resource": {
+            "url": f"{PUBLIC_BASE_URL}/v1/access",
+            "description": "AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
+            "mimeType": "application/json",
+        },
+        "accepts": build_x402_accepts(),
+        "extensions": {
+            "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
+            "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
+            "paymentHashHeader": "X-AxonGate-Payment-Hash",
+            "facilitator": PAYAI_FACILITATOR_URL,
+        },
+    }
+
+
+def payment_required_headers(error: str) -> dict[str, str]:
+    payload = build_payment_required_payload(error)
+    encoded = base64.b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii")
+    return {
+        "PAYMENT-REQUIRED": encoded,
+        "X-Payment-Required": encoded,
+        "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
+        "X-AxonGate-Payment-Amount": str(REQUIRED_USDC_FEE),
+    }
 
 
 def as_0x_hex(value: Any) -> str:
@@ -373,6 +475,41 @@ async def manifest():
     return load_agent_card()
 
 
+@app.get("/.well-known/agent.json")
+async def well_known_agent():
+    """Expose the agent card at a common agent-discovery well-known path."""
+    return load_agent_card()
+
+
+@app.get("/.well-known/x402")
+async def well_known_x402():
+    """Expose AxonGate's x402 resource advertisement for crawler discovery."""
+    return build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
+
+
+@app.get("/discovery/resources")
+async def discovery_resources(type: Optional[str] = None, limit: int = 20, offset: int = 0):
+    """Return a PayAI-style Bazaar resource listing for AxonGate."""
+    if type not in (None, "http"):
+        items: list[dict[str, Any]] = []
+    else:
+        items = [build_x402_resource()]
+
+    bounded_limit = max(1, min(limit, 100))
+    start = max(offset, 0)
+    paged_items = items[start : start + bounded_limit]
+
+    return {
+        "x402Version": 2,
+        "items": paged_items,
+        "pagination": {
+            "limit": bounded_limit,
+            "offset": start,
+            "total": len(items),
+        },
+    }
+
+
 @app.post("/v1/access")
 async def access_context_broker(
     request: AccessRequest,
@@ -386,9 +523,11 @@ async def access_context_broker(
     it spend the upstream Jina Reader call and return cleaned markdown.
     """
     if not x_axongate_payment_hash:
+        detail = "Payment Required. Provide X-AxonGate-Payment-Hash with a Base USDC transaction hash."
         raise HTTPException(
             status_code=402,
-            detail="Payment Required. Provide X-AxonGate-Payment-Hash with a Base USDC transaction hash.",
+            detail=detail,
+            headers=payment_required_headers(detail),
         )
 
     payment: PaymentVerification | None = None
