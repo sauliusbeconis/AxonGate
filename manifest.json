@@ -22,7 +22,9 @@
       "html_to_markdown",
       "llm_context_preparation",
       "rag_context_generation",
-      "autonomous_research"
+      "autonomous_research",
+      "dns_ssrf_protection",
+      "supplier_preflight"
     ],
     "input_modes": [
       "url"
@@ -53,6 +55,11 @@
     "dynamic_margin_protection": true,
     "minimum_margin_usdc": 0.01,
     "upstream_cost_usdc": 0.0005,
+    "supply_protection": {
+      "dns_ssrf_protection": true,
+      "target_preflight": true,
+      "bad_supply_retry_credits": false
+    },
     "tiers": {
       "basic": {
         "price_usdc": 0.02,

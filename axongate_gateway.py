@@ -7,12 +7,13 @@ import json
 import os
 import re
 import secrets
+import socket
 import time
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import uvicorn
@@ -71,6 +72,23 @@ DELIVERY_CREDIT_MAX_ATTEMPTS = int(os.getenv("AXONGATE_DELIVERY_CREDIT_MAX_ATTEM
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
 JINA_TIMEOUT_SECONDS = float(os.getenv("JINA_TIMEOUT_SECONDS", "20"))
+PREFLIGHT_ENABLED = os.getenv("AXONGATE_PREFLIGHT_ENABLED", "true").lower() not in {"0", "false", "no"}
+PREFLIGHT_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_PREFLIGHT_TIMEOUT_SECONDS", "5"))
+PREFLIGHT_MAX_REDIRECTS = int(os.getenv("AXONGATE_PREFLIGHT_MAX_REDIRECTS", "3"))
+PREFLIGHT_MAX_CONTENT_BYTES = int(os.getenv("AXONGATE_PREFLIGHT_MAX_CONTENT_BYTES", "5242880"))
+PREFLIGHT_ALLOWED_CONTENT_TYPES = {
+    item.strip().lower()
+    for item in os.getenv(
+        "AXONGATE_PREFLIGHT_ALLOWED_CONTENT_TYPES",
+        "text/html,application/xhtml+xml,text/plain,text/markdown,application/json,application/xml,text/xml",
+    ).split(",")
+    if item.strip()
+}
+ALLOWED_TARGET_PORTS = {
+    int(item.strip())
+    for item in os.getenv("AXONGATE_ALLOWED_TARGET_PORTS", "80,443").split(",")
+    if item.strip().isdigit()
+}
 
 USDC_DECIMALS = 6
 REQUIRED_USDC_FEE = Decimal(os.getenv("AXONGATE_BASE_FEE_USDC", "0.02"))
@@ -117,6 +135,9 @@ metrics: dict[str, int] = {
     "jina_requests_total": 0,
     "cache_hits_total": 0,
     "cache_misses_total": 0,
+    "target_preflight_total": 0,
+    "target_preflight_rejections_total": 0,
+    "ssrf_rejections_total": 0,
     "supplier_rejections_total": 0,
     "delivery_credits_issued_total": 0,
     "delivery_credit_success_total": 0,
@@ -171,6 +192,16 @@ class DeliveryCreditReservation:
     record: dict[str, Any]
     remaining_attempts: int
     total_supplier_attempts: int
+
+
+@dataclass(frozen=True)
+class TargetPreflight:
+    requested_url: str
+    final_url: str
+    status_code: int
+    content_type: Optional[str]
+    content_length: Optional[int]
+    redirects_followed: int
 
 
 class PaymentValidationError(Exception):
@@ -301,6 +332,12 @@ def build_x402_resource() -> dict[str, Any]:
             "facilitator": PAYAI_FACILITATOR_URL,
             "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
             "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
+            "supplyGuards": {
+                "dnsSsrfProtection": True,
+                "targetPreflight": PREFLIGHT_ENABLED,
+                "maxContentBytes": PREFLIGHT_MAX_CONTENT_BYTES,
+                "allowedTargetPorts": sorted(ALLOWED_TARGET_PORTS),
+            },
             "pricing": {
                 tier: {
                     "amount": str(usdc_units(price)),
@@ -463,21 +500,194 @@ def normalize_tx_hash(tx_hash: str) -> str:
 def validate_target_url(target_url: str) -> str:
     parsed = urlparse(target_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        inc_metric("target_preflight_rejections_total")
         raise PaymentValidationError("target_url must be an absolute http or https URL")
 
     hostname = parsed.hostname or ""
-    if hostname.lower() in {"localhost", "ip6-localhost"}:
+    if hostname.lower() in {"localhost", "ip6-localhost"} or hostname.lower().endswith((".localhost", ".local")):
+        inc_metric("ssrf_rejections_total")
+        inc_metric("target_preflight_rejections_total")
         raise PaymentValidationError("target_url cannot point to localhost")
+
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    if ALLOWED_TARGET_PORTS and port not in ALLOWED_TARGET_PORTS:
+        inc_metric("target_preflight_rejections_total")
+        raise PaymentValidationError("target_url uses a blocked port")
 
     try:
         ip = ipaddress.ip_address(hostname)
     except ValueError:
         ip = None
 
-    if ip and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast):
+    if ip and not is_public_ip(ip):
+        inc_metric("ssrf_rejections_total")
+        inc_metric("target_preflight_rejections_total")
         raise PaymentValidationError("target_url cannot point to a private or local IP address")
 
     return target_url
+
+
+def is_public_ip(ip: ipaddress._BaseAddress) -> bool:
+    return bool(
+        ip.is_global
+        and not ip.is_private
+        and not ip.is_loopback
+        and not ip.is_link_local
+        and not ip.is_multicast
+        and not ip.is_reserved
+        and not ip.is_unspecified
+    )
+
+
+async def resolve_public_hostname(hostname: str) -> list[str]:
+    """Resolve a hostname and reject anything that can reach non-public networks."""
+    try:
+        addrinfo = await asyncio.wait_for(
+            asyncio.to_thread(socket.getaddrinfo, hostname, None, type=socket.SOCK_STREAM),
+            timeout=PREFLIGHT_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError as exc:
+        raise NetworkUnavailableError(
+            "Target DNS resolution timed out",
+            source="target_dns",
+            creditable=False,
+            supplier_attempt_charged=False,
+        ) from exc
+    except socket.gaierror as exc:
+        inc_metric("target_preflight_rejections_total")
+        raise PaymentValidationError("target_url hostname could not be resolved", consume_credit=True) from exc
+
+    resolved_ips: list[str] = []
+    for entry in addrinfo:
+        ip_text = entry[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_text)
+        except ValueError:
+            inc_metric("ssrf_rejections_total")
+            raise PaymentValidationError("target_url resolved to an invalid IP address", consume_credit=True)
+
+        if not is_public_ip(ip):
+            inc_metric("ssrf_rejections_total")
+            raise PaymentValidationError("target_url resolved to a private or non-routable IP address", consume_credit=True)
+
+        if ip_text not in resolved_ips:
+            resolved_ips.append(ip_text)
+
+    if not resolved_ips:
+        inc_metric("target_preflight_rejections_total")
+        raise PaymentValidationError("target_url did not resolve to any address", consume_credit=True)
+
+    return resolved_ips
+
+
+async def assert_public_target_url(target_url: str) -> str:
+    """Validate URL shape and DNS before AxonGate connects to or pays for supply."""
+    normalized_url = validate_target_url(target_url)
+    hostname = urlparse(normalized_url).hostname
+    if not hostname:
+        raise PaymentValidationError("target_url hostname is missing")
+
+    await resolve_public_hostname(hostname)
+    return normalized_url
+
+
+def content_type_allowed(content_type: Optional[str]) -> bool:
+    if not content_type:
+        return True
+
+    media_type = content_type.split(";", 1)[0].strip().lower()
+    return media_type in PREFLIGHT_ALLOWED_CONTENT_TYPES
+
+
+def parse_content_length(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def reject_target_preflight(detail: str) -> None:
+    inc_metric("target_preflight_rejections_total")
+    inc_metric("supplier_rejections_total")
+    raise PaymentValidationError(detail, consume_credit=True)
+
+
+async def request_target_preflight(client: httpx.AsyncClient, url: str, method: str) -> httpx.Response:
+    headers = {
+        "Accept": "text/html, text/plain, application/xhtml+xml, application/json;q=0.5, */*;q=0.1",
+        "User-Agent": "AxonGate-Preflight/1.0 (+https://web-production-8136ee.up.railway.app/manifest.json)",
+    }
+    if method == "GET":
+        headers["Range"] = "bytes=0-2047"
+
+    return await client.request(method, url, headers=headers, follow_redirects=False)
+
+
+def validate_preflight_response(response: httpx.Response) -> None:
+    content_length = parse_content_length(response.headers.get("content-length"))
+    content_type = response.headers.get("content-type")
+
+    if content_length is not None and content_length > PREFLIGHT_MAX_CONTENT_BYTES:
+        reject_target_preflight("target_url content is too large for AxonGate context extraction")
+
+    if not content_type_allowed(content_type):
+        reject_target_preflight("target_url content type is not supported for Web-to-Markdown extraction")
+
+    if 400 <= response.status_code < 500:
+        reject_target_preflight(f"target_url origin rejected preflight with HTTP {response.status_code}")
+    if response.status_code >= 500:
+        reject_target_preflight(f"target_url origin is unavailable with HTTP {response.status_code}")
+
+
+async def preflight_target_url(target_url: str) -> TargetPreflight:
+    """
+    Cheaply probe a target before spending a Jina request.
+
+    Every redirect hop is URL-validated and DNS-resolved before the next request.
+    Origin failures and unsupported supply are treated as client/supplier quality
+    problems, not AxonGate availability failures, so they do not create retry
+    credits and do not spend a Jina API call.
+    """
+    inc_metric("target_preflight_total")
+    current_url = await assert_public_target_url(target_url)
+
+    try:
+        async with httpx.AsyncClient(timeout=PREFLIGHT_TIMEOUT_SECONDS) as client:
+            for redirect_count in range(PREFLIGHT_MAX_REDIRECTS + 1):
+                response = await request_target_preflight(client, current_url, "HEAD")
+                if response.status_code in {403, 405}:
+                    response = await request_target_preflight(client, current_url, "GET")
+
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("location")
+                    if not location:
+                        reject_target_preflight("target_url redirect is missing a Location header")
+
+                    if redirect_count >= PREFLIGHT_MAX_REDIRECTS:
+                        reject_target_preflight("target_url redirects too many times")
+
+                    current_url = await assert_public_target_url(urljoin(str(response.url), location))
+                    continue
+
+                validate_preflight_response(response)
+                return TargetPreflight(
+                    requested_url=target_url,
+                    final_url=str(response.url),
+                    status_code=response.status_code,
+                    content_type=response.headers.get("content-type"),
+                    content_length=parse_content_length(response.headers.get("content-length")),
+                    redirects_followed=redirect_count,
+                )
+    except PaymentValidationError:
+        raise
+    except httpx.TimeoutException as exc:
+        reject_target_preflight("target_url preflight timed out")
+    except httpx.RequestError as exc:
+        reject_target_preflight("target_url preflight request failed")
+
+    reject_target_preflight("target_url preflight did not complete")
 
 
 def cache_key(target_url: str, tier: str) -> str:
@@ -942,6 +1152,9 @@ async def fetch_clean_markdown(target_url: str) -> str:
             supplier_attempt_charged=False,
         )
 
+    if PREFLIGHT_ENABLED:
+        await preflight_target_url(target_url)
+
     inc_metric("jina_requests_total")
     reader_url = f"{JINA_READER_BASE_URL.rstrip('/')}/{target_url}"
     headers = {"Authorization": f"Bearer {JINA_API_KEY}"}
@@ -1133,6 +1346,13 @@ async def metrics_snapshot():
             "max_attempts": DELIVERY_CREDIT_MAX_ATTEMPTS,
             "memory_entries": len(delivery_credits),
         },
+        "preflight": {
+            "enabled": PREFLIGHT_ENABLED,
+            "timeout_seconds": PREFLIGHT_TIMEOUT_SECONDS,
+            "max_redirects": PREFLIGHT_MAX_REDIRECTS,
+            "max_content_bytes": PREFLIGHT_MAX_CONTENT_BYTES,
+            "allowed_target_ports": sorted(ALLOWED_TARGET_PORTS),
+        },
         "pricing": {tier: float(price) for tier, price in TIER_PRICING_USDC.items()},
     }
 
@@ -1179,7 +1399,7 @@ async def access_context_broker_x402(
     target_url: Optional[str] = None
     tier: Optional[str] = None
     try:
-        target_url = validate_target_url(access_request.target_url)
+        target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(x_axongate_tier or access_request.tier)
         profitability = await calculate_profitability_for_price(price_for_tier(tier))
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
@@ -1254,7 +1474,7 @@ async def retry_context_broker_delivery(
 
     reservation: DeliveryCreditReservation | None = None
     try:
-        target_url = validate_target_url(access_request.target_url)
+        target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(access_request.tier)
         reservation = await reserve_delivery_credit(
             x_axongate_retry_credit,
@@ -1356,7 +1576,7 @@ async def access_context_broker(
     target_url: Optional[str] = None
     tier: Optional[str] = None
     try:
-        target_url = validate_target_url(request.target_url)
+        target_url = await assert_public_target_url(request.target_url)
         tier = normalize_tier(request.tier)
         price = price_for_tier(tier)
         payment = await verify_x402_payment(x_axongate_payment_hash, price)
