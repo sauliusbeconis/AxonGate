@@ -3,3 +3,4 @@ uvicorn
 cdp-sdk
 web3
 python-dotenv
+httpx

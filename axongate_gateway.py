@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import os
 import re
@@ -7,13 +8,22 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
+import httpx
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
+
+try:
+    from cdp import CdpClient
+    from cdp.evm_client import EvmClient
+except ImportError:  # pragma: no cover - Railway installs cdp-sdk from requirements.txt.
+    CdpClient = None
+    EvmClient = None
 
 load_dotenv()
 
@@ -25,13 +35,22 @@ BASE_USDC_ADDRESS = Web3.to_checksum_address(
     os.getenv("BASE_USDC_ADDRESS", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
 )
 
+JINA_API_KEY = os.getenv("JINA_API_KEY")
+JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
+JINA_TIMEOUT_SECONDS = float(os.getenv("JINA_TIMEOUT_SECONDS", "20"))
+
 USDC_DECIMALS = 6
 REQUIRED_USDC_FEE = Decimal(os.getenv("AXONGATE_BASE_FEE_USDC", "0.02"))
 REQUIRED_USDC_AMOUNT = int(REQUIRED_USDC_FEE * (Decimal(10) ** USDC_DECIMALS))
 
-FIXED_API_OVERHEAD_USDC = Decimal(os.getenv("AXONGATE_FIXED_API_OVERHEAD_USDC", "0.0005"))
-PROFIT_MARGIN_REQUIREMENT_USDC = Decimal(os.getenv("AXONGATE_PROFIT_MARGIN_USDC", "0.002"))
-UEG_GAS_UNITS = int(os.getenv("AXONGATE_UEG_GAS_UNITS", "21000"))
+JINA_API_COST_USDC = Decimal(
+    os.getenv("AXONGATE_JINA_API_COST_USDC", os.getenv("AXONGATE_FIXED_API_OVERHEAD_USDC", "0.0005"))
+)
+MIN_PROFIT_MARGIN_USDC = max(
+    Decimal(os.getenv("AXONGATE_PROFIT_MARGIN_USDC", "0.01")),
+    Decimal("0.01"),
+)
+UEG_GAS_UNITS = int(os.getenv("AXONGATE_UEG_GAS_UNITS", "65000"))
 ETH_USDC_PRICE = Decimal(os.getenv("AXONGATE_ETH_USDC_PRICE", "3500"))
 
 TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").hex()
@@ -43,8 +62,13 @@ web3 = Web3(
     )
 )
 
-processed_payment_hashes: set[str] = set()
-processed_payment_hash_lock = asyncio.Lock()
+processed_txs: set[str] = set()
+processed_txs_lock = asyncio.Lock()
+CDP_TRANSACTION_METHOD_NAMES = ("get_transaction", "get_evm_transaction", "get_transaction_receipt")
+
+
+class AccessRequest(BaseModel):
+    target_url: str = Field(..., description="HTTP or HTTPS URL to convert into clean markdown")
 
 
 class ComputeRequest(BaseModel):
@@ -55,9 +79,9 @@ class ComputeRequest(BaseModel):
 
 @dataclass(frozen=True)
 class UEGReceipt:
-    fee_received_usdc: Decimal
+    revenue_usdc: Decimal
     dynamic_gas_cost_usdc: Decimal
-    fixed_api_overhead_usdc: Decimal
+    jina_api_cost_usdc: Decimal
     projected_profit_usdc: Decimal
     base_fee_wei: int
     gas_units: int
@@ -72,8 +96,7 @@ class PaymentVerification:
 
 
 class PaymentValidationError(Exception):
-    def __init__(self, status_code: int, detail: str):
-        self.status_code = status_code
+    def __init__(self, detail: str):
         self.detail = detail
         super().__init__(detail)
 
@@ -106,15 +129,18 @@ def as_0x_hex(value: Any) -> str:
     return str(value)
 
 
-def usdc_amount_from_units(units: int) -> Decimal:
-    return Decimal(units) / (Decimal(10) ** USDC_DECIMALS)
-
-
 def normalize_tx_hash(tx_hash: str) -> str:
     normalized = tx_hash.strip().lower()
     if not re.fullmatch(r"0x[a-fA-F0-9]{64}", normalized):
-        raise PaymentValidationError(400, "Invalid payment hash format")
+        raise PaymentValidationError("Invalid payment hash format")
     return normalized
+
+
+def validate_target_url(target_url: str) -> str:
+    parsed = urlparse(target_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise PaymentValidationError("target_url must be an absolute http or https URL")
+    return target_url
 
 
 async def call_base_rpc(label: str, rpc_call):
@@ -131,6 +157,57 @@ async def call_base_rpc(label: str, rpc_call):
         raise NetworkUnavailableError(f"Base RPC failed during {label}") from exc
 
 
+async def maybe_query_cdp_transaction(tx_hash: str) -> Any | None:
+    """
+    Attempt a CDP SDK transaction lookup when the installed SDK exposes one.
+
+    Some CDP SDK versions do not include a read-only EVM transaction method on
+    client.evm. AxonGate still performs strict on-chain verification with Web3
+    receipt and log data, but this hook lets Railway deployments with a newer CDP
+    SDK use Coinbase's client surface without changing the validation contract.
+    """
+    if CdpClient is None or EvmClient is None:
+        return None
+
+    method_name = next((name for name in CDP_TRANSACTION_METHOD_NAMES if hasattr(EvmClient, name)), None)
+    if method_name is None:
+        return None
+
+    api_key_id = os.getenv("CDP_API_KEY_ID")
+    api_key_secret = os.getenv("CDP_API_KEY_SECRET")
+    wallet_secret = os.getenv("CDP_WALLET_SECRET")
+    if not api_key_id or not api_key_secret or not wallet_secret:
+        return None
+
+    try:
+        async with CdpClient(
+            api_key_id=api_key_id,
+            api_key_secret=api_key_secret,
+            wallet_secret=wallet_secret,
+        ) as client:
+            method = getattr(client.evm, method_name, None)
+            if method is None:
+                return None
+
+            for kwargs in (
+                {"transaction_hash": tx_hash, "network": "base"},
+                {"tx_hash": tx_hash, "network": "base"},
+                {"hash": tx_hash, "network": "base"},
+            ):
+                try:
+                    result = method(**kwargs)
+                    if inspect.isawaitable(result):
+                        return await asyncio.wait_for(result, timeout=BASE_RPC_TIMEOUT_SECONDS + 1)
+                    return result
+                except TypeError:
+                    continue
+            return None
+    except asyncio.TimeoutError as exc:
+        raise NetworkUnavailableError("CDP transaction lookup timed out") from exc
+    except Exception as exc:
+        raise NetworkUnavailableError("CDP transaction lookup failed") from exc
+
+
 async def ensure_base_rpc_ready() -> None:
     connected = await call_base_rpc("connectivity check", web3.is_connected)
     if not connected:
@@ -138,7 +215,7 @@ async def ensure_base_rpc_ready() -> None:
 
 
 async def fetch_current_base_fee_wei() -> int:
-    """Fetch the latest EIP-1559 base fee from Base for dynamic UEG pricing."""
+    """Fetch the latest Base EIP-1559 base fee for the dynamic UEG model."""
     await ensure_base_rpc_ready()
     latest_block = await call_base_rpc("latest block lookup", lambda: web3.eth.get_block("latest"))
     base_fee = latest_block.get("baseFeePerGas")
@@ -148,63 +225,48 @@ async def fetch_current_base_fee_wei() -> int:
     return int(base_fee)
 
 
-async def calculate_dynamic_gas_cost_usdc() -> tuple[Decimal, int]:
+async def calculate_profitability() -> UEGReceipt:
+    """Calculate 0.02 USDC revenue minus live Base gas estimate and Jina cost."""
     base_fee_wei = await fetch_current_base_fee_wei()
     gas_cost_eth = Decimal(base_fee_wei * UEG_GAS_UNITS) / Decimal(10**18)
-    return gas_cost_eth * ETH_USDC_PRICE, base_fee_wei
-
-
-async def is_profitable(fee_received_usdc: Decimal) -> UEGReceipt:
-    """Run the dynamic Unit Economic Guardian check with live Base fee data."""
-    dynamic_gas_cost_usdc, base_fee_wei = await calculate_dynamic_gas_cost_usdc()
-    projected_profit = fee_received_usdc - (dynamic_gas_cost_usdc + FIXED_API_OVERHEAD_USDC)
+    dynamic_gas_cost_usdc = gas_cost_eth * ETH_USDC_PRICE
+    projected_profit = REQUIRED_USDC_FEE - (dynamic_gas_cost_usdc + JINA_API_COST_USDC)
 
     return UEGReceipt(
-        fee_received_usdc=fee_received_usdc,
+        revenue_usdc=REQUIRED_USDC_FEE,
         dynamic_gas_cost_usdc=dynamic_gas_cost_usdc,
-        fixed_api_overhead_usdc=FIXED_API_OVERHEAD_USDC,
+        jina_api_cost_usdc=JINA_API_COST_USDC,
         projected_profit_usdc=projected_profit,
         base_fee_wei=base_fee_wei,
         gas_units=UEG_GAS_UNITS,
     )
 
 
-def assert_ueg_margin(receipt: UEGReceipt) -> None:
-    if receipt.projected_profit_usdc <= PROFIT_MARGIN_REQUIREMENT_USDC:
-        minimum_fee = (
-            receipt.dynamic_gas_cost_usdc
-            + receipt.fixed_api_overhead_usdc
-            + PROFIT_MARGIN_REQUIREMENT_USDC
-        )
-        raise PaymentValidationError(
-            402,
-            f"Payment Required. Dynamic UEG rejected transaction. "
-            f"Minimum viable fee is {minimum_fee:.6f} USDC",
-        )
+async def check_profitability() -> bool:
+    """Return True only when the Clean Context Broker margin is > 0.01 USDC."""
+    receipt = await calculate_profitability()
+    return receipt.projected_profit_usdc > MIN_PROFIT_MARGIN_USDC
 
 
-async def validate_x402_payment(tx_hash: str) -> PaymentVerification:
+async def verify_x402_payment(tx_hash: str) -> PaymentVerification:
     """
-    Validate the AxonGate x402 payment loop against Base mainnet.
+    Verify the AxonGate x402 payment hash against Base mainnet.
 
-    The client supplies X-AxonGate-Payment-Hash after sending the 0.02 USDC fee.
-    AxonGate never trusts that hash by itself. The gateway queries Base, verifies
-    the transaction receipt succeeded, requires the transaction call to target the
-    Base USDC contract, parses the canonical ERC-20 Transfer logs, and accepts only
-    an exact 0.02 USDC transfer whose recipient is the AxonGate vault address.
-
-    A successful hash is inserted into an in-memory replay cache after validation.
-    Railway may run more than one process or restart the process, so this cache is
-    intentionally a lightweight first line of defense; a shared cache or database is
-    the next production step if the deployment scales horizontally.
+    The Clean Context Broker accepts one paid request per successful transaction.
+    This validator normalizes and replay-checks the hash, probes CDP if the SDK
+    provides a read-only transaction method, then uses Base RPC receipt data to
+    enforce the economic facts: the transaction succeeded, it called the Base USDC
+    contract, and its ERC-20 Transfer event sent exactly 0.02 USDC to the AxonGate
+    vault. Only after those checks pass is the hash stored in processed_txs.
     """
     normalized_hash = normalize_tx_hash(tx_hash)
 
-    async with processed_payment_hash_lock:
-        if normalized_hash in processed_payment_hashes:
-            raise PaymentValidationError(400, "Payment hash has already been processed")
+    async with processed_txs_lock:
+        if normalized_hash in processed_txs:
+            raise PaymentValidationError("Payment hash has already been processed")
 
     vault_address = load_vault_address()
+    await maybe_query_cdp_transaction(normalized_hash)
     await ensure_base_rpc_ready()
 
     try:
@@ -213,14 +275,14 @@ async def validate_x402_payment(tx_hash: str) -> PaymentVerification:
             call_base_rpc("transaction receipt lookup", lambda: web3.eth.get_transaction_receipt(normalized_hash)),
         )
     except TransactionNotFound as exc:
-        raise PaymentValidationError(400, "Payment transaction was not found on Base") from exc
+        raise PaymentValidationError("Payment transaction was not found on Base") from exc
 
     if receipt.get("status") != 1:
-        raise PaymentValidationError(402, "Payment transaction was not successful")
+        raise PaymentValidationError("Payment transaction was not successful")
 
     transaction_to = transaction.get("to")
     if not transaction_to or Web3.to_checksum_address(transaction_to) != BASE_USDC_ADDRESS:
-        raise PaymentValidationError(402, "Payment transaction must call the Base USDC contract")
+        raise PaymentValidationError("Payment transaction must call the Base USDC contract")
 
     vault_topic = "0x" + vault_address.lower().replace("0x", "").rjust(64, "0")
     total_transferred_to_vault = 0
@@ -239,15 +301,12 @@ async def validate_x402_payment(tx_hash: str) -> PaymentVerification:
         total_transferred_to_vault += int(as_0x_hex(log.get("data", "0x0")), 16)
 
     if total_transferred_to_vault != REQUIRED_USDC_AMOUNT:
-        raise PaymentValidationError(
-            402,
-            f"Payment must transfer exactly {REQUIRED_USDC_FEE} USDC to the AxonGate vault",
-        )
+        raise PaymentValidationError(f"Payment must transfer exactly {REQUIRED_USDC_FEE} USDC to AxonGate")
 
-    async with processed_payment_hash_lock:
-        if normalized_hash in processed_payment_hashes:
-            raise PaymentValidationError(400, "Payment hash has already been processed")
-        processed_payment_hashes.add(normalized_hash)
+    async with processed_txs_lock:
+        if normalized_hash in processed_txs:
+            raise PaymentValidationError("Payment hash has already been processed")
+        processed_txs.add(normalized_hash)
 
     return PaymentVerification(
         tx_hash=normalized_hash,
@@ -257,11 +316,36 @@ async def validate_x402_payment(tx_hash: str) -> PaymentVerification:
     )
 
 
+async def release_processed_tx(tx_hash: str) -> None:
+    """Release a reserved payment hash when no paid response was delivered."""
+    async with processed_txs_lock:
+        processed_txs.discard(tx_hash)
+
+
+async def fetch_clean_markdown(target_url: str) -> str:
+    """Call Jina Reader and return the upstream markdown body."""
+    if not JINA_API_KEY:
+        raise NetworkUnavailableError("Jina API key is not configured")
+
+    reader_url = f"{JINA_READER_BASE_URL.rstrip('/')}/{target_url}"
+    headers = {"Authorization": f"Bearer {JINA_API_KEY}"}
+
+    try:
+        async with httpx.AsyncClient(timeout=JINA_TIMEOUT_SECONDS, follow_redirects=True) as client:
+            response = await client.get(reader_url, headers=headers)
+            response.raise_for_status()
+            return response.text
+    except httpx.TimeoutException as exc:
+        raise NetworkUnavailableError("Jina Reader timed out") from exc
+    except httpx.HTTPError as exc:
+        raise NetworkUnavailableError("Jina Reader request failed") from exc
+
+
 def retry_later_503(exc: Exception) -> HTTPException:
-    print(f"[BASE RPC] Temporary verification failure: {exc}")
+    print(f"[UPSTREAM] Temporary failure: {exc}")
     return HTTPException(
         status_code=503,
-        detail="Base RPC temporarily unavailable. Client agent should retry in 5 seconds.",
+        detail="Upstream service temporarily unavailable. Client agent should retry in 5 seconds.",
     )
 
 
@@ -271,46 +355,63 @@ async def health():
 
 
 @app.post("/v1/access")
-async def verify_access(
+async def access_context_broker(
+    request: AccessRequest,
     x_axongate_payment_hash: Optional[str] = Header(None, alias="X-AxonGate-Payment-Hash"),
-    tx_hash: Optional[str] = Query(None),
-    x_tx_hash: Optional[str] = Header(None, alias="x-tx-hash"),
-    x402_tx_hash: Optional[str] = Header(None, alias="x402-tx-hash"),
 ):
-    submitted_tx_hash = x_axongate_payment_hash or tx_hash or x_tx_hash or x402_tx_hash
+    """
+    Paid Clean Context Broker endpoint.
 
-    if not submitted_tx_hash:
+    Clients post a target URL and provide X-AxonGate-Payment-Hash. AxonGate first
+    verifies the on-chain x402 payment and the dynamic UEG margin. Only then does
+    it spend the upstream Jina Reader call and return cleaned markdown.
+    """
+    if not x_axongate_payment_hash:
         raise HTTPException(
             status_code=402,
             detail="Payment Required. Provide X-AxonGate-Payment-Hash with a Base USDC transaction hash.",
         )
 
+    payment: PaymentVerification | None = None
     try:
-        payment = await validate_x402_payment(submitted_tx_hash)
-        ueg_receipt = await is_profitable(payment.amount_usdc)
-        assert_ueg_margin(ueg_receipt)
+        target_url = validate_target_url(request.target_url)
+        payment = await verify_x402_payment(x_axongate_payment_hash)
+        profitability = await calculate_profitability()
+        if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
+        markdown = await fetch_clean_markdown(target_url)
     except NetworkUnavailableError as exc:
+        if payment is not None:
+            await release_processed_tx(payment.tx_hash)
         raise retry_later_503(exc) from exc
     except RuntimeError as exc:
+        if payment is not None:
+            await release_processed_tx(payment.tx_hash)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except PaymentValidationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        if payment is not None:
+            await release_processed_tx(payment.tx_hash)
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
 
     return {
         "status": "success",
-        "message": "x402 payment verified on Base. AxonGate access granted.",
-        "tx_hash": payment.tx_hash,
-        "network": "base-mainnet",
-        "vault_address": payment.vault_address,
-        "token_address": payment.token_address,
-        "amount_usdc": float(payment.amount_usdc),
+        "target_url": target_url,
+        "markdown": markdown,
+        "payment": {
+            "tx_hash": payment.tx_hash,
+            "network": "base-mainnet",
+            "vault_address": payment.vault_address,
+            "token_address": payment.token_address,
+            "amount_usdc": float(payment.amount_usdc),
+        },
         "ueg_receipt": {
-            "fee_received_usdc": float(ueg_receipt.fee_received_usdc),
-            "dynamic_gas_cost_usdc": float(ueg_receipt.dynamic_gas_cost_usdc),
-            "fixed_api_overhead_usdc": float(ueg_receipt.fixed_api_overhead_usdc),
-            "projected_profit_usdc": float(ueg_receipt.projected_profit_usdc),
-            "base_fee_wei": ueg_receipt.base_fee_wei,
-            "gas_units": ueg_receipt.gas_units,
+            "revenue_usdc": float(profitability.revenue_usdc),
+            "dynamic_gas_cost_usdc": float(profitability.dynamic_gas_cost_usdc),
+            "jina_api_cost_usdc": float(profitability.jina_api_cost_usdc),
+            "projected_profit_usdc": float(profitability.projected_profit_usdc),
+            "minimum_margin_usdc": float(MIN_PROFIT_MARGIN_USDC),
+            "base_fee_wei": profitability.base_fee_wei,
+            "gas_units": profitability.gas_units,
         },
     }
 
@@ -324,20 +425,24 @@ async def process_task(request: ComputeRequest, x402_token: str = Header(None)):
         raise HTTPException(status_code=401, detail="Missing x402 Payment Token")
 
     try:
+        profitability = await calculate_profitability()
         offered_fee_usdc = Decimal(str(request.offered_fee))
-        ueg_receipt = await is_profitable(offered_fee_usdc)
-        assert_ueg_margin(ueg_receipt)
+        projected_profit = offered_fee_usdc - (
+            profitability.dynamic_gas_cost_usdc + profitability.jina_api_cost_usdc
+        )
+        if projected_profit <= MIN_PROFIT_MARGIN_USDC:
+            raise PaymentValidationError("Dynamic UEG rejected transaction; offered fee margin is too low")
     except NetworkUnavailableError as exc:
         raise retry_later_503(exc) from exc
     except PaymentValidationError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+        raise HTTPException(status_code=402, detail=exc.detail) from exc
 
     print(
         "[UEG CHECK] "
-        f"Offered: {ueg_receipt.fee_received_usdc:.6f} USDC | "
-        f"Dynamic Gas: {ueg_receipt.dynamic_gas_cost_usdc:.6f} USDC | "
-        f"Overhead: {ueg_receipt.fixed_api_overhead_usdc:.6f} USDC | "
-        f"Profit: {ueg_receipt.projected_profit_usdc:.6f} USDC"
+        f"Offered: {offered_fee_usdc:.6f} USDC | "
+        f"Dynamic Gas: {profitability.dynamic_gas_cost_usdc:.6f} USDC | "
+        f"Jina Cost: {profitability.jina_api_cost_usdc:.6f} USDC | "
+        f"Profit: {projected_profit:.6f} USDC"
     )
     print("[UEG PASSED] Executing API Brokerage...")
 
@@ -348,9 +453,9 @@ async def process_task(request: ComputeRequest, x402_token: str = Header(None)):
         "message": "Task processed successfully via AxonGate Brokerage",
         "result": "simulated_llm_output_data",
         "ueg_receipt": {
-            "fee_collected_usdc": float(ueg_receipt.fee_received_usdc),
-            "dynamic_gas_cost_usdc": float(ueg_receipt.dynamic_gas_cost_usdc),
-            "net_profit_usdc": float(ueg_receipt.projected_profit_usdc),
+            "fee_collected_usdc": float(offered_fee_usdc),
+            "dynamic_gas_cost_usdc": float(profitability.dynamic_gas_cost_usdc),
+            "net_profit_usdc": float(projected_profit),
             "timestamp": time.time(),
         },
     }
