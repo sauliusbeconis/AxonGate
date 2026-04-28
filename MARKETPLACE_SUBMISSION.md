@@ -13,6 +13,9 @@ Category: Data & Context
 Description:
 AxonGate is an x402-paid Clean Context Broker for autonomous agents. It converts public web pages into clean, token-efficient Markdown for RAG pipelines, research agents, and LLM context preparation.
 
+Short description:
+x402-paid Web-to-Markdown context extraction for RAG and autonomous research agents.
+
 ## Live URLs
 
 Manifest:
@@ -32,6 +35,17 @@ https://web-production-8136ee.up.railway.app/v1/x402/access
 
 Legacy tx-hash endpoint:
 https://web-production-8136ee.up.railway.app/v1/access
+
+Base URL:
+https://web-production-8136ee.up.railway.app
+
+Endpoint paths:
+
+```text
+/v1/x402/access
+/.well-known/x402
+/discovery/resources
+```
 
 ## Pricing
 
@@ -63,3 +77,68 @@ x402, Base, USDC, web scraping, Web-to-Markdown, markdown extraction, RAG contex
 ```
 
 For standard x402 clients, set the tier with either `?tier=basic` or the `X-AxonGate-Tier` header so payment requirements match the requested tier.
+
+## Agent Bazaar Fields
+
+Skill Name:
+AxonGate Clean Context Broker
+
+Type:
+API Endpoint
+
+Category:
+Web Scraping
+
+Description:
+AxonGate converts public web pages into clean, token-efficient Markdown for autonomous agents, RAG pipelines, and LLM context preparation. It is x402-native on Base with USDC pay-per-use pricing and machine-readable discovery endpoints.
+
+Price per Call:
+0.02
+
+x402 Endpoint URL:
+https://web-production-8136ee.up.railway.app/v1/x402/access
+
+## x402 List Fields
+
+Service name:
+AxonGate
+
+Service base URL:
+https://web-production-8136ee.up.railway.app
+
+Website URL:
+https://web-production-8136ee.up.railway.app/manifest.json
+
+Category:
+Data
+
+Description:
+AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.
+
+Endpoint paths:
+
+```text
+/v1/x402/access
+/.well-known/x402
+/discovery/resources
+```
+
+Notes:
+Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header.
+
+## 402agents Fields
+
+Agent name:
+AxonGate
+
+Category:
+Tools & Integrations
+
+Description:
+AxonGate is a Base x402-native Clean Context Broker that returns clean Markdown from public URLs for agentic research and RAG workflows.
+
+Agent / manifest URL:
+https://web-production-8136ee.up.railway.app/manifest.json
+
+x402 endpoint:
+https://web-production-8136ee.up.railway.app/v1/x402/access
