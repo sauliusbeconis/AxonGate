@@ -66,6 +66,7 @@ app = FastAPI(
 )
 
 PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", "https://web-production-8136ee.up.railway.app").rstrip("/")
+GITHUB_REPO_URL = os.getenv("AXONGATE_GITHUB_REPO_URL", "https://github.com/sauliusbeconis/AxonGate").rstrip("/")
 BASE_MAINNET_RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
 BASE_RPC_TIMEOUT_SECONDS = float(os.getenv("BASE_RPC_TIMEOUT_SECONDS", "5"))
 BASE_USDC_ADDRESS = Web3.to_checksum_address(
@@ -164,10 +165,28 @@ metrics: dict[str, int] = {
     "x402_access_requests_total": 0,
     "delivery_credit_retries_total": 0,
     "payment_required_total": 0,
+    "payment_challenges_total": 0,
+    "paid_attempts_total": 0,
+    "payments_accepted_total": 0,
     "payment_verified_total": 0,
+    "payment_validation_rejections_total": 0,
+    "payment_replay_rejections_total": 0,
+    "delivery_success_total": 0,
+    "standard_delivery_success_total": 0,
+    "legacy_delivery_success_total": 0,
+    "retry_delivery_success_total": 0,
     "jina_requests_total": 0,
+    "jina_success_total": 0,
     "cache_hits_total": 0,
     "cache_misses_total": 0,
+    "discovery_hits_total": 0,
+    "discovery_root_hits_total": 0,
+    "discovery_llms_hits_total": 0,
+    "discovery_docs_hits_total": 0,
+    "discovery_manifest_hits_total": 0,
+    "discovery_agent_card_hits_total": 0,
+    "discovery_x402_hits_total": 0,
+    "discovery_resources_hits_total": 0,
     "target_preflight_total": 0,
     "target_preflight_rejections_total": 0,
     "ssrf_rejections_total": 0,
@@ -175,10 +194,14 @@ metrics: dict[str, int] = {
     "eth_price_cache_hits_total": 0,
     "eth_price_stale_hits_total": 0,
     "eth_price_errors_total": 0,
+    "ueg_checks_total": 0,
+    "ueg_rejections_total": 0,
     "rate_limit_checks_total": 0,
     "rate_limit_rejections_total": 0,
     "supplier_rejections_total": 0,
+    "retryable_outages_total": 0,
     "delivery_credits_issued_total": 0,
+    "retry_credit_attempts_total": 0,
     "delivery_credit_success_total": 0,
     "delivery_credit_exhausted_total": 0,
     "errors_total": 0,
@@ -345,6 +368,53 @@ def load_agent_card() -> dict[str, Any]:
 
 def inc_metric(name: str, amount: int = 1) -> None:
     metrics[name] = metrics.get(name, 0) + amount
+
+
+def inc_discovery_hit(metric_name: str) -> None:
+    """Count discovery traffic as a separate conversion funnel stage."""
+    inc_metric("discovery_hits_total")
+    inc_metric(metric_name)
+
+
+def conversion_rate(numerator: int, denominator: int) -> float:
+    """Return a compact ratio for the metrics endpoint."""
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 4)
+
+
+def conversion_funnel_snapshot() -> dict[str, Any]:
+    """Summarize discovery-to-delivery conversion without exposing client data."""
+    discovery_hits = metrics.get("discovery_hits_total", 0)
+    challenges = metrics.get("payment_challenges_total", 0)
+    paid_attempts = metrics.get("paid_attempts_total", 0)
+    accepted = metrics.get("payments_accepted_total", 0)
+    delivered = metrics.get("delivery_success_total", 0)
+    supplier_requests = metrics.get("jina_requests_total", 0)
+
+    return {
+        "discovery_hits": discovery_hits,
+        "payment_challenges": challenges,
+        "paid_attempts": paid_attempts,
+        "payments_accepted": accepted,
+        "delivery_success": delivered,
+        "retry_credit_issued": metrics.get("delivery_credits_issued_total", 0),
+        "retry_delivery_success": metrics.get("retry_delivery_success_total", 0),
+        "ueg_checks": metrics.get("ueg_checks_total", 0),
+        "ueg_rejections": metrics.get("ueg_rejections_total", 0),
+        "rate_limit_rejections": metrics.get("rate_limit_rejections_total", 0),
+        "supplier_requests": supplier_requests,
+        "supplier_success": metrics.get("jina_success_total", 0),
+        "supplier_rejections": metrics.get("supplier_rejections_total", 0),
+        "retryable_outages": metrics.get("retryable_outages_total", 0),
+        "rates": {
+            "challenge_per_discovery": conversion_rate(challenges, discovery_hits),
+            "paid_attempt_per_challenge": conversion_rate(paid_attempts, challenges),
+            "accepted_per_paid_attempt": conversion_rate(accepted, paid_attempts),
+            "delivered_per_accepted": conversion_rate(delivered, accepted),
+            "supplier_success_per_request": conversion_rate(metrics.get("jina_success_total", 0), supplier_requests),
+        },
+    }
 
 
 def stable_hash(value: str) -> str:
@@ -1341,6 +1411,7 @@ async def calculate_profitability() -> UEGReceipt:
 
 async def calculate_profitability_for_price(revenue_usdc: Decimal, supplier_attempts: int = 1) -> UEGReceipt:
     """Calculate tier revenue minus live Base gas estimate and bounded supplier cost."""
+    inc_metric("ueg_checks_total")
     base_fee_wei, eth_quote = await asyncio.gather(fetch_current_base_fee_wei(), fetch_eth_usdc_quote())
     gas_cost_eth = Decimal(base_fee_wei * UEG_GAS_UNITS) / Decimal(10**18)
     dynamic_gas_cost_usdc = gas_cost_eth * eth_quote.price
@@ -1447,6 +1518,7 @@ async def verify_x402_payment(tx_hash: str, expected_fee_usdc: Decimal = REQUIRE
         raise PaymentValidationError(f"Payment must transfer exactly {expected_fee_usdc} USDC to AxonGate")
 
     if not await reserve_processed_tx(normalized_hash):
+        inc_metric("payment_replay_rejections_total")
         raise PaymentValidationError("Payment hash has already been processed")
 
     return PaymentVerification(
@@ -1477,6 +1549,7 @@ async def fetch_clean_markdown(target_url: str) -> str:
         async with httpx.AsyncClient(timeout=JINA_TIMEOUT_SECONDS, follow_redirects=True) as client:
             response = await client.get(reader_url, headers=headers)
             response.raise_for_status()
+            inc_metric("jina_success_total")
             return response.text
     except httpx.TimeoutException as exc:
         raise NetworkUnavailableError(
@@ -1562,6 +1635,7 @@ async def maybe_issue_delivery_credit(
 
 def retry_later_503(exc: Exception, credit: Optional[dict[str, Any]] = None) -> HTTPException:
     inc_metric("errors_total")
+    inc_metric("retryable_outages_total")
     print(f"[UPSTREAM] Temporary failure: {exc}")
     headers = {"Retry-After": "5"}
     detail: Any = {
@@ -1634,6 +1708,8 @@ Manifest: {public_url("/manifest.json")}
 Agent card: {public_url("/.well-known/agent.json")}
 x402 discovery: {public_url("/.well-known/x402")}
 Resource listing: {public_url("/discovery/resources")}
+Python client example: {GITHUB_REPO_URL}/blob/main/examples/python_client.py
+cURL examples: {GITHUB_REPO_URL}/blob/main/examples/curl.md
 
 ## Payment
 
@@ -1782,6 +1858,8 @@ def build_docs_html() -> str:
       <a href="{public}/llms.txt">llms.txt</a>
       <a href="{public}/openapi.json">OpenAPI JSON</a>
       <a href="{public}/swagger">Swagger UI</a>
+      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/python_client.py">Python client</a>
+      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/curl.md">cURL examples</a>
     </section>
 
     <h2>Service Contract</h2>
@@ -1827,18 +1905,21 @@ def build_docs_html() -> str:
 @app.get("/llms.txt", response_class=PlainTextResponse, tags=["discovery"], summary="Agent-readable service brief")
 async def llms_txt():
     """Expose a concise machine-readable brief for LLM routers and crawlers."""
+    inc_discovery_hit("discovery_llms_hits_total")
     return build_llms_txt()
 
 
 @app.get("/docs", response_class=HTMLResponse, tags=["discovery"], summary="Human-readable AxonGate docs")
 async def human_docs():
     """Serve a lightweight docs page; Swagger remains available at /swagger."""
+    inc_discovery_hit("discovery_docs_hits_total")
     return build_docs_html()
 
 
 @app.get("/", tags=["discovery"], summary="Discovery index")
 async def root():
     """Return a lightweight discovery index for crawlers and agent clients."""
+    inc_discovery_hit("discovery_root_hits_total")
     return {
         "status": "alive",
         "agent": "AxonGate",
@@ -1852,6 +1933,8 @@ async def root():
         "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
         "swagger": f"{PUBLIC_BASE_URL}/swagger",
+        "python_client_example": f"{GITHUB_REPO_URL}/blob/main/examples/python_client.py",
+        "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
         "standard_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "legacy_tx_hash_endpoint": f"{PUBLIC_BASE_URL}/v1/access",
         "retry_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
@@ -1866,24 +1949,28 @@ async def health():
 @app.get("/manifest.json", tags=["discovery"], summary="Canonical agent manifest")
 async def manifest():
     """Return the full AxonGate agent card used by other agents for discovery."""
+    inc_discovery_hit("discovery_manifest_hits_total")
     return load_agent_card()
 
 
 @app.get("/.well-known/agent.json", tags=["discovery"], summary="Well-known agent card")
 async def well_known_agent():
     """Expose the agent card at a common agent-discovery well-known path."""
+    inc_discovery_hit("discovery_agent_card_hits_total")
     return load_agent_card()
 
 
 @app.get("/.well-known/x402", tags=["discovery"], summary="x402 payment discovery")
 async def well_known_x402():
     """Expose AxonGate's x402 resource advertisement for crawler discovery."""
+    inc_discovery_hit("discovery_x402_hits_total")
     return build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
 
 
 @app.get("/discovery/resources", tags=["discovery"], summary="PayAI-style resource listing")
 async def discovery_resources(type: Optional[str] = None, limit: int = 20, offset: int = 0):
     """Return a PayAI-style Bazaar resource listing for AxonGate."""
+    inc_discovery_hit("discovery_resources_hits_total")
     if type not in (None, "http"):
         items: list[dict[str, Any]] = []
     else:
@@ -1910,6 +1997,7 @@ async def metrics_snapshot():
     return {
         "status": "ok",
         "metrics": metrics,
+        "conversion_funnel": conversion_funnel_snapshot(),
         "cache": {
             "backend": "redis" if redis_client else "memory",
             "default_ttl_seconds": DEFAULT_CACHE_TTL_SECONDS,
@@ -1963,6 +2051,7 @@ async def access_context_broker_x402_probe(request: Request):
     """
     inc_metric("requests_total")
     inc_metric("payment_required_total")
+    inc_metric("payment_challenges_total")
     try:
         await enforce_rate_limit("x402_probe_ip", client_rate_identifier(request), RATE_LIMIT_PROBE_PER_IP)
     except RateLimitExceeded as exc:
@@ -2001,6 +2090,7 @@ async def access_context_broker_x402(
 
     if not hasattr(request.state, "payment_payload"):
         inc_metric("payment_required_total")
+        inc_metric("payment_challenges_total")
         try:
             await enforce_rate_limit("x402_unpaid_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
         except RateLimitExceeded as exc:
@@ -2010,6 +2100,8 @@ async def access_context_broker_x402(
         raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
 
     payment_reference = payment_reference_from_request(request)
+    inc_metric("paid_attempts_total")
+    inc_metric("payments_accepted_total")
     target_url: Optional[str] = None
     tier: Optional[str] = None
     try:
@@ -2034,9 +2126,12 @@ async def access_context_broker_x402(
 
         profitability = await calculate_profitability_for_price(price_for_tier(tier))
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            inc_metric("ueg_rejections_total")
             raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
         markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
         inc_metric("payment_verified_total")
+        inc_metric("delivery_success_total")
+        inc_metric("standard_delivery_success_total")
     except NetworkUnavailableError as exc:
         credit = None
         if target_url and tier:
@@ -2052,6 +2147,7 @@ async def access_context_broker_x402(
         raise retry_later_503(exc, credit) from exc
     except PaymentValidationError as exc:
         inc_metric("errors_total")
+        inc_metric("payment_validation_rejections_total")
         raise HTTPException(status_code=400, detail=exc.detail) from exc
 
     return {
@@ -2115,6 +2211,7 @@ async def retry_context_broker_delivery(
 
     if not x_axongate_retry_credit:
         inc_metric("payment_required_total")
+        inc_metric("payment_challenges_total")
         try:
             await enforce_rate_limit("retry_missing_credit_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
         except RateLimitExceeded as exc:
@@ -2125,6 +2222,7 @@ async def retry_context_broker_delivery(
 
     reservation: DeliveryCreditReservation | None = None
     try:
+        inc_metric("retry_credit_attempts_total")
         target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(access_request.tier)
         try:
@@ -2151,6 +2249,7 @@ async def retry_context_broker_delivery(
             supplier_attempts=reservation.total_supplier_attempts,
         )
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            inc_metric("ueg_rejections_total")
             await restore_delivery_credit_attempt(reservation)
             raise PaymentValidationError("Retry credit rejected; projected margin is below AxonGate guard")
 
@@ -2158,6 +2257,8 @@ async def retry_context_broker_delivery(
         await delete_delivery_credit(reservation.token)
         inc_metric("delivery_credit_success_total")
         inc_metric("payment_verified_total")
+        inc_metric("delivery_success_total")
+        inc_metric("retry_delivery_success_total")
     except NetworkUnavailableError as exc:
         credit = None
         if reservation is not None:
@@ -2181,6 +2282,7 @@ async def retry_context_broker_delivery(
             else:
                 await restore_delivery_credit_attempt(reservation)
         inc_metric("errors_total")
+        inc_metric("payment_validation_rejections_total")
         raise HTTPException(status_code=400, detail=exc.detail) from exc
 
     return {
@@ -2242,6 +2344,7 @@ async def access_context_broker(
 
     if not x_axongate_payment_hash:
         inc_metric("payment_required_total")
+        inc_metric("payment_challenges_total")
         detail = "Payment Required. Provide X-AxonGate-Payment-Hash with a Base USDC transaction hash."
         raise HTTPException(
             status_code=402,
@@ -2253,6 +2356,7 @@ async def access_context_broker(
     target_url: Optional[str] = None
     tier: Optional[str] = None
     try:
+        inc_metric("paid_attempts_total")
         target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(access_request.tier)
         try:
@@ -2268,11 +2372,15 @@ async def access_context_broker(
 
         price = price_for_tier(tier)
         payment = await verify_x402_payment(x_axongate_payment_hash, price)
+        inc_metric("payments_accepted_total")
         profitability = await calculate_profitability_for_price(payment.amount_usdc)
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            inc_metric("ueg_rejections_total")
             raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
         markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
         inc_metric("payment_verified_total")
+        inc_metric("delivery_success_total")
+        inc_metric("legacy_delivery_success_total")
     except NetworkUnavailableError as exc:
         credit = None
         if payment is not None and target_url and tier:
@@ -2291,6 +2399,7 @@ async def access_context_broker(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except PaymentValidationError as exc:
         inc_metric("errors_total")
+        inc_metric("payment_validation_rejections_total")
         raise HTTPException(status_code=400, detail=exc.detail) from exc
 
     return {
@@ -2342,6 +2451,7 @@ async def process_task(payload: ComputeRequest, request: Request, x402_token: st
             profitability.dynamic_gas_cost_usdc + profitability.jina_api_cost_usdc
         )
         if projected_profit <= MIN_PROFIT_MARGIN_USDC:
+            inc_metric("ueg_rejections_total")
             raise PaymentValidationError("Dynamic UEG rejected transaction; offered fee margin is too low")
     except NetworkUnavailableError as exc:
         raise retry_later_503(exc) from exc

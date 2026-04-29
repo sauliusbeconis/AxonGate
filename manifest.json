@@ -27,7 +27,9 @@
       "supplier_preflight",
       "redis_rate_limits",
       "llms_txt_discovery",
-      "openapi_examples"
+      "openapi_examples",
+      "client_examples",
+      "conversion_telemetry"
     ],
     "input_modes": [
       "url"
@@ -100,6 +102,10 @@
     "discovery": "https://web-production-8136ee.up.railway.app/discovery/resources",
     "metrics": "https://web-production-8136ee.up.railway.app/metrics"
   },
+  "examples": {
+    "python_client": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/python_client.py",
+    "curl": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/curl.md"
+  },
   "openapi_contract": {
     "method": "POST",
     "path": "/v1/x402/access",
@@ -166,6 +172,19 @@
       "autonomous agents that need clean public web context",
       "RAG systems that need markdown extraction",
       "LLM workflows that need token-efficient source material"
-    ]
+    ],
+    "telemetry": {
+      "conversion_funnel": "https://web-production-8136ee.up.railway.app/metrics",
+      "tracked_stages": [
+        "discovery_hits",
+        "payment_challenges",
+        "paid_attempts",
+        "payments_accepted",
+        "delivery_success",
+        "retry_credit_issued",
+        "ueg_rejections",
+        "supplier_success"
+      ]
+    }
   }
 }
