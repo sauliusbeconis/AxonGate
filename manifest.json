@@ -25,7 +25,9 @@
       "autonomous_research",
       "dns_ssrf_protection",
       "supplier_preflight",
-      "redis_rate_limits"
+      "redis_rate_limits",
+      "llms_txt_discovery",
+      "openapi_examples"
     ],
     "input_modes": [
       "url"
@@ -88,8 +90,11 @@
     "retry": "https://web-production-8136ee.up.railway.app/v1/x402/retry",
     "legacy_access": "https://web-production-8136ee.up.railway.app/v1/access",
     "health": "https://web-production-8136ee.up.railway.app/health",
+    "docs": "https://web-production-8136ee.up.railway.app/docs",
+    "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
     "manifest": "https://web-production-8136ee.up.railway.app/manifest.json",
     "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
+    "swagger": "https://web-production-8136ee.up.railway.app/swagger",
     "agent_card": "https://web-production-8136ee.up.railway.app/.well-known/agent.json",
     "x402": "https://web-production-8136ee.up.railway.app/.well-known/x402",
     "discovery": "https://web-production-8136ee.up.railway.app/discovery/resources",
@@ -98,6 +103,8 @@
   "openapi_contract": {
     "method": "POST",
     "path": "/v1/x402/access",
+    "docs": "https://web-production-8136ee.up.railway.app/docs",
+    "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
     "payload_schema": {
       "target_url": "string (valid HTTP/HTTPS URL)",
       "tier": "optional string (basic, fresh, or deep)",
@@ -116,6 +123,18 @@
       "payment": "object",
       "ueg_receipt": "object"
     },
+    "request_examples": [
+      {
+        "target_url": "https://example.com/source",
+        "tier": "basic",
+        "force_refresh": false
+      },
+      {
+        "target_url": "https://example.com/breaking-news",
+        "tier": "fresh",
+        "force_refresh": true
+      }
+    ],
     "response_format": "application/json",
     "error_statuses": {
       "400": "Invalid URL, invalid payment hash, failed payment verification, replayed payment, or UEG rejection",
@@ -130,7 +149,10 @@
       "resource_type": "http",
       "x402_version": 2,
       "market_listing": "https://web-production-8136ee.up.railway.app/discovery/resources",
-      "payment_required_header": "PAYMENT-REQUIRED"
+      "payment_required_header": "PAYMENT-REQUIRED",
+      "docs": "https://web-production-8136ee.up.railway.app/docs",
+      "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
+      "openapi": "https://web-production-8136ee.up.railway.app/openapi.json"
     },
     "tags": [
       "x402",

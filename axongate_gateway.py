@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import html
 import ipaddress
 import inspect
 import json
@@ -19,6 +20,7 @@ import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
@@ -55,7 +57,13 @@ except ImportError:  # pragma: no cover - Railway installs x402 from requirement
 
 load_dotenv()
 
-app = FastAPI(title="AxonGate Sovereign Gateway")
+app = FastAPI(
+    title="AxonGate Sovereign Gateway",
+    description="x402-paid Clean Context Broker for Web-to-Markdown extraction on Base.",
+    version="1.1.0",
+    docs_url="/swagger",
+    redoc_url="/redoc",
+)
 
 PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", "https://web-production-8136ee.up.railway.app").rstrip("/")
 BASE_MAINNET_RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
@@ -190,11 +198,40 @@ class AccessRequest(BaseModel):
     tier: str = Field("basic", description="Pricing tier: basic, fresh, or deep")
     force_refresh: bool = Field(False, description="Bypass cache when true")
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "target_url": "https://example.com/research/source",
+                    "tier": "basic",
+                    "force_refresh": False,
+                },
+                {
+                    "target_url": "https://example.com/breaking-news",
+                    "tier": "fresh",
+                    "force_refresh": True,
+                },
+            ]
+        }
+    }
+
 
 class ComputeRequest(BaseModel):
     agent_id: str
     task_payload: dict[str, Any]
     offered_fee: float = Field(..., description="Fee offered by the client agent in USDC")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "agent_id": "research-agent-001",
+                    "task_payload": {"operation": "summarize", "input": "clean markdown context"},
+                    "offered_fee": 0.05,
+                }
+            ]
+        }
+    }
 
 
 @dataclass(frozen=True)
@@ -380,6 +417,11 @@ def build_x402_resource() -> dict[str, Any]:
             "description": "x402-paid Web-to-Markdown extraction for RAG and autonomous research agents.",
             "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
+            "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
+            "docs": f"{PUBLIC_BASE_URL}/docs",
+            "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
+            "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
+            "swagger": f"{PUBLIC_BASE_URL}/swagger",
             "facilitator": PAYAI_FACILITATOR_URL,
             "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
             "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
@@ -449,6 +491,9 @@ def build_payment_required_payload(error: str) -> dict[str, Any]:
         "extensions": {
             "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
+            "docs": f"{PUBLIC_BASE_URL}/docs",
+            "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
+            "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
             "paymentHashHeader": "X-AxonGate-Payment-Hash",
             "standardPaymentHeader": "PAYMENT-SIGNATURE",
             "tierHeader": "X-AxonGate-Tier",
@@ -1550,7 +1595,248 @@ def rate_limit_429(exc: RateLimitExceeded, credit: Optional[dict[str, Any]] = No
     return HTTPException(status_code=429, detail=detail, headers=headers)
 
 
-@app.get("/")
+def public_url(path: str) -> str:
+    """Return an absolute URL for public discovery documents."""
+    return f"{PUBLIC_BASE_URL}{path}"
+
+
+def build_llms_txt() -> str:
+    """
+    Return a compact agent-readable service brief.
+
+    The goal is to help crawler agents, planners, and LLM tool routers decide
+    when AxonGate is useful without scraping a human docs page. It intentionally
+    avoids secrets and includes only public contract details.
+    """
+    request_example = json.dumps(
+        {
+            "target_url": "https://example.com/source",
+            "tier": "basic",
+            "force_refresh": False,
+        },
+        indent=2,
+    )
+    tier_lines = "\n".join(
+        f"- {tier}: {price} USDC, {cache_ttl_for_tier(tier)} second cache TTL"
+        for tier, price in TIER_PRICING_USDC.items()
+    )
+
+    return f"""# AxonGate
+
+Name: AxonGate
+Basename: axongate.base.eth
+Summary: x402-paid Clean Context Broker that converts public web pages into clean markdown for RAG, research, and autonomous agents.
+Canonical base URL: {PUBLIC_BASE_URL}
+Human docs: {public_url("/docs")}
+OpenAPI JSON: {public_url("/openapi.json")}
+Swagger UI: {public_url("/swagger")}
+Manifest: {public_url("/manifest.json")}
+Agent card: {public_url("/.well-known/agent.json")}
+x402 discovery: {public_url("/.well-known/x402")}
+Resource listing: {public_url("/discovery/resources")}
+
+## Payment
+
+Protocol: x402
+Network: Base mainnet, eip155:8453
+Accepted asset: USDC, {BASE_USDC_ADDRESS}
+Vault address: {load_vault_address()}
+Preferred payment header: PAYMENT-SIGNATURE
+Legacy transaction hash header: X-AxonGate-Payment-Hash
+Retry credit header: X-AxonGate-Retry-Credit
+Facilitator: {PAYAI_FACILITATOR_URL}
+
+## Paid Endpoint
+
+POST {public_url("/v1/x402/access")}
+Content-Type: application/json
+Body example:
+{request_example}
+
+Tiers:
+{tier_lines}
+
+Successful response shape:
+- status: success
+- target_url: requested source URL
+- tier: resolved price tier
+- markdown: cleaned markdown returned from the upstream reader
+- cache: cache hit metadata
+- payment: network, vault, token, and amount metadata
+- ueg_receipt: revenue, dynamic gas, supplier cost, and projected margin
+
+## Retry Endpoint
+
+POST {public_url("/v1/x402/retry")}
+Use only when AxonGate returns a retryable 503 with X-AxonGate-Retry-Credit after payment was accepted but upstream delivery failed.
+
+## Safety And Supply Guards
+
+AxonGate rejects private, loopback, multicast, and link-local target hosts; performs DNS and redirect preflight checks; enforces allowed target ports; caps supplier content size; rate-limits probes, unpaid requests, paid requests, retry credits, and target domains; and runs a dynamic Unit Economic Guardian before supplier work. Bad upstream supply should not be charged to AxonGate beyond the bounded retry credit policy.
+"""
+
+
+def build_docs_html() -> str:
+    """Return a small self-contained human docs page for agent operators."""
+    public = html.escape(PUBLIC_BASE_URL)
+    vault = html.escape(load_vault_address())
+    usdc_address = html.escape(BASE_USDC_ADDRESS)
+    facilitator = html.escape(PAYAI_FACILITATOR_URL)
+    request_json = html.escape(
+        json.dumps(
+            {
+                "target_url": "https://example.com/source",
+                "tier": "basic",
+                "force_refresh": False,
+            },
+            indent=2,
+        )
+    )
+    curl_example = html.escape(
+        f"""curl -X POST {PUBLIC_BASE_URL}/v1/x402/access \\
+  -H "Content-Type: application/json" \\
+  -H "PAYMENT-SIGNATURE: <x402-payment-proof>" \\
+  -d '{{"target_url":"https://example.com/source","tier":"basic","force_refresh":false}}'"""
+    )
+    tiers_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(tier)}</td>"
+        f"<td>{html.escape(str(price))} USDC</td>"
+        f"<td>{cache_ttl_for_tier(tier)} seconds</td>"
+        "</tr>"
+        for tier, price in TIER_PRICING_USDC.items()
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Docs</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 44px 22px 72px;
+    }}
+    h1 {{ font-size: clamp(2rem, 4vw, 3.3rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 38px 0 12px; font-size: 1.35rem; }}
+    p, li {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .summary {{ font-size: 1.08rem; max-width: 780px; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }}
+    .box {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }}
+    code, pre {{
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--code);
+      color: var(--text);
+    }}
+    code {{ padding: 2px 5px; border-radius: 4px; }}
+    pre {{
+      overflow-x: auto;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+    }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; }}
+    th {{ color: var(--text); }}
+    td {{ color: var(--muted); }}
+    .links a {{ display: inline-block; margin: 0 14px 10px 0; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AxonGate</h1>
+    <p class="summary">The Clean Context Broker is an x402-paid Web-to-Markdown API for agents that need token-efficient public web context. It runs on Base mainnet, accepts USDC, and checks dynamic unit economics before supplier work.</p>
+
+    <section class="links" aria-label="Discovery links">
+      <a href="{public}/manifest.json">Manifest</a>
+      <a href="{public}/.well-known/agent.json">Agent card</a>
+      <a href="{public}/.well-known/x402">x402 discovery</a>
+      <a href="{public}/discovery/resources">Resource listing</a>
+      <a href="{public}/llms.txt">llms.txt</a>
+      <a href="{public}/openapi.json">OpenAPI JSON</a>
+      <a href="{public}/swagger">Swagger UI</a>
+    </section>
+
+    <h2>Service Contract</h2>
+    <div class="grid">
+      <div class="box"><strong>Paid endpoint</strong><br><code>POST /v1/x402/access</code></div>
+      <div class="box"><strong>Retry endpoint</strong><br><code>POST /v1/x402/retry</code></div>
+      <div class="box"><strong>Network</strong><br>Base mainnet, <code>eip155:8453</code></div>
+      <div class="box"><strong>Vault</strong><br><code>{vault}</code></div>
+      <div class="box"><strong>Asset</strong><br>USDC <code>{usdc_address}</code></div>
+      <div class="box"><strong>Facilitator</strong><br><code>{facilitator}</code></div>
+    </div>
+
+    <h2>Pricing</h2>
+    <table>
+      <thead><tr><th>Tier</th><th>Price</th><th>Cache policy</th></tr></thead>
+      <tbody>{tiers_rows}</tbody>
+    </table>
+
+    <h2>Standard x402 Flow</h2>
+    <ol>
+      <li>Probe <code>/v1/x402/access</code> or read <code>/.well-known/x402</code> to discover payment requirements.</li>
+      <li>Create an x402 payment proof for the selected tier and Base USDC amount.</li>
+      <li>POST a JSON body with <code>target_url</code>, optional <code>tier</code>, and optional <code>force_refresh</code>.</li>
+      <li>Send the proof in <code>PAYMENT-SIGNATURE</code>. AxonGate verifies payment, margin, target safety, and then fetches clean markdown.</li>
+    </ol>
+
+    <h2>Request Body</h2>
+    <pre>{request_json}</pre>
+
+    <h2>Example</h2>
+    <pre>{curl_example}</pre>
+
+    <h2>Retry Credits</h2>
+    <p>If payment succeeds but a retryable supplier or network outage prevents delivery, AxonGate can return <code>503</code> with <code>X-AxonGate-Retry-Credit</code>. The client can call <code>/v1/x402/retry</code> with the same request body and the retry credit, without paying twice.</p>
+
+    <h2>Supply Guards</h2>
+    <p>AxonGate rejects unsafe targets before payment-funded supplier work, blocks private and loopback address space, follows bounded redirects, caps content size, rate-limits abuse patterns, and fails closed when dynamic gas pricing or supplier availability would make delivery uneconomic.</p>
+  </main>
+</body>
+</html>"""
+
+
+@app.get("/llms.txt", response_class=PlainTextResponse, tags=["discovery"], summary="Agent-readable service brief")
+async def llms_txt():
+    """Expose a concise machine-readable brief for LLM routers and crawlers."""
+    return build_llms_txt()
+
+
+@app.get("/docs", response_class=HTMLResponse, tags=["discovery"], summary="Human-readable AxonGate docs")
+async def human_docs():
+    """Serve a lightweight docs page; Swagger remains available at /swagger."""
+    return build_docs_html()
+
+
+@app.get("/", tags=["discovery"], summary="Discovery index")
 async def root():
     """Return a lightweight discovery index for crawlers and agent clients."""
     return {
@@ -1562,36 +1848,40 @@ async def root():
         "agent_card": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
         "x402": f"{PUBLIC_BASE_URL}/.well-known/x402",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
+        "docs": f"{PUBLIC_BASE_URL}/docs",
+        "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
+        "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
+        "swagger": f"{PUBLIC_BASE_URL}/swagger",
         "standard_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "legacy_tx_hash_endpoint": f"{PUBLIC_BASE_URL}/v1/access",
         "retry_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["operations"], summary="Railway health check")
 async def health():
     return {"status": "alive", "vault_address": load_vault_address()}
 
 
-@app.get("/manifest.json")
+@app.get("/manifest.json", tags=["discovery"], summary="Canonical agent manifest")
 async def manifest():
     """Return the full AxonGate agent card used by other agents for discovery."""
     return load_agent_card()
 
 
-@app.get("/.well-known/agent.json")
+@app.get("/.well-known/agent.json", tags=["discovery"], summary="Well-known agent card")
 async def well_known_agent():
     """Expose the agent card at a common agent-discovery well-known path."""
     return load_agent_card()
 
 
-@app.get("/.well-known/x402")
+@app.get("/.well-known/x402", tags=["discovery"], summary="x402 payment discovery")
 async def well_known_x402():
     """Expose AxonGate's x402 resource advertisement for crawler discovery."""
     return build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
 
 
-@app.get("/discovery/resources")
+@app.get("/discovery/resources", tags=["discovery"], summary="PayAI-style resource listing")
 async def discovery_resources(type: Optional[str] = None, limit: int = 20, offset: int = 0):
     """Return a PayAI-style Bazaar resource listing for AxonGate."""
     if type not in (None, "http"):
@@ -1614,7 +1904,7 @@ async def discovery_resources(type: Optional[str] = None, limit: int = 20, offse
     }
 
 
-@app.get("/metrics")
+@app.get("/metrics", tags=["operations"], summary="Operational metrics")
 async def metrics_snapshot():
     """Expose lightweight operational counters for conversion and margin tuning."""
     return {
@@ -1660,8 +1950,8 @@ async def metrics_snapshot():
     }
 
 
-@app.head("/v1/x402/access")
-@app.get("/v1/x402/access")
+@app.head("/v1/x402/access", tags=["x402"], summary="Probe x402 payment requirements")
+@app.get("/v1/x402/access", tags=["x402"], summary="Probe x402 payment requirements")
 async def access_context_broker_x402_probe(request: Request):
     """
     Return a machine-readable x402 challenge for directory probes.
@@ -1682,7 +1972,18 @@ async def access_context_broker_x402_probe(request: Request):
     raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
 
 
-@app.post("/v1/x402/access")
+@app.post(
+    "/v1/x402/access",
+    tags=["x402"],
+    summary="Paid Web-to-Markdown context extraction",
+    responses={
+        200: {"description": "Clean markdown delivered"},
+        400: {"description": "Invalid target, payment, or unit economics guard rejection"},
+        402: {"description": "x402 payment required"},
+        429: {"description": "Rate limit exceeded"},
+        503: {"description": "Temporary upstream or network outage; retry after 5 seconds"},
+    },
+)
 async def access_context_broker_x402(
     request: Request,
     access_request: AccessRequest,
@@ -1782,7 +2083,18 @@ async def access_context_broker_x402(
     }
 
 
-@app.post("/v1/x402/retry")
+@app.post(
+    "/v1/x402/retry",
+    tags=["x402"],
+    summary="Retry a paid delivery with an AxonGate retry credit",
+    responses={
+        200: {"description": "Clean markdown delivered using retry credit"},
+        400: {"description": "Invalid or exhausted retry credit"},
+        402: {"description": "Retry credit required"},
+        429: {"description": "Rate limit exceeded"},
+        503: {"description": "Temporary upstream or network outage; retry after 5 seconds"},
+    },
+)
 async def retry_context_broker_delivery(
     request: Request,
     access_request: AccessRequest,
@@ -1901,9 +2213,21 @@ async def retry_context_broker_delivery(
     }
 
 
-@app.post("/v1/access")
+@app.post(
+    "/v1/access",
+    tags=["legacy"],
+    summary="Legacy tx-hash paid Web-to-Markdown context extraction",
+    responses={
+        200: {"description": "Clean markdown delivered"},
+        400: {"description": "Invalid payment hash, replay, target, or unit economics guard rejection"},
+        402: {"description": "Payment hash required"},
+        429: {"description": "Rate limit exceeded"},
+        503: {"description": "Temporary upstream or network outage; retry after 5 seconds"},
+    },
+)
 async def access_context_broker(
-    request: AccessRequest,
+    access_request: AccessRequest,
+    http_request: Request,
     x_axongate_payment_hash: Optional[str] = Header(None, alias="X-AxonGate-Payment-Hash"),
 ):
     """
@@ -1929,10 +2253,10 @@ async def access_context_broker(
     target_url: Optional[str] = None
     tier: Optional[str] = None
     try:
-        target_url = await assert_public_target_url(request.target_url)
-        tier = normalize_tier(request.tier)
+        target_url = await assert_public_target_url(access_request.target_url)
+        tier = normalize_tier(access_request.tier)
         try:
-            await enforce_rate_limit("legacy_ip", client_rate_identifier(request), RATE_LIMIT_PAID_PER_IP)
+            await enforce_rate_limit("legacy_ip", client_rate_identifier(http_request), RATE_LIMIT_PAID_PER_IP)
             await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
             await enforce_rate_limit(
                 "legacy_payment_hash",
@@ -1947,7 +2271,7 @@ async def access_context_broker(
         profitability = await calculate_profitability_for_price(payment.amount_usdc)
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
             raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
-        markdown, cache_hit = await get_clean_markdown(target_url, tier, request.force_refresh)
+        markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
         inc_metric("payment_verified_total")
     except NetworkUnavailableError as exc:
         credit = None
@@ -1957,7 +2281,7 @@ async def access_context_broker(
                 payment_reference=f"legacy-tx:{payment.tx_hash}",
                 target_url=target_url,
                 tier=tier,
-                force_refresh=request.force_refresh,
+                force_refresh=access_request.force_refresh,
                 amount_usdc=payment.amount_usdc,
                 mode="legacy-tx-hash",
             )
@@ -1998,7 +2322,7 @@ async def access_context_broker(
     }
 
 
-@app.post("/v1/broker/compute")
+@app.post("/v1/broker/compute", tags=["legacy"], summary="Legacy simulated brokerage endpoint")
 async def process_task(payload: ComputeRequest, request: Request, x402_token: str = Header(None)):
     print(f"\n[INBOUND REQUEST] Agent: {payload.agent_id}")
 
