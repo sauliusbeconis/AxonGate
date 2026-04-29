@@ -7,6 +7,7 @@ manifest, and x402 challenge behavior.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sys
 from pathlib import Path
@@ -48,6 +49,22 @@ async def main() -> None:
         probe = await client.get("/v1/x402/access")
         assert probe.status_code == 402, f"x402 probe returned {probe.status_code}"
         assert probe.headers.get("PAYMENT-REQUIRED"), "x402 probe missing PAYMENT-REQUIRED"
+        probe_payload = json.loads(base64.b64decode(probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
+        assert "extensions" not in probe_payload, "GET x402 challenge must not include informal extensions"
+
+        unpaid_post = await client.post(
+            "/v1/x402/access",
+            json={"target_url": "https://example.com", "tier": "fresh", "force_refresh": True},
+        )
+        assert unpaid_post.status_code == 402, f"unpaid POST returned {unpaid_post.status_code}"
+        post_challenge = unpaid_post.headers.get("PAYMENT-REQUIRED") or unpaid_post.headers.get("X-Payment-Required")
+        assert post_challenge, "unpaid POST missing payment challenge"
+        post_payload = json.loads(base64.b64decode(post_challenge).decode("utf-8"))
+        assert "extensions" not in post_payload, "POST x402 challenge must not include informal extensions"
+
+        x402_discovery = (await client.get("/.well-known/x402")).json()
+        assert "extensions" not in x402_discovery, "public x402 discovery must not include protocol extensions"
+        assert "metadata" in x402_discovery, "public x402 discovery should keep non-protocol metadata"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})

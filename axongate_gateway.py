@@ -773,7 +773,13 @@ def build_x402_resource() -> dict[str, Any]:
 
 
 def build_payment_required_payload(error: str) -> dict[str, Any]:
-    """Build the x402 PAYMENT-REQUIRED header payload for agent clients."""
+    """
+    Build a strict x402 PAYMENT-REQUIRED header payload for agent clients.
+
+    Do not add arbitrary discovery fields under `extensions`. Current x402
+    facilitators validate extension schemas, so informal metadata belongs in
+    manifest, llms.txt, docs, and discovery resources instead.
+    """
     return {
         "x402Version": 2,
         "error": error,
@@ -783,21 +789,40 @@ def build_payment_required_payload(error: str) -> dict[str, Any]:
             "mimeType": "application/json",
         },
         "accepts": build_x402_accepts(),
-        "extensions": {
-            "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
-            "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
-            "docs": f"{PUBLIC_BASE_URL}/docs",
-            "demo": f"{PUBLIC_BASE_URL}/demo",
-            "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
-            "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
-            "paymentHashHeader": "X-AxonGate-Payment-Hash",
-            "standardPaymentHeader": "PAYMENT-SIGNATURE",
-            "tierHeader": "X-AxonGate-Tier",
-            "retryCreditHeader": "X-AxonGate-Retry-Credit",
-            "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
-            "facilitator": PAYAI_FACILITATOR_URL,
+    }
+
+
+def build_x402_public_discovery() -> dict[str, Any]:
+    """Return x402 discovery with non-protocol metadata outside extensions."""
+    payload = build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
+    payload["metadata"] = {
+        "provider": "AxonGate",
+        "service": "The Clean Context Broker",
+        "basename": "axongate.base.eth",
+        "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
+        "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
+        "agentCardAlias": f"{PUBLIC_BASE_URL}/.well-known/agent-card.json",
+        "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
+        "docs": f"{PUBLIC_BASE_URL}/docs",
+        "demo": f"{PUBLIC_BASE_URL}/demo",
+        "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
+        "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
+        "paymentHashHeader": "X-AxonGate-Payment-Hash",
+        "standardPaymentHeader": "PAYMENT-SIGNATURE",
+        "tierHeader": "X-AxonGate-Tier",
+        "retryCreditHeader": "X-AxonGate-Retry-Credit",
+        "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
+        "facilitator": PAYAI_FACILITATOR_URL,
+        "tiers": {
+            tier: {
+                "price": f"${price}",
+                "amount": str(usdc_units(price)),
+                "currency": "USDC",
+            }
+            for tier, price in TIER_PRICING_USDC.items()
         },
     }
+    return payload
 
 
 def payment_required_headers(error: str) -> dict[str, str]:
@@ -930,11 +955,6 @@ def configure_standard_x402_middleware() -> None:
             resource=f"{PUBLIC_BASE_URL}/v1/x402/access",
             description="AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
             mime_type="application/json",
-            extensions={
-                "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
-                "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
-                "tiers": {tier: f"${price}" for tier, price in TIER_PRICING_USDC.items()},
-            },
         )
     }
 
@@ -2472,14 +2492,14 @@ async def well_known_agent_card_alias():
 async def well_known_x402():
     """Expose AxonGate's x402 resource advertisement for crawler discovery."""
     inc_discovery_hit("discovery_x402_hits_total")
-    return build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
+    return build_x402_public_discovery()
 
 
 @app.get("/.well-known/x402.json", tags=["discovery"], summary="x402 discovery compatibility alias")
 async def well_known_x402_json():
     """Expose an x402 JSON alias for crawlers that require a file extension."""
     inc_discovery_hit("discovery_x402_hits_total")
-    return build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
+    return build_x402_public_discovery()
 
 
 @app.get("/discovery/resources", tags=["discovery"], summary="PayAI-style resource listing")
