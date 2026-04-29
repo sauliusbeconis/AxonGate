@@ -65,7 +65,8 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", "https://web-production-8136ee.up.railway.app").rstrip("/")
+DEFAULT_PUBLIC_BASE_URL = "https://web-production-8136ee.up.railway.app"
+PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", DEFAULT_PUBLIC_BASE_URL).rstrip("/")
 GITHUB_REPO_URL = os.getenv("AXONGATE_GITHUB_REPO_URL", "https://github.com/sauliusbeconis/AxonGate").rstrip("/")
 BASE_MAINNET_RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
 BASE_RPC_TIMEOUT_SECONDS = float(os.getenv("BASE_RPC_TIMEOUT_SECONDS", "5"))
@@ -87,6 +88,23 @@ RATE_LIMIT_RETRY_PER_IP = int(os.getenv("AXONGATE_RATE_LIMIT_RETRY_PER_IP", "60"
 RATE_LIMIT_RETRY_PER_CREDIT = int(os.getenv("AXONGATE_RATE_LIMIT_RETRY_PER_CREDIT", "10"))
 RATE_LIMIT_LEGACY_PAYMENT_HASH = int(os.getenv("AXONGATE_RATE_LIMIT_LEGACY_PAYMENT_HASH", "20"))
 RATE_LIMIT_COMPUTE_PER_IP = int(os.getenv("AXONGATE_RATE_LIMIT_COMPUTE_PER_IP", "30"))
+METRICS_PERSISTENCE_ENABLED = os.getenv("AXONGATE_METRICS_PERSISTENCE_ENABLED", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+METRICS_REDIS_KEY = os.getenv("AXONGATE_METRICS_REDIS_KEY", "axongate:metrics")
+ALERT_WEBHOOK_URL = os.getenv("AXONGATE_ALERT_WEBHOOK_URL")
+ALERT_WEBHOOK_TOKEN = os.getenv("AXONGATE_ALERT_WEBHOOK_TOKEN")
+ALERT_MIN_INTERVAL_SECONDS = int(os.getenv("AXONGATE_ALERT_MIN_INTERVAL_SECONDS", "300"))
+ALERT_WEBHOOK_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_ALERT_WEBHOOK_TIMEOUT_SECONDS", "5"))
+ALERT_MIN_SAMPLE_SIZE = int(os.getenv("AXONGATE_ALERT_MIN_SAMPLE_SIZE", "20"))
+ALERT_RETRYABLE_OUTAGE_RATE = float(os.getenv("AXONGATE_ALERT_RETRYABLE_OUTAGE_RATE", "0.15"))
+ALERT_UEG_REJECTION_RATE = float(os.getenv("AXONGATE_ALERT_UEG_REJECTION_RATE", "0.20"))
+ALERT_PAYMENT_VALIDATION_REJECTION_RATE = float(os.getenv("AXONGATE_ALERT_PAYMENT_VALIDATION_REJECTION_RATE", "0.25"))
+ALERT_SUPPLIER_SUCCESS_MIN_RATE = float(os.getenv("AXONGATE_ALERT_SUPPLIER_SUCCESS_MIN_RATE", "0.85"))
+ALERT_BASE_RPC_ERROR_RATE = float(os.getenv("AXONGATE_ALERT_BASE_RPC_ERROR_RATE", "0.10"))
+ALERT_JINA_ERROR_RATE = float(os.getenv("AXONGATE_ALERT_JINA_ERROR_RATE", "0.10"))
 
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
@@ -117,6 +135,9 @@ TIER_PRICING_USDC = {
     "fresh": Decimal(os.getenv("AXONGATE_FRESH_PRICE_USDC", "0.03")),
     "deep": Decimal(os.getenv("AXONGATE_DEEP_PRICE_USDC", "0.05")),
 }
+RECOMMENDED_TIER = os.getenv("AXONGATE_RECOMMENDED_TIER", "fresh").strip().lower()
+if RECOMMENDED_TIER not in TIER_PRICING_USDC:
+    RECOMMENDED_TIER = "fresh"
 
 JINA_API_COST_USDC = Decimal(
     os.getenv("AXONGATE_JINA_API_COST_USDC", os.getenv("AXONGATE_FIXED_API_OVERHEAD_USDC", "0.0005"))
@@ -159,6 +180,8 @@ eth_usdc_price_lock = asyncio.Lock()
 rate_limit_windows: dict[str, tuple[int, int]] = {}
 rate_limit_lock = asyncio.Lock()
 redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and REDIS_URL else None
+alert_windows: dict[str, float] = {}
+alert_lock = asyncio.Lock()
 metrics: dict[str, int] = {
     "requests_total": 0,
     "legacy_access_requests_total": 0,
@@ -177,6 +200,7 @@ metrics: dict[str, int] = {
     "retry_delivery_success_total": 0,
     "jina_requests_total": 0,
     "jina_success_total": 0,
+    "jina_errors_total": 0,
     "cache_hits_total": 0,
     "cache_misses_total": 0,
     "discovery_hits_total": 0,
@@ -197,6 +221,7 @@ metrics: dict[str, int] = {
     "eth_price_cache_hits_total": 0,
     "eth_price_stale_hits_total": 0,
     "eth_price_errors_total": 0,
+    "base_rpc_errors_total": 0,
     "ueg_checks_total": 0,
     "ueg_rejections_total": 0,
     "rate_limit_checks_total": 0,
@@ -207,6 +232,9 @@ metrics: dict[str, int] = {
     "retry_credit_attempts_total": 0,
     "delivery_credit_success_total": 0,
     "delivery_credit_exhausted_total": 0,
+    "alert_checks_total": 0,
+    "alerts_sent_total": 0,
+    "alert_errors_total": 0,
     "errors_total": 0,
 }
 CDP_TRANSACTION_METHOD_NAMES = ("get_transaction", "get_evm_transaction", "get_transaction_receipt")
@@ -221,7 +249,7 @@ PAYMENT_PROOF_HEADERS = (
 
 class AccessRequest(BaseModel):
     target_url: str = Field(..., description="HTTP or HTTPS URL to convert into clean markdown")
-    tier: str = Field("basic", description="Pricing tier: basic, fresh, or deep")
+    tier: str = Field(RECOMMENDED_TIER, description="Pricing tier: basic, fresh, or deep")
     force_refresh: bool = Field(False, description="Bypass cache when true")
 
     model_config = {
@@ -229,13 +257,13 @@ class AccessRequest(BaseModel):
             "examples": [
                 {
                     "target_url": "https://example.com/research/source",
-                    "tier": "basic",
-                    "force_refresh": False,
-                },
-                {
-                    "target_url": "https://example.com/breaking-news",
                     "tier": "fresh",
                     "force_refresh": True,
+                },
+                {
+                    "target_url": "https://example.com/reference",
+                    "tier": "basic",
+                    "force_refresh": False,
                 },
             ]
         }
@@ -364,13 +392,69 @@ def load_vault_address() -> str:
 
 
 def load_agent_card() -> dict[str, Any]:
-    """Load the canonical AxonGate discovery card from manifest.json."""
+    """Load the canonical AxonGate discovery card and rewrite public URLs."""
     manifest_path = Path(__file__).with_name("manifest.json")
-    return json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return rewrite_public_base_urls(manifest_data)
+
+
+def rewrite_public_base_urls(value: Any) -> Any:
+    """Make manifest URLs follow AXONGATE_PUBLIC_BASE_URL for custom domains."""
+    if isinstance(value, dict):
+        return {key: rewrite_public_base_urls(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [rewrite_public_base_urls(item) for item in value]
+    if isinstance(value, str) and value.startswith(DEFAULT_PUBLIC_BASE_URL):
+        return value.replace(DEFAULT_PUBLIC_BASE_URL, PUBLIC_BASE_URL, 1)
+    return value
+
+
+def schedule_background(coro) -> None:
+    """Schedule non-critical background work when running inside an event loop."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        coro.close()
+        return
+    loop.create_task(coro)
+
+
+async def persist_metric_increment(name: str, amount: int) -> None:
+    """Persist a metric increment to Redis without blocking request handlers."""
+    if not redis_client or not METRICS_PERSISTENCE_ENABLED:
+        return
+
+    try:
+        await redis_client.hincrby(METRICS_REDIS_KEY, name, amount)
+    except Exception as exc:
+        print(f"[METRICS] Redis persistence failed for {name}: {exc}")
 
 
 def inc_metric(name: str, amount: int = 1) -> None:
     metrics[name] = metrics.get(name, 0) + amount
+    if redis_client and METRICS_PERSISTENCE_ENABLED:
+        schedule_background(persist_metric_increment(name, amount))
+
+
+async def durable_metrics_snapshot() -> dict[str, int]:
+    """Return Redis-backed metrics when available, with memory as fallback."""
+    snapshot = dict(metrics)
+    if not redis_client or not METRICS_PERSISTENCE_ENABLED:
+        return snapshot
+
+    try:
+        persisted = await redis_client.hgetall(METRICS_REDIS_KEY)
+    except Exception as exc:
+        print(f"[METRICS] Redis snapshot failed: {exc}")
+        return snapshot
+
+    for key, value in persisted.items():
+        try:
+            snapshot[key] = int(value)
+        except (TypeError, ValueError):
+            continue
+
+    return snapshot
 
 
 def inc_discovery_hit(metric_name: str) -> None:
@@ -386,14 +470,15 @@ def conversion_rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 4)
 
 
-def conversion_funnel_snapshot() -> dict[str, Any]:
+def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -> dict[str, Any]:
     """Summarize discovery-to-delivery conversion without exposing client data."""
-    discovery_hits = metrics.get("discovery_hits_total", 0)
-    challenges = metrics.get("payment_challenges_total", 0)
-    paid_attempts = metrics.get("paid_attempts_total", 0)
-    accepted = metrics.get("payments_accepted_total", 0)
-    delivered = metrics.get("delivery_success_total", 0)
-    supplier_requests = metrics.get("jina_requests_total", 0)
+    values = metric_values or metrics
+    discovery_hits = values.get("discovery_hits_total", 0)
+    challenges = values.get("payment_challenges_total", 0)
+    paid_attempts = values.get("paid_attempts_total", 0)
+    accepted = values.get("payments_accepted_total", 0)
+    delivered = values.get("delivery_success_total", 0)
+    supplier_requests = values.get("jina_requests_total", 0)
 
     return {
         "discovery_hits": discovery_hits,
@@ -401,23 +486,157 @@ def conversion_funnel_snapshot() -> dict[str, Any]:
         "paid_attempts": paid_attempts,
         "payments_accepted": accepted,
         "delivery_success": delivered,
-        "retry_credit_issued": metrics.get("delivery_credits_issued_total", 0),
-        "retry_delivery_success": metrics.get("retry_delivery_success_total", 0),
-        "ueg_checks": metrics.get("ueg_checks_total", 0),
-        "ueg_rejections": metrics.get("ueg_rejections_total", 0),
-        "rate_limit_rejections": metrics.get("rate_limit_rejections_total", 0),
+        "retry_credit_issued": values.get("delivery_credits_issued_total", 0),
+        "retry_delivery_success": values.get("retry_delivery_success_total", 0),
+        "ueg_checks": values.get("ueg_checks_total", 0),
+        "ueg_rejections": values.get("ueg_rejections_total", 0),
+        "rate_limit_rejections": values.get("rate_limit_rejections_total", 0),
         "supplier_requests": supplier_requests,
-        "supplier_success": metrics.get("jina_success_total", 0),
-        "supplier_rejections": metrics.get("supplier_rejections_total", 0),
-        "retryable_outages": metrics.get("retryable_outages_total", 0),
+        "supplier_success": values.get("jina_success_total", 0),
+        "supplier_errors": values.get("jina_errors_total", 0),
+        "supplier_rejections": values.get("supplier_rejections_total", 0),
+        "retryable_outages": values.get("retryable_outages_total", 0),
         "rates": {
             "challenge_per_discovery": conversion_rate(challenges, discovery_hits),
             "paid_attempt_per_challenge": conversion_rate(paid_attempts, challenges),
             "accepted_per_paid_attempt": conversion_rate(accepted, paid_attempts),
             "delivered_per_accepted": conversion_rate(delivered, accepted),
-            "supplier_success_per_request": conversion_rate(metrics.get("jina_success_total", 0), supplier_requests),
+            "supplier_success_per_request": conversion_rate(values.get("jina_success_total", 0), supplier_requests),
         },
     }
+
+
+async def should_send_alert(alert_key: str) -> bool:
+    """Throttle alert webhooks by alert key across Redis-backed deployments."""
+    now = time.time()
+    if redis_client:
+        try:
+            claimed = await redis_client.set(
+                f"axongate:alert:{alert_key}",
+                str(int(now)),
+                nx=True,
+                ex=ALERT_MIN_INTERVAL_SECONDS,
+            )
+            return bool(claimed)
+        except Exception as exc:
+            print(f"[ALERT] Redis throttle failed for {alert_key}: {exc}")
+
+    async with alert_lock:
+        last_sent = alert_windows.get(alert_key, 0)
+        if now - last_sent < ALERT_MIN_INTERVAL_SECONDS:
+            return False
+        alert_windows[alert_key] = now
+        return True
+
+
+async def send_alert(alert_key: str, severity: str, message: str, metric_values: dict[str, int]) -> None:
+    """Send an operations alert to the configured webhook, if enabled."""
+    if not ALERT_WEBHOOK_URL:
+        return
+    if not await should_send_alert(alert_key):
+        return
+
+    payload = {
+        "agent": "AxonGate",
+        "alert_key": alert_key,
+        "severity": severity,
+        "message": message,
+        "public_base_url": PUBLIC_BASE_URL,
+        "timestamp": int(time.time()),
+        "metrics": {
+            "requests_total": metric_values.get("requests_total", 0),
+            "retryable_outages_total": metric_values.get("retryable_outages_total", 0),
+            "ueg_rejections_total": metric_values.get("ueg_rejections_total", 0),
+            "payment_validation_rejections_total": metric_values.get("payment_validation_rejections_total", 0),
+            "jina_errors_total": metric_values.get("jina_errors_total", 0),
+            "base_rpc_errors_total": metric_values.get("base_rpc_errors_total", 0),
+            "delivery_success_total": metric_values.get("delivery_success_total", 0),
+            "payments_accepted_total": metric_values.get("payments_accepted_total", 0),
+        },
+    }
+    headers = {"Content-Type": "application/json"}
+    if ALERT_WEBHOOK_TOKEN:
+        headers["Authorization"] = f"Bearer {ALERT_WEBHOOK_TOKEN}"
+
+    try:
+        async with httpx.AsyncClient(timeout=ALERT_WEBHOOK_TIMEOUT_SECONDS) as client:
+            response = await client.post(ALERT_WEBHOOK_URL, json=payload, headers=headers)
+            response.raise_for_status()
+        inc_metric("alerts_sent_total")
+    except Exception as exc:
+        inc_metric("alert_errors_total")
+        print(f"[ALERT] Webhook delivery failed for {alert_key}: {exc}")
+
+
+async def evaluate_alerts(metric_values: dict[str, int]) -> list[str]:
+    """Evaluate coarse operational alert thresholds against durable counters."""
+    inc_metric("alert_checks_total")
+    triggered: list[str] = []
+    requests_total = metric_values.get("requests_total", 0)
+    paid_attempts = metric_values.get("paid_attempts_total", 0)
+    accepted = metric_values.get("payments_accepted_total", 0)
+    supplier_requests = metric_values.get("jina_requests_total", 0)
+    ueg_checks = metric_values.get("ueg_checks_total", 0)
+
+    if requests_total >= ALERT_MIN_SAMPLE_SIZE:
+        retryable_rate = metric_values.get("retryable_outages_total", 0) / requests_total
+        if retryable_rate >= ALERT_RETRYABLE_OUTAGE_RATE:
+            triggered.append("high_retryable_outage_rate")
+            await send_alert(
+                "high_retryable_outage_rate",
+                "warning",
+                f"Retryable outage rate is {retryable_rate:.2%}.",
+                metric_values,
+            )
+
+    if ueg_checks >= ALERT_MIN_SAMPLE_SIZE:
+        ueg_rate = metric_values.get("ueg_rejections_total", 0) / ueg_checks
+        base_rpc_rate = metric_values.get("base_rpc_errors_total", 0) / ueg_checks
+        if ueg_rate >= ALERT_UEG_REJECTION_RATE:
+            triggered.append("high_ueg_rejection_rate")
+            await send_alert("high_ueg_rejection_rate", "warning", f"UEG rejection rate is {ueg_rate:.2%}.", metric_values)
+        if base_rpc_rate >= ALERT_BASE_RPC_ERROR_RATE:
+            triggered.append("high_base_rpc_error_rate")
+            await send_alert(
+                "high_base_rpc_error_rate",
+                "critical",
+                f"Base RPC error rate is {base_rpc_rate:.2%}.",
+                metric_values,
+            )
+
+    if paid_attempts >= ALERT_MIN_SAMPLE_SIZE:
+        payment_rejection_rate = metric_values.get("payment_validation_rejections_total", 0) / paid_attempts
+        if payment_rejection_rate >= ALERT_PAYMENT_VALIDATION_REJECTION_RATE:
+            triggered.append("high_payment_validation_rejection_rate")
+            await send_alert(
+                "high_payment_validation_rejection_rate",
+                "warning",
+                f"Payment validation rejection rate is {payment_rejection_rate:.2%}.",
+                metric_values,
+            )
+
+    if accepted >= ALERT_MIN_SAMPLE_SIZE:
+        delivery_success_rate = metric_values.get("delivery_success_total", 0) / accepted
+        if delivery_success_rate < ALERT_SUPPLIER_SUCCESS_MIN_RATE:
+            triggered.append("low_delivery_success_rate")
+            await send_alert(
+                "low_delivery_success_rate",
+                "critical",
+                f"Delivery success after accepted payment is {delivery_success_rate:.2%}.",
+                metric_values,
+            )
+
+    if supplier_requests >= ALERT_MIN_SAMPLE_SIZE:
+        supplier_success_rate = metric_values.get("jina_success_total", 0) / supplier_requests
+        jina_error_rate = metric_values.get("jina_errors_total", 0) / supplier_requests
+        if supplier_success_rate < ALERT_SUPPLIER_SUCCESS_MIN_RATE:
+            triggered.append("low_jina_success_rate")
+            await send_alert("low_jina_success_rate", "warning", f"Jina success rate is {supplier_success_rate:.2%}.", metric_values)
+        if jina_error_rate >= ALERT_JINA_ERROR_RATE:
+            triggered.append("high_jina_error_rate")
+            await send_alert("high_jina_error_rate", "warning", f"Jina error rate is {jina_error_rate:.2%}.", metric_values)
+
+    return triggered
 
 
 def stable_hash(value: str) -> str:
@@ -425,7 +644,7 @@ def stable_hash(value: str) -> str:
 
 
 def normalize_tier(tier: Optional[str]) -> str:
-    normalized = (tier or "basic").strip().lower()
+    normalized = (tier or RECOMMENDED_TIER).strip().lower()
     if normalized not in TIER_PRICING_USDC:
         raise PaymentValidationError("Unsupported tier. Use basic, fresh, or deep.")
     return normalized
@@ -447,7 +666,7 @@ def cache_ttl_for_tier(tier: str, force_refresh: bool = False) -> int:
     return DEFAULT_CACHE_TTL_SECONDS
 
 
-def build_x402_accepts(tier: str = "basic") -> list[dict[str, Any]]:
+def build_x402_accepts(tier: str = RECOMMENDED_TIER) -> list[dict[str, Any]]:
     """Return PayAI/x402-compatible payment requirements for AxonGate."""
     normalized_tier = normalize_tier(tier)
     price = price_for_tier(normalized_tier)
@@ -500,6 +719,7 @@ def build_x402_resource() -> dict[str, Any]:
             "facilitator": PAYAI_FACILITATOR_URL,
             "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
             "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
+            "recommendedTier": RECOMMENDED_TIER,
             "supplyGuards": {
                 "dnsSsrfProtection": True,
                 "targetPreflight": PREFLIGHT_ENABLED,
@@ -587,7 +807,7 @@ def payment_required_headers(error: str) -> dict[str, str]:
         "PAYMENT-REQUIRED": encoded,
         "X-Payment-Required": encoded,
         "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
-        "X-AxonGate-Payment-Amount": str(REQUIRED_USDC_FEE),
+        "X-AxonGate-Payment-Amount": str(price_for_tier(RECOMMENDED_TIER)),
     }
 
 
@@ -1190,8 +1410,10 @@ async def call_base_rpc(label: str, rpc_call):
     except TransactionNotFound:
         raise
     except asyncio.TimeoutError as exc:
+        inc_metric("base_rpc_errors_total")
         raise NetworkUnavailableError(f"Base RPC timed out during {label}") from exc
     except Exception as exc:
+        inc_metric("base_rpc_errors_total")
         raise NetworkUnavailableError(f"Base RPC failed during {label}") from exc
 
 
@@ -1249,6 +1471,7 @@ async def maybe_query_cdp_transaction(tx_hash: str) -> Any | None:
 async def ensure_base_rpc_ready() -> None:
     connected = await call_base_rpc("connectivity check", web3.is_connected)
     if not connected:
+        inc_metric("base_rpc_errors_total")
         raise NetworkUnavailableError("Base RPC is not reachable")
 
 
@@ -1411,8 +1634,8 @@ async def fetch_eth_usdc_quote() -> EthUsdQuote:
 
 
 async def calculate_profitability() -> UEGReceipt:
-    """Calculate 0.02 USDC revenue minus live Base gas estimate and Jina cost."""
-    return await calculate_profitability_for_price(REQUIRED_USDC_FEE)
+    """Calculate recommended-tier revenue minus live Base gas estimate and Jina cost."""
+    return await calculate_profitability_for_price(price_for_tier(RECOMMENDED_TIER))
 
 
 async def calculate_profitability_for_price(revenue_usdc: Decimal, supplier_attempts: int = 1) -> UEGReceipt:
@@ -1558,6 +1781,7 @@ async def fetch_clean_markdown(target_url: str) -> str:
             inc_metric("jina_success_total")
             return response.text
     except httpx.TimeoutException as exc:
+        inc_metric("jina_errors_total")
         raise NetworkUnavailableError(
             "Jina Reader timed out",
             source="jina",
@@ -1566,6 +1790,7 @@ async def fetch_clean_markdown(target_url: str) -> str:
     except httpx.HTTPStatusError as exc:
         status_code = exc.response.status_code
         if status_code == 408 or status_code == 429 or status_code >= 500:
+            inc_metric("jina_errors_total")
             raise NetworkUnavailableError(
                 f"Jina Reader temporarily failed with HTTP {status_code}",
                 source="jina",
@@ -1578,6 +1803,7 @@ async def fetch_clean_markdown(target_url: str) -> str:
             consume_credit=True,
         ) from exc
     except httpx.RequestError as exc:
+        inc_metric("jina_errors_total")
         raise NetworkUnavailableError(
             "Jina Reader request failed",
             source="jina",
@@ -1691,8 +1917,8 @@ def build_llms_txt() -> str:
     request_example = json.dumps(
         {
             "target_url": "https://example.com/source",
-            "tier": "basic",
-            "force_refresh": False,
+            "tier": RECOMMENDED_TIER,
+            "force_refresh": RECOMMENDED_TIER == "fresh",
         },
         indent=2,
     )
@@ -1713,7 +1939,9 @@ OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
 Manifest: {public_url("/manifest.json")}
 Agent card: {public_url("/.well-known/agent.json")}
+Agent card alias: {public_url("/.well-known/agent-card.json")}
 x402 discovery: {public_url("/.well-known/x402")}
+x402 JSON alias: {public_url("/.well-known/x402.json")}
 Resource listing: {public_url("/discovery/resources")}
 Sitemap: {public_url("/sitemap.xml")}
 Python client example: {GITHUB_REPO_URL}/blob/main/examples/python_client.py
@@ -1739,6 +1967,7 @@ Body example:
 
 Tiers:
 {tier_lines}
+Recommended tier for uncached public web context: {RECOMMENDED_TIER}
 
 Successful response shape:
 - status: success
@@ -1770,8 +1999,8 @@ def build_docs_html() -> str:
         json.dumps(
             {
                 "target_url": "https://example.com/source",
-                "tier": "basic",
-                "force_refresh": False,
+                "tier": RECOMMENDED_TIER,
+                "force_refresh": RECOMMENDED_TIER == "fresh",
             },
             indent=2,
         )
@@ -1780,7 +2009,7 @@ def build_docs_html() -> str:
         f"""curl -X POST {PUBLIC_BASE_URL}/v1/x402/access \\
   -H "Content-Type: application/json" \\
   -H "PAYMENT-SIGNATURE: <x402-payment-proof>" \\
-  -d '{{"target_url":"https://example.com/source","tier":"basic","force_refresh":false}}'"""
+  -d '{{"target_url":"https://example.com/source","tier":"{RECOMMENDED_TIER}","force_refresh":{str(RECOMMENDED_TIER == "fresh").lower()}}}'"""
     )
     tiers_rows = "\n".join(
         "<tr>"
@@ -1861,7 +2090,9 @@ def build_docs_html() -> str:
     <section class="links" aria-label="Discovery links">
       <a href="{public}/manifest.json">Manifest</a>
       <a href="{public}/.well-known/agent.json">Agent card</a>
+      <a href="{public}/.well-known/agent-card.json">Agent card alias</a>
       <a href="{public}/.well-known/x402">x402 discovery</a>
+      <a href="{public}/.well-known/x402.json">x402 JSON</a>
       <a href="{public}/discovery/resources">Resource listing</a>
       <a href="{public}/llms.txt">llms.txt</a>
       <a href="{public}/demo">Demo</a>
@@ -1882,6 +2113,7 @@ def build_docs_html() -> str:
     </div>
 
     <h2>Pricing</h2>
+    <p>The recommended tier for production agent calls is <code>{html.escape(RECOMMENDED_TIER)}</code>. Basic remains available for cache-friendly workloads, while fresh and deep protect margin on higher-value requests.</p>
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>Cache policy</th></tr></thead>
       <tbody>{tiers_rows}</tbody>
@@ -1915,7 +2147,8 @@ def build_demo_html() -> str:
     """Return a self-contained buyer console that never bypasses x402 payment."""
     public = html.escape(PUBLIC_BASE_URL)
     price_options = "\n".join(
-        f'<option value="{html.escape(tier)}">{html.escape(tier)} - {html.escape(str(price))} USDC</option>'
+        f'<option value="{html.escape(tier)}"{" selected" if tier == RECOMMENDED_TIER else ""}>'
+        f'{html.escape(tier)} - {html.escape(str(price))} USDC</option>'
         for tier, price in TIER_PRICING_USDC.items()
     )
 
@@ -2121,7 +2354,9 @@ def build_sitemap_xml() -> str:
         ("/llms.txt", "0.8"),
         ("/manifest.json", "0.8"),
         ("/.well-known/agent.json", "0.8"),
+        ("/.well-known/agent-card.json", "0.8"),
         ("/.well-known/x402", "0.8"),
+        ("/.well-known/x402.json", "0.8"),
         ("/discovery/resources", "0.8"),
         ("/openapi.json", "0.7"),
         ("/swagger", "0.7"),
@@ -2188,7 +2423,9 @@ async def root():
         "basename": "axongate.base.eth",
         "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
         "agent_card": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
+        "agent_card_alias": f"{PUBLIC_BASE_URL}/.well-known/agent-card.json",
         "x402": f"{PUBLIC_BASE_URL}/.well-known/x402",
+        "x402_json": f"{PUBLIC_BASE_URL}/.well-known/x402.json",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "demo": f"{PUBLIC_BASE_URL}/demo",
@@ -2224,9 +2461,23 @@ async def well_known_agent():
     return load_agent_card()
 
 
+@app.get("/.well-known/agent-card.json", tags=["discovery"], summary="Agent card compatibility alias")
+async def well_known_agent_card_alias():
+    """Expose an AgentCard-compatible alias used by some registries."""
+    inc_discovery_hit("discovery_agent_card_hits_total")
+    return load_agent_card()
+
+
 @app.get("/.well-known/x402", tags=["discovery"], summary="x402 payment discovery")
 async def well_known_x402():
     """Expose AxonGate's x402 resource advertisement for crawler discovery."""
+    inc_discovery_hit("discovery_x402_hits_total")
+    return build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
+
+
+@app.get("/.well-known/x402.json", tags=["discovery"], summary="x402 discovery compatibility alias")
+async def well_known_x402_json():
+    """Expose an x402 JSON alias for crawlers that require a file extension."""
     inc_discovery_hit("discovery_x402_hits_total")
     return build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
 
@@ -2258,10 +2509,30 @@ async def discovery_resources(type: Optional[str] = None, limit: int = 20, offse
 @app.get("/metrics", tags=["operations"], summary="Operational metrics")
 async def metrics_snapshot():
     """Expose lightweight operational counters for conversion and margin tuning."""
+    metric_values = await durable_metrics_snapshot()
+    triggered_alerts = await evaluate_alerts(metric_values)
     return {
         "status": "ok",
-        "metrics": metrics,
-        "conversion_funnel": conversion_funnel_snapshot(),
+        "metrics": metric_values,
+        "conversion_funnel": conversion_funnel_snapshot(metric_values),
+        "metrics_backend": {
+            "persistent": bool(redis_client and METRICS_PERSISTENCE_ENABLED),
+            "redis_key": METRICS_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
+        },
+        "alerts": {
+            "enabled": bool(ALERT_WEBHOOK_URL),
+            "triggered": triggered_alerts,
+            "min_interval_seconds": ALERT_MIN_INTERVAL_SECONDS,
+            "min_sample_size": ALERT_MIN_SAMPLE_SIZE,
+            "thresholds": {
+                "retryable_outage_rate": ALERT_RETRYABLE_OUTAGE_RATE,
+                "ueg_rejection_rate": ALERT_UEG_REJECTION_RATE,
+                "payment_validation_rejection_rate": ALERT_PAYMENT_VALIDATION_REJECTION_RATE,
+                "supplier_success_min_rate": ALERT_SUPPLIER_SUCCESS_MIN_RATE,
+                "base_rpc_error_rate": ALERT_BASE_RPC_ERROR_RATE,
+                "jina_error_rate": ALERT_JINA_ERROR_RATE,
+            },
+        },
         "cache": {
             "backend": "redis" if redis_client else "memory",
             "default_ttl_seconds": DEFAULT_CACHE_TTL_SECONDS,

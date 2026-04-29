@@ -1,0 +1,36 @@
+name: AxonGate CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python
+        run: python -m py_compile axongate_gateway.py examples/python_client.py scripts/ci_smoke.py scripts/secret_scan.py
+
+      - name: Validate manifest
+        run: python -m json.tool manifest.json > /dev/null
+
+      - name: Run ASGI smoke tests
+        run: python scripts/ci_smoke.py
+
+      - name: Secret scan tracked files
+        run: python scripts/secret_scan.py

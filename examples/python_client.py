@@ -32,7 +32,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Call AxonGate's x402 Clean Context Broker.")
     parser.add_argument("--base-url", default=os.getenv("AXONGATE_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--target-url", default=os.getenv("TARGET_URL"))
-    parser.add_argument("--tier", default=os.getenv("AXONGATE_TIER", "basic"), choices=["basic", "fresh", "deep"])
+    parser.add_argument("--tier", default=os.getenv("AXONGATE_TIER", "fresh"), choices=["basic", "fresh", "deep"])
     parser.add_argument("--force-refresh", action="store_true")
     parser.add_argument("--probe-only", action="store_true")
     parser.add_argument(

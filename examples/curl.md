@@ -27,11 +27,11 @@ export PAYMENT_SIGNATURE="<x402 payment proof from your wallet or facilitator>"
 curl -sS -X POST "$AXONGATE_BASE_URL/v1/x402/access" \
   -H "Content-Type: application/json" \
   -H "PAYMENT-SIGNATURE: $PAYMENT_SIGNATURE" \
-  -H "X-AxonGate-Tier: basic" \
+  -H "X-AxonGate-Tier: fresh" \
   -d "{
     \"target_url\": \"$TARGET_URL\",
-    \"tier\": \"basic\",
-    \"force_refresh\": false
+    \"tier\": \"fresh\",
+    \"force_refresh\": true
   }"
 ```
 
