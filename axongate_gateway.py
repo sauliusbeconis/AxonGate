@@ -68,6 +68,16 @@ REDIS_URL = os.getenv("REDIS_URL")
 DEFAULT_CACHE_TTL_SECONDS = int(os.getenv("AXONGATE_CACHE_TTL_SECONDS", "3600"))
 DELIVERY_CREDIT_TTL_SECONDS = int(os.getenv("AXONGATE_DELIVERY_CREDIT_TTL_SECONDS", "900"))
 DELIVERY_CREDIT_MAX_ATTEMPTS = int(os.getenv("AXONGATE_DELIVERY_CREDIT_MAX_ATTEMPTS", "2"))
+RATE_LIMIT_ENABLED = os.getenv("AXONGATE_RATE_LIMIT_ENABLED", "true").lower() not in {"0", "false", "no"}
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("AXONGATE_RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_PROBE_PER_IP = int(os.getenv("AXONGATE_RATE_LIMIT_PROBE_PER_IP", "120"))
+RATE_LIMIT_UNPAID_PER_IP = int(os.getenv("AXONGATE_RATE_LIMIT_UNPAID_PER_IP", "60"))
+RATE_LIMIT_PAID_PER_IP = int(os.getenv("AXONGATE_RATE_LIMIT_PAID_PER_IP", "120"))
+RATE_LIMIT_TARGET_DOMAIN = int(os.getenv("AXONGATE_RATE_LIMIT_TARGET_DOMAIN", "120"))
+RATE_LIMIT_RETRY_PER_IP = int(os.getenv("AXONGATE_RATE_LIMIT_RETRY_PER_IP", "60"))
+RATE_LIMIT_RETRY_PER_CREDIT = int(os.getenv("AXONGATE_RATE_LIMIT_RETRY_PER_CREDIT", "10"))
+RATE_LIMIT_LEGACY_PAYMENT_HASH = int(os.getenv("AXONGATE_RATE_LIMIT_LEGACY_PAYMENT_HASH", "20"))
+RATE_LIMIT_COMPUTE_PER_IP = int(os.getenv("AXONGATE_RATE_LIMIT_COMPUTE_PER_IP", "30"))
 
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
@@ -137,6 +147,8 @@ delivery_credits: dict[str, dict[str, Any]] = {}
 delivery_credits_lock = asyncio.Lock()
 eth_usdc_price_cache: dict[str, Any] = {}
 eth_usdc_price_lock = asyncio.Lock()
+rate_limit_windows: dict[str, tuple[int, int]] = {}
+rate_limit_lock = asyncio.Lock()
 redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and REDIS_URL else None
 metrics: dict[str, int] = {
     "requests_total": 0,
@@ -155,6 +167,8 @@ metrics: dict[str, int] = {
     "eth_price_cache_hits_total": 0,
     "eth_price_stale_hits_total": 0,
     "eth_price_errors_total": 0,
+    "rate_limit_checks_total": 0,
+    "rate_limit_rejections_total": 0,
     "supplier_rejections_total": 0,
     "delivery_credits_issued_total": 0,
     "delivery_credit_success_total": 0,
@@ -252,6 +266,15 @@ class NetworkUnavailableError(Exception):
         self.source = source
         self.creditable = creditable
         self.supplier_attempt_charged = supplier_attempt_charged
+        super().__init__(detail)
+
+
+class RateLimitExceeded(Exception):
+    def __init__(self, detail: str, *, retry_after_seconds: int, bucket: str, limit: int):
+        self.detail = detail
+        self.retry_after_seconds = retry_after_seconds
+        self.bucket = bucket
+        self.limit = limit
         super().__init__(detail)
 
 
@@ -365,6 +388,7 @@ def build_x402_resource() -> dict[str, Any]:
                 "targetPreflight": PREFLIGHT_ENABLED,
                 "maxContentBytes": PREFLIGHT_MAX_CONTENT_BYTES,
                 "allowedTargetPorts": sorted(ALLOWED_TARGET_PORTS),
+                "redisRateLimits": RATE_LIMIT_ENABLED,
             },
             "pricing": {
                 tier: {
@@ -444,6 +468,73 @@ def payment_required_headers(error: str) -> dict[str, str]:
         "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
         "X-AxonGate-Payment-Amount": str(REQUIRED_USDC_FEE),
     }
+
+
+def client_rate_identifier(request: Request) -> str:
+    """
+    Return a privacy-preserving client identifier for rate-limit buckets.
+
+    Railway/edge proxies commonly provide X-Forwarded-For. We only store a hash
+    of the selected address in Redis so raw IPs are not persisted in app keys.
+    """
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        client_ip = forwarded_for.split(",", 1)[0].strip()
+    else:
+        client_ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+
+    return f"ip:{stable_hash(client_ip or 'unknown')}"
+
+
+def target_domain_identifier(target_url: str) -> str:
+    hostname = (urlparse(target_url).hostname or "unknown").lower()
+    return f"domain:{stable_hash(hostname)}"
+
+
+def payment_hash_identifier(tx_hash: str) -> str:
+    return f"payment-hash:{stable_hash(tx_hash.strip().lower())}"
+
+
+def retry_credit_identifier(token: str) -> str:
+    return f"retry-credit:{stable_hash(token.strip())}"
+
+
+async def enforce_rate_limit(bucket: str, identifier: str, limit: int, window_seconds: int = RATE_LIMIT_WINDOW_SECONDS) -> None:
+    """Fixed-window rate limiter backed by Redis, with an in-memory fallback."""
+    if not RATE_LIMIT_ENABLED or limit <= 0 or window_seconds <= 0:
+        return
+
+    inc_metric("rate_limit_checks_total")
+    now = int(time.time())
+    window_start = now - (now % window_seconds)
+    reset_at = window_start + window_seconds
+    retry_after = max(1, reset_at - now)
+    key = f"axongate:rate:{bucket}:{stable_hash(identifier)}:{window_start}"
+
+    if redis_client:
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, window_seconds + 5)
+    else:
+        async with rate_limit_lock:
+            expires_at, current_count = rate_limit_windows.get(key, (reset_at, 0))
+            if expires_at <= now:
+                expires_at, current_count = reset_at, 0
+            count = current_count + 1
+            rate_limit_windows[key] = (expires_at, count)
+
+            expired_keys = [cache_key for cache_key, (expires, _) in rate_limit_windows.items() if expires <= now]
+            for cache_key in expired_keys[:100]:
+                rate_limit_windows.pop(cache_key, None)
+
+    if count > limit:
+        inc_metric("rate_limit_rejections_total")
+        raise RateLimitExceeded(
+            "Rate limit exceeded. Client agent should retry after the indicated window.",
+            retry_after_seconds=retry_after,
+            bucket=bucket,
+            limit=limit,
+        )
 
 
 def payment_reference_from_request(request: Request) -> str:
@@ -1444,6 +1535,21 @@ def retry_later_503(exc: Exception, credit: Optional[dict[str, Any]] = None) -> 
     )
 
 
+def rate_limit_429(exc: RateLimitExceeded, credit: Optional[dict[str, Any]] = None) -> HTTPException:
+    headers = {"Retry-After": str(exc.retry_after_seconds)}
+    detail: Any = {
+        "message": exc.detail,
+        "bucket": exc.bucket,
+        "limit": exc.limit,
+        "retry_after_seconds": exc.retry_after_seconds,
+    }
+    if credit:
+        headers.update(delivery_credit_headers(credit["token"], int(credit["remaining_attempts"])))
+        detail["retry_credit"] = credit
+
+    return HTTPException(status_code=429, detail=detail, headers=headers)
+
+
 @app.get("/")
 async def root():
     """Return a lightweight discovery index for crawlers and agent clients."""
@@ -1538,13 +1644,25 @@ async def metrics_snapshot():
             "price_floor_usdc": float(ETH_USDC_PRICE_FLOOR),
             "static_fallback_enabled": ETH_USDC_ALLOW_STATIC_FALLBACK,
         },
+        "rate_limits": {
+            "enabled": RATE_LIMIT_ENABLED,
+            "window_seconds": RATE_LIMIT_WINDOW_SECONDS,
+            "probe_per_ip": RATE_LIMIT_PROBE_PER_IP,
+            "unpaid_per_ip": RATE_LIMIT_UNPAID_PER_IP,
+            "paid_per_ip": RATE_LIMIT_PAID_PER_IP,
+            "target_domain": RATE_LIMIT_TARGET_DOMAIN,
+            "retry_per_ip": RATE_LIMIT_RETRY_PER_IP,
+            "retry_per_credit": RATE_LIMIT_RETRY_PER_CREDIT,
+            "legacy_payment_hash": RATE_LIMIT_LEGACY_PAYMENT_HASH,
+            "compute_per_ip": RATE_LIMIT_COMPUTE_PER_IP,
+        },
         "pricing": {tier: float(price) for tier, price in TIER_PRICING_USDC.items()},
     }
 
 
 @app.head("/v1/x402/access")
 @app.get("/v1/x402/access")
-async def access_context_broker_x402_probe():
+async def access_context_broker_x402_probe(request: Request):
     """
     Return a machine-readable x402 challenge for directory probes.
 
@@ -1555,6 +1673,11 @@ async def access_context_broker_x402_probe():
     """
     inc_metric("requests_total")
     inc_metric("payment_required_total")
+    try:
+        await enforce_rate_limit("x402_probe_ip", client_rate_identifier(request), RATE_LIMIT_PROBE_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+
     detail = "Payment Required. Use POST with PAYMENT-SIGNATURE and a JSON target_url body."
     raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
 
@@ -1577,6 +1700,11 @@ async def access_context_broker_x402(
 
     if not hasattr(request.state, "payment_payload"):
         inc_metric("payment_required_total")
+        try:
+            await enforce_rate_limit("x402_unpaid_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        except RateLimitExceeded as exc:
+            raise rate_limit_429(exc) from exc
+
         detail = "Payment Required. Retry with PAYMENT-SIGNATURE for the selected x402 requirement."
         raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
 
@@ -1586,6 +1714,23 @@ async def access_context_broker_x402(
     try:
         target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(x_axongate_tier or access_request.tier)
+        try:
+            await enforce_rate_limit("x402_paid_ip", client_rate_identifier(request), RATE_LIMIT_PAID_PER_IP)
+            await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
+            await enforce_rate_limit("payment_reference", payment_reference, RATE_LIMIT_PAID_PER_IP)
+        except RateLimitExceeded as exc:
+            credit = await create_delivery_credit(
+                payment_reference=payment_reference,
+                target_url=target_url,
+                tier=tier,
+                force_refresh=access_request.force_refresh,
+                amount_usdc=price_for_tier(tier),
+                mode="x402-facilitator-rate-limit",
+                reason=exc.detail,
+                supplier_attempts_used=0,
+            )
+            raise rate_limit_429(exc, credit) from exc
+
         profitability = await calculate_profitability_for_price(price_for_tier(tier))
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
             raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
@@ -1639,6 +1784,7 @@ async def access_context_broker_x402(
 
 @app.post("/v1/x402/retry")
 async def retry_context_broker_delivery(
+    request: Request,
     access_request: AccessRequest,
     x_axongate_retry_credit: Optional[str] = Header(None, alias="X-AxonGate-Retry-Credit"),
 ):
@@ -1657,6 +1803,11 @@ async def retry_context_broker_delivery(
 
     if not x_axongate_retry_credit:
         inc_metric("payment_required_total")
+        try:
+            await enforce_rate_limit("retry_missing_credit_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        except RateLimitExceeded as exc:
+            raise rate_limit_429(exc) from exc
+
         detail = "Payment Required. Provide PAYMENT-SIGNATURE or a valid X-AxonGate-Retry-Credit."
         raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
 
@@ -1664,6 +1815,17 @@ async def retry_context_broker_delivery(
     try:
         target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(access_request.tier)
+        try:
+            await enforce_rate_limit("retry_ip", client_rate_identifier(request), RATE_LIMIT_RETRY_PER_IP)
+            await enforce_rate_limit(
+                "retry_credit",
+                retry_credit_identifier(x_axongate_retry_credit),
+                RATE_LIMIT_RETRY_PER_CREDIT,
+            )
+            await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
+        except RateLimitExceeded as exc:
+            raise rate_limit_429(exc) from exc
+
         reservation = await reserve_delivery_credit(
             x_axongate_retry_credit,
             target_url=target_url,
@@ -1769,6 +1931,17 @@ async def access_context_broker(
     try:
         target_url = await assert_public_target_url(request.target_url)
         tier = normalize_tier(request.tier)
+        try:
+            await enforce_rate_limit("legacy_ip", client_rate_identifier(request), RATE_LIMIT_PAID_PER_IP)
+            await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
+            await enforce_rate_limit(
+                "legacy_payment_hash",
+                payment_hash_identifier(x_axongate_payment_hash),
+                RATE_LIMIT_LEGACY_PAYMENT_HASH,
+            )
+        except RateLimitExceeded as exc:
+            raise rate_limit_429(exc) from exc
+
         price = price_for_tier(tier)
         payment = await verify_x402_payment(x_axongate_payment_hash, price)
         profitability = await calculate_profitability_for_price(payment.amount_usdc)
@@ -1826,8 +1999,13 @@ async def access_context_broker(
 
 
 @app.post("/v1/broker/compute")
-async def process_task(request: ComputeRequest, x402_token: str = Header(None)):
-    print(f"\n[INBOUND REQUEST] Agent: {request.agent_id}")
+async def process_task(payload: ComputeRequest, request: Request, x402_token: str = Header(None)):
+    print(f"\n[INBOUND REQUEST] Agent: {payload.agent_id}")
+
+    try:
+        await enforce_rate_limit("compute_ip", client_rate_identifier(request), RATE_LIMIT_COMPUTE_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
 
     if not x402_token:
         print("[REJECTED] Missing x402 Payment Header")
@@ -1835,7 +2013,7 @@ async def process_task(request: ComputeRequest, x402_token: str = Header(None)):
 
     try:
         profitability = await calculate_profitability()
-        offered_fee_usdc = Decimal(str(request.offered_fee))
+        offered_fee_usdc = Decimal(str(payload.offered_fee))
         projected_profit = offered_fee_usdc - (
             profitability.dynamic_gas_cost_usdc + profitability.jina_api_cost_usdc
         )
