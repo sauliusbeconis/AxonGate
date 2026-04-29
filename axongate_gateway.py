@@ -60,7 +60,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid Clean Context Broker for Web-to-Markdown extraction on Base.",
-    version="1.1.0",
+    version="1.1.1",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -2439,6 +2439,7 @@ async def root():
     return {
         "status": "alive",
         "agent": "AxonGate",
+        "version": app.version,
         "service": "The Clean Context Broker",
         "basename": "axongate.base.eth",
         "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
