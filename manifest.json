@@ -29,7 +29,9 @@
       "llms_txt_discovery",
       "openapi_examples",
       "client_examples",
-      "conversion_telemetry"
+      "conversion_telemetry",
+      "interactive_demo",
+      "crawler_sitemap"
     ],
     "input_modes": [
       "url"
@@ -93,7 +95,10 @@
     "legacy_access": "https://web-production-8136ee.up.railway.app/v1/access",
     "health": "https://web-production-8136ee.up.railway.app/health",
     "docs": "https://web-production-8136ee.up.railway.app/docs",
+    "demo": "https://web-production-8136ee.up.railway.app/demo",
     "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
+    "robots": "https://web-production-8136ee.up.railway.app/robots.txt",
+    "sitemap": "https://web-production-8136ee.up.railway.app/sitemap.xml",
     "manifest": "https://web-production-8136ee.up.railway.app/manifest.json",
     "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
     "swagger": "https://web-production-8136ee.up.railway.app/swagger",
@@ -157,8 +162,10 @@
       "market_listing": "https://web-production-8136ee.up.railway.app/discovery/resources",
       "payment_required_header": "PAYMENT-REQUIRED",
       "docs": "https://web-production-8136ee.up.railway.app/docs",
+      "demo": "https://web-production-8136ee.up.railway.app/demo",
       "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
-      "openapi": "https://web-production-8136ee.up.railway.app/openapi.json"
+      "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
+      "sitemap": "https://web-production-8136ee.up.railway.app/sitemap.xml"
     },
     "tags": [
       "x402",

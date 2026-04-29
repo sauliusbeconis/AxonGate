@@ -20,7 +20,7 @@ import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
@@ -183,6 +183,9 @@ metrics: dict[str, int] = {
     "discovery_root_hits_total": 0,
     "discovery_llms_hits_total": 0,
     "discovery_docs_hits_total": 0,
+    "discovery_demo_hits_total": 0,
+    "discovery_robots_hits_total": 0,
+    "discovery_sitemap_hits_total": 0,
     "discovery_manifest_hits_total": 0,
     "discovery_agent_card_hits_total": 0,
     "discovery_x402_hits_total": 0,
@@ -489,9 +492,11 @@ def build_x402_resource() -> dict[str, Any]:
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
             "docs": f"{PUBLIC_BASE_URL}/docs",
+            "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
             "swagger": f"{PUBLIC_BASE_URL}/swagger",
+            "sitemap": f"{PUBLIC_BASE_URL}/sitemap.xml",
             "facilitator": PAYAI_FACILITATOR_URL,
             "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
             "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
@@ -562,6 +567,7 @@ def build_payment_required_payload(error: str) -> dict[str, Any]:
             "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
             "docs": f"{PUBLIC_BASE_URL}/docs",
+            "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
             "paymentHashHeader": "X-AxonGate-Payment-Hash",
@@ -1702,12 +1708,14 @@ Basename: axongate.base.eth
 Summary: x402-paid Clean Context Broker that converts public web pages into clean markdown for RAG, research, and autonomous agents.
 Canonical base URL: {PUBLIC_BASE_URL}
 Human docs: {public_url("/docs")}
+Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
 Manifest: {public_url("/manifest.json")}
 Agent card: {public_url("/.well-known/agent.json")}
 x402 discovery: {public_url("/.well-known/x402")}
 Resource listing: {public_url("/discovery/resources")}
+Sitemap: {public_url("/sitemap.xml")}
 Python client example: {GITHUB_REPO_URL}/blob/main/examples/python_client.py
 cURL examples: {GITHUB_REPO_URL}/blob/main/examples/curl.md
 
@@ -1856,6 +1864,7 @@ def build_docs_html() -> str:
       <a href="{public}/.well-known/x402">x402 discovery</a>
       <a href="{public}/discovery/resources">Resource listing</a>
       <a href="{public}/llms.txt">llms.txt</a>
+      <a href="{public}/demo">Demo</a>
       <a href="{public}/openapi.json">OpenAPI JSON</a>
       <a href="{public}/swagger">Swagger UI</a>
       <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/python_client.py">Python client</a>
@@ -1902,6 +1911,237 @@ def build_docs_html() -> str:
 </html>"""
 
 
+def build_demo_html() -> str:
+    """Return a self-contained buyer console that never bypasses x402 payment."""
+    public = html.escape(PUBLIC_BASE_URL)
+    price_options = "\n".join(
+        f'<option value="{html.escape(tier)}">{html.escape(tier)} - {html.escape(str(price))} USDC</option>'
+        for tier, price in TIER_PRICING_USDC.items()
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Demo</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --warn: #f6c177;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }}
+    main {{ max-width: 1080px; margin: 0 auto; padding: 34px 18px 60px; }}
+    h1 {{ font-size: clamp(2rem, 4vw, 3.1rem); line-height: 1.05; margin: 0 0 10px; }}
+    h2 {{ font-size: 1.05rem; margin: 0 0 14px; }}
+    p {{ color: var(--muted); margin: 0 0 18px; }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .grid {{ display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 16px; align-items: start; }}
+    .panel {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }}
+    label {{ display: block; margin: 12px 0 6px; color: var(--muted); font-size: 0.92rem; }}
+    input, select, textarea, button {{
+      width: 100%;
+      font: inherit;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #10131a;
+      color: var(--text);
+    }}
+    input, select, textarea {{ padding: 10px 11px; }}
+    textarea {{ min-height: 92px; resize: vertical; }}
+    button {{
+      margin-top: 12px;
+      padding: 10px 12px;
+      cursor: pointer;
+      background: var(--accent);
+      color: #07100f;
+      border-color: transparent;
+      font-weight: 700;
+    }}
+    button.secondary {{ background: transparent; color: var(--text); border-color: var(--line); }}
+    pre {{
+      min-height: 420px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      margin: 0;
+      color: var(--text);
+    }}
+    .meta {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin: 18px 0; }}
+    .pill {{ border: 1px solid var(--line); border-radius: 8px; padding: 10px; color: var(--muted); }}
+    .pill strong {{ display: block; color: var(--text); }}
+    .warning {{ color: var(--warn); }}
+    @media (max-width: 860px) {{ .grid {{ grid-template-columns: 1fr; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AxonGate Demo</h1>
+    <p>Probe payment terms, prepare a paid request, and inspect the response contract. Supplier work only runs after a valid x402 proof is submitted.</p>
+    <div class="meta">
+      <div class="pill"><strong>Endpoint</strong>{public}/v1/x402/access</div>
+      <div class="pill"><strong>Network</strong>Base mainnet, eip155:8453</div>
+      <div class="pill"><strong>Asset</strong>USDC on Base</div>
+      <div class="pill"><strong>Docs</strong><a href="{public}/docs">Open docs</a></div>
+    </div>
+    <div class="grid">
+      <section class="panel">
+        <h2>Request</h2>
+        <label for="targetUrl">Target URL</label>
+        <input id="targetUrl" value="https://example.com" autocomplete="url">
+        <label for="tier">Tier</label>
+        <select id="tier">{price_options}</select>
+        <label for="paymentSignature">PAYMENT-SIGNATURE</label>
+        <textarea id="paymentSignature" spellcheck="false" placeholder="Paste x402 payment proof here"></textarea>
+        <button id="probeButton" class="secondary" type="button">Fetch Payment Terms</button>
+        <button id="submitButton" type="button">Submit Paid Request</button>
+        <p class="warning">A valid payment proof is required for supplier delivery. Empty probes return the x402 challenge only.</p>
+      </section>
+      <section class="panel">
+        <h2>Response</h2>
+        <pre id="output">Ready.</pre>
+      </section>
+    </div>
+  </main>
+  <script>
+    const output = document.getElementById("output");
+    const targetUrl = document.getElementById("targetUrl");
+    const tier = document.getElementById("tier");
+    const paymentSignature = document.getElementById("paymentSignature");
+
+    function show(value) {{
+      output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    }}
+
+    function decodeHeader(value) {{
+      if (!value) return null;
+      try {{
+        return JSON.parse(atob(value));
+      }} catch (error) {{
+        return {{"raw": value, "decode_error": String(error)}};
+      }}
+    }}
+
+    async function readResponse(response) {{
+      const text = await response.text();
+      let body = text;
+      try {{
+        body = JSON.parse(text);
+      }} catch (_) {{}}
+      return {{
+        status: response.status,
+        payment_required: decodeHeader(response.headers.get("PAYMENT-REQUIRED") || response.headers.get("X-Payment-Required")),
+        retry_credit: response.headers.get("X-AxonGate-Retry-Credit"),
+        retry_after: response.headers.get("Retry-After"),
+        body
+      }};
+    }}
+
+    document.getElementById("probeButton").addEventListener("click", async () => {{
+      show("Fetching payment terms...");
+      try {{
+        const response = await fetch("/v1/x402/access");
+        show(await readResponse(response));
+      }} catch (error) {{
+        show({{"error": String(error)}});
+      }}
+    }});
+
+    document.getElementById("submitButton").addEventListener("click", async () => {{
+      const proof = paymentSignature.value.trim();
+      if (!proof) {{
+        show("Paste a PAYMENT-SIGNATURE before submitting a paid request.");
+        return;
+      }}
+      show("Submitting paid request...");
+      try {{
+        const response = await fetch("/v1/x402/access", {{
+          method: "POST",
+          headers: {{
+            "Content-Type": "application/json",
+            "PAYMENT-SIGNATURE": proof,
+            "X-AxonGate-Tier": tier.value
+          }},
+          body: JSON.stringify({{
+            target_url: targetUrl.value.trim(),
+            tier: tier.value,
+            force_refresh: tier.value === "fresh"
+          }})
+        }});
+        show(await readResponse(response));
+      }} catch (error) {{
+        show({{"error": String(error)}});
+      }}
+    }});
+  </script>
+</body>
+</html>"""
+
+
+def build_robots_txt() -> str:
+    """Return permissive crawler hints for public discovery surfaces."""
+    return f"""User-agent: *
+Allow: /
+
+Sitemap: {public_url("/sitemap.xml")}
+"""
+
+
+def build_sitemap_xml() -> str:
+    """Return a small XML sitemap for human and agent discovery URLs."""
+    now = time.strftime("%Y-%m-%d", time.gmtime())
+    entries = [
+        ("/", "1.0"),
+        ("/docs", "0.9"),
+        ("/demo", "0.9"),
+        ("/llms.txt", "0.8"),
+        ("/manifest.json", "0.8"),
+        ("/.well-known/agent.json", "0.8"),
+        ("/.well-known/x402", "0.8"),
+        ("/discovery/resources", "0.8"),
+        ("/openapi.json", "0.7"),
+        ("/swagger", "0.7"),
+    ]
+    url_entries = "\n".join(
+        "  <url>"
+        f"<loc>{html.escape(public_url(path), quote=True)}</loc>"
+        f"<lastmod>{now}</lastmod>"
+        "<changefreq>daily</changefreq>"
+        f"<priority>{priority}</priority>"
+        "</url>"
+        for path, priority in entries
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+{url_entries}
+</urlset>
+"""
+
+
 @app.get("/llms.txt", response_class=PlainTextResponse, tags=["discovery"], summary="Agent-readable service brief")
 async def llms_txt():
     """Expose a concise machine-readable brief for LLM routers and crawlers."""
@@ -1914,6 +2154,27 @@ async def human_docs():
     """Serve a lightweight docs page; Swagger remains available at /swagger."""
     inc_discovery_hit("discovery_docs_hits_total")
     return build_docs_html()
+
+
+@app.get("/demo", response_class=HTMLResponse, tags=["discovery"], summary="Interactive AxonGate buyer demo")
+async def demo():
+    """Serve a safe buyer console that preserves the x402 payment boundary."""
+    inc_discovery_hit("discovery_demo_hits_total")
+    return build_demo_html()
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse, tags=["discovery"], summary="Crawler hints")
+async def robots_txt():
+    """Expose crawler hints for public discovery URLs."""
+    inc_discovery_hit("discovery_robots_hits_total")
+    return build_robots_txt()
+
+
+@app.get("/sitemap.xml", tags=["discovery"], summary="XML sitemap")
+async def sitemap_xml():
+    """Expose a small sitemap for search and agent crawlers."""
+    inc_discovery_hit("discovery_sitemap_hits_total")
+    return Response(content=build_sitemap_xml(), media_type="application/xml")
 
 
 @app.get("/", tags=["discovery"], summary="Discovery index")
@@ -1930,7 +2191,10 @@ async def root():
         "x402": f"{PUBLIC_BASE_URL}/.well-known/x402",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
+        "demo": f"{PUBLIC_BASE_URL}/demo",
         "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
+        "robots": f"{PUBLIC_BASE_URL}/robots.txt",
+        "sitemap": f"{PUBLIC_BASE_URL}/sitemap.xml",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
         "swagger": f"{PUBLIC_BASE_URL}/swagger",
         "python_client_example": f"{GITHUB_REPO_URL}/blob/main/examples/python_client.py",
