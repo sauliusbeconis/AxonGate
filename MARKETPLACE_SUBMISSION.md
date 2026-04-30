@@ -30,6 +30,12 @@ https://web-production-8136ee.up.railway.app/.well-known/x402
 PayAI-style discovery:
 https://web-production-8136ee.up.railway.app/discovery/resources
 
+Operator dashboard:
+https://web-production-8136ee.up.railway.app/operator
+
+Paid smoke test guide:
+https://web-production-8136ee.up.railway.app/paid-test
+
 Standard x402 endpoint:
 https://web-production-8136ee.up.railway.app/v1/x402/access
 
@@ -45,6 +51,8 @@ Endpoint paths:
 /v1/x402/access
 /.well-known/x402
 /discovery/resources
+/operator
+/paid-test
 ```
 
 ## Pricing

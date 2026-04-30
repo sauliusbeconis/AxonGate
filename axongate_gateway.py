@@ -234,6 +234,8 @@ metrics: dict[str, int] = {
     "discovery_root_hits_total": 0,
     "discovery_llms_hits_total": 0,
     "discovery_docs_hits_total": 0,
+    "discovery_operator_hits_total": 0,
+    "discovery_paid_test_hits_total": 0,
     "discovery_demo_hits_total": 0,
     "discovery_robots_hits_total": 0,
     "discovery_sitemap_hits_total": 0,
@@ -944,6 +946,8 @@ def build_x402_resource() -> dict[str, Any]:
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
             "docs": f"{PUBLIC_BASE_URL}/docs",
+            "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
+            "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1016,6 +1020,8 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "agentCardAlias": f"{PUBLIC_BASE_URL}/.well-known/agent-card.json",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
+        "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
+        "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -2329,6 +2335,8 @@ Basename: axongate.base.eth
 Summary: x402-paid Clean Context Broker that converts public web pages into clean markdown for RAG, research, and autonomous agents.
 Canonical base URL: {PUBLIC_BASE_URL}
 Human docs: {public_url("/docs")}
+Operator dashboard: {public_url("/operator")}
+Paid smoke test guide: {public_url("/paid-test")}
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
@@ -2341,6 +2349,7 @@ Resource listing: {public_url("/discovery/resources")}
 Sitemap: {public_url("/sitemap.xml")}
 Python client example: {GITHUB_REPO_URL}/blob/main/examples/python_client.py
 cURL examples: {GITHUB_REPO_URL}/blob/main/examples/curl.md
+Paid buyer example: {GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs
 
 ## Payment
 
@@ -2351,6 +2360,7 @@ Vault address: {load_vault_address()}
 Preferred payment header: PAYMENT-SIGNATURE
 Legacy transaction hash header: X-AxonGate-Payment-Hash
 Retry credit header: X-AxonGate-Retry-Credit
+Source attribution header: X-AxonGate-Source
 Facilitator: {PAYAI_FACILITATOR_URL}
 
 ## Paid Endpoint
@@ -2490,11 +2500,14 @@ def build_docs_html() -> str:
       <a href="{public}/.well-known/x402.json">x402 JSON</a>
       <a href="{public}/discovery/resources">Resource listing</a>
       <a href="{public}/llms.txt">llms.txt</a>
+      <a href="{public}/operator">Operator dashboard</a>
+      <a href="{public}/paid-test">Paid test guide</a>
       <a href="{public}/demo">Demo</a>
       <a href="{public}/openapi.json">OpenAPI JSON</a>
       <a href="{public}/swagger">Swagger UI</a>
       <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/python_client.py">Python client</a>
       <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/curl.md">cURL examples</a>
+      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/paid_buyer.mjs">Paid buyer</a>
     </section>
 
     <h2>Service Contract</h2>
@@ -2533,6 +2546,377 @@ def build_docs_html() -> str:
 
     <h2>Supply Guards</h2>
     <p>AxonGate rejects unsafe targets before payment-funded supplier work, blocks private and loopback address space, follows bounded redirects, caps content size, rate-limits abuse patterns, and fails closed when dynamic gas pricing or supplier availability would make delivery uneconomic.</p>
+  </main>
+</body>
+</html>"""
+
+
+def build_operator_dashboard_html(
+    metric_values: dict[str, int],
+    attribution: dict[str, dict[str, int]],
+    triggered_alerts: list[str],
+) -> str:
+    """Render a compact operator view from public metrics."""
+    public = html.escape(PUBLIC_BASE_URL)
+    funnel = conversion_funnel_snapshot(metric_values)
+    rates = funnel.get("rates", {})
+
+    def metric(name: str) -> int:
+        return int(metric_values.get(name, 0))
+
+    def count(value: Any) -> str:
+        try:
+            return f"{int(value):,}"
+        except (TypeError, ValueError):
+            return "0"
+
+    def percent(value: Any) -> str:
+        try:
+            return f"{float(value) * 100:.2f}%"
+        except (TypeError, ValueError):
+            return "0.00%"
+
+    def card(label: str, value: Any, note: str = "") -> str:
+        return (
+            '<div class="card">'
+            f"<span>{html.escape(label)}</span>"
+            f"<strong>{html.escape(str(value))}</strong>"
+            f"<small>{html.escape(note)}</small>"
+            "</div>"
+        )
+
+    challenge_rate = rates.get("paid_attempt_per_challenge", 0)
+    accepted_rate = rates.get("accepted_per_paid_attempt", 0)
+    delivered_rate = rates.get("delivered_per_accepted", 0)
+    supplier_rate = rates.get("supplier_success_per_request", 0)
+
+    cards = "\n".join(
+        [
+            card("Requests", count(metric("requests_total")), "All public app requests"),
+            card("Discovery Hits", count(metric("discovery_hits_total")), "Root, x402, docs, cards, sitemap"),
+            card("Payment Challenges", count(metric("payment_challenges_total")), "402 requirements served"),
+            card("Paid Attempts", count(metric("paid_attempts_total")), percent(challenge_rate)),
+            card("Accepted Payments", count(metric("payments_accepted_total")), percent(accepted_rate)),
+            card("Delivered", count(metric("delivery_success_total")), percent(delivered_rate)),
+            card("Cache Hits", count(metric("cache_hits_total")), f'{count(metric("cache_misses_total"))} misses'),
+            card("Supplier Calls", count(metric("jina_requests_total")), f'{percent(supplier_rate)} success'),
+        ]
+    )
+
+    source_names = sorted({source for stages in attribution.values() for source in stages})
+    source_rows = []
+    for source in source_names:
+        paid = attribution.get("paid_attempts", {}).get(source, 0)
+        accepted = attribution.get("payments_accepted", {}).get(source, 0)
+        delivered = attribution.get("delivery_success", {}).get(source, 0)
+        challenges = attribution.get("payment_challenges", {}).get(source, 0)
+        replay_rejections = attribution.get("payment_replay_rejections", {}).get(source, 0)
+        source_rows.append(
+            (
+                delivered,
+                paid,
+                "<tr>"
+                f"<td>{html.escape(source)}</td>"
+                f"<td>{count(challenges)}</td>"
+                f"<td>{count(paid)}</td>"
+                f"<td>{count(accepted)}</td>"
+                f"<td>{count(delivered)}</td>"
+                f"<td>{count(replay_rejections)}</td>"
+                "</tr>",
+            )
+        )
+    attribution_rows = "\n".join(row for _, _, row in sorted(source_rows, reverse=True)) or (
+        '<tr><td colspan="6">No source-tagged paid traffic yet.</td></tr>'
+    )
+
+    discovery_rows = "\n".join(
+        [
+            f"<tr><td>Root</td><td>{count(metric('discovery_root_hits_total'))}</td></tr>",
+            f"<tr><td>x402 Discovery</td><td>{count(metric('discovery_x402_hits_total'))}</td></tr>",
+            f"<tr><td>Docs</td><td>{count(metric('discovery_docs_hits_total'))}</td></tr>",
+            f"<tr><td>Operator</td><td>{count(metric('discovery_operator_hits_total'))}</td></tr>",
+            f"<tr><td>Paid Test Guide</td><td>{count(metric('discovery_paid_test_hits_total'))}</td></tr>",
+            f"<tr><td>Demo</td><td>{count(metric('discovery_demo_hits_total'))}</td></tr>",
+            f"<tr><td>Agent Cards</td><td>{count(metric('discovery_agent_card_hits_total'))}</td></tr>",
+            f"<tr><td>Manifest</td><td>{count(metric('discovery_manifest_hits_total'))}</td></tr>",
+            f"<tr><td>llms.txt</td><td>{count(metric('discovery_llms_hits_total'))}</td></tr>",
+            f"<tr><td>Robots</td><td>{count(metric('discovery_robots_hits_total'))}</td></tr>",
+            f"<tr><td>Sitemap</td><td>{count(metric('discovery_sitemap_hits_total'))}</td></tr>",
+            f"<tr><td>Resource Listing</td><td>{count(metric('discovery_resources_hits_total'))}</td></tr>",
+        ]
+    )
+
+    health_rows = "\n".join(
+        [
+            f"<tr><td>Payment validation rejections</td><td>{count(metric('payment_validation_rejections_total'))}</td></tr>",
+            f"<tr><td>Replay rejections</td><td>{count(metric('payment_replay_rejections_total'))}</td></tr>",
+            f"<tr><td>Retryable outages</td><td>{count(metric('retryable_outages_total'))}</td></tr>",
+            f"<tr><td>Retry credits issued</td><td>{count(metric('delivery_credits_issued_total'))}</td></tr>",
+            f"<tr><td>UEG checks</td><td>{count(metric('ueg_checks_total'))}</td></tr>",
+            f"<tr><td>UEG rejections</td><td>{count(metric('ueg_rejections_total'))}</td></tr>",
+            f"<tr><td>Rate-limit rejections</td><td>{count(metric('rate_limit_rejections_total'))}</td></tr>",
+            f"<tr><td>Base RPC errors</td><td>{count(metric('base_rpc_errors_total'))}</td></tr>",
+            f"<tr><td>Jina errors</td><td>{count(metric('jina_errors_total'))}</td></tr>",
+            f"<tr><td>Alerts sent</td><td>{count(metric('alerts_sent_total'))}</td></tr>",
+        ]
+    )
+
+    tier_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(tier)}</td>"
+        f"<td>{html.escape(str(price))} USDC</td>"
+        f"<td>{html.escape(str(usdc_units(price)))}</td>"
+        f"<td>{html.escape(cache_policy_for_tier(tier))}</td>"
+        "</tr>"
+        for tier, price in TIER_PRICING_USDC.items()
+    )
+    alert_text = ", ".join(triggered_alerts) if triggered_alerts else "No active alerts"
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>AxonGate Operator</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #12110f;
+      --panel: #1d1b18;
+      --panel-2: #23211d;
+      --text: #f5f2ea;
+      --muted: #c4beb2;
+      --line: #39352e;
+      --accent: #6fd3bd;
+      --warn: #f4be62;
+      --danger: #f07f7f;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }}
+    main {{ max-width: 1220px; margin: 0 auto; padding: 28px 18px 56px; }}
+    header {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }}
+    h1 {{ margin: 0; font-size: 1.85rem; line-height: 1.1; }}
+    h2 {{ margin: 26px 0 10px; font-size: 1rem; }}
+    p {{ margin: 6px 0 0; color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .links {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }}
+    .links a {{ border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--panel); }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }}
+    .card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 96px;
+    }}
+    .card span, .card small {{ display: block; color: var(--muted); }}
+    .card strong {{ display: block; margin: 5px 0; font-size: 1.55rem; line-height: 1.1; }}
+    .split {{ display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr); gap: 14px; }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--text); background: var(--panel-2); font-size: 0.9rem; }}
+    td {{ color: var(--muted); }}
+    code {{ background: #0d0c0b; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--text); }}
+    .notice {{ border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel); color: var(--muted); }}
+    .notice strong {{ color: var(--text); }}
+    .ok {{ color: var(--accent); }}
+    .warn {{ color: var(--warn); }}
+    .danger {{ color: var(--danger); }}
+    @media (max-width: 860px) {{
+      header {{ display: block; }}
+      .links {{ justify-content: flex-start; margin-top: 14px; }}
+      .split {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>AxonGate Operator</h1>
+        <p>Live public metrics from <code>/metrics</code>. Page refreshes every 60 seconds.</p>
+      </div>
+      <nav class="links" aria-label="Operator links">
+        <a href="{public}/metrics">Metrics JSON</a>
+        <a href="{public}/paid-test">Paid Test</a>
+        <a href="{public}/docs">Docs</a>
+        <a href="{public}/demo">Demo</a>
+      </nav>
+    </header>
+
+    <section class="cards">{cards}</section>
+
+    <h2>Funnel By Source</h2>
+    <table>
+      <thead><tr><th>Source</th><th>Challenges</th><th>Paid</th><th>Accepted</th><th>Delivered</th><th>Replay Rejected</th></tr></thead>
+      <tbody>{attribution_rows}</tbody>
+    </table>
+
+    <div class="split">
+      <section>
+        <h2>Discovery Surfaces</h2>
+        <table><thead><tr><th>Surface</th><th>Hits</th></tr></thead><tbody>{discovery_rows}</tbody></table>
+      </section>
+      <section>
+        <h2>Reliability And Guardrails</h2>
+        <table><thead><tr><th>Signal</th><th>Count</th></tr></thead><tbody>{health_rows}</tbody></table>
+      </section>
+    </div>
+
+    <h2>Pricing And Unit Control</h2>
+    <table>
+      <thead><tr><th>Tier</th><th>Price</th><th>USDC Units</th><th>Cache Policy</th></tr></thead>
+      <tbody>{tier_rows}</tbody>
+    </table>
+
+    <p class="notice"><strong>Alert state:</strong> <span class="{'warn' if triggered_alerts else 'ok'}">{html.escape(alert_text)}</span></p>
+  </main>
+</body>
+</html>"""
+
+
+def build_paid_test_html() -> str:
+    """Render a focused guide for running a real paid smoke test."""
+    public = html.escape(PUBLIC_BASE_URL)
+    github = html.escape(GITHUB_REPO_URL)
+    wallet_command = html.escape(
+        f"""npm install
+npm run paid:buyer -- \\
+  --wallet-file "C:/path/to/buyer_wallet.json" \\
+  --target-url "https://www.iana.org/domains/reserved" \\
+  --tier cached \\
+  --confirm-spend {TIER_PRICING_USDC[CACHE_ONLY_TIER]} \\
+  --source manual-smoke \\
+  --replay"""
+    )
+    env_command = html.escape(
+        f"""set AXONGATE_WALLET_FILE=C:\\path\\to\\buyer_wallet.json
+set AXONGATE_TARGET_URL=https://www.iana.org/domains/reserved
+set AXONGATE_TIER=cached
+set AXONGATE_CONFIRM_SPEND={TIER_PRICING_USDC[CACHE_ONLY_TIER]}
+set AXONGATE_SOURCE=manual-smoke
+npm run paid:buyer -- --replay"""
+    )
+    expected_result = html.escape(
+        """PAID
+{
+  "http_status": 200,
+  "status": "success",
+  "tier": "cached",
+  "cache": {"hit": true},
+  "payment": {
+    "amount_usdc": 0.015,
+    "source": "manual-smoke"
+  },
+  "ueg_receipt": {
+    "supplier_attempts": 0,
+    "projected_profit_usdc": 0.0138625
+  }
+}
+REPLAY
+{
+  "http_status": 402,
+  "detail": "Payment proof has already been processed..."
+}"""
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Paid Test</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #12110f;
+      --panel: #1d1b18;
+      --text: #f5f2ea;
+      --muted: #c4beb2;
+      --line: #39352e;
+      --accent: #6fd3bd;
+      --warn: #f4be62;
+      --code: #0d0c0b;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 36px 18px 64px; }}
+    h1 {{ margin: 0 0 10px; font-size: 2rem; line-height: 1.1; }}
+    h2 {{ margin: 30px 0 10px; font-size: 1.15rem; }}
+    p, li {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .links a {{ display: inline-block; margin: 0 12px 10px 0; }}
+    .callout {{
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--warn);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: var(--panel);
+    }}
+    pre {{
+      overflow-x: auto;
+      white-space: pre;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 15px;
+      color: var(--text);
+    }}
+    code {{ background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--text); }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
+    th {{ color: var(--text); }}
+    td {{ color: var(--muted); }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AxonGate Paid Test</h1>
+    <p>Run a real Base USDC x402 smoke test against production, with a bounded spend confirmation and replay check.</p>
+    <nav class="links" aria-label="Paid test links">
+      <a href="{public}/operator">Operator Dashboard</a>
+      <a href="{public}/metrics">Metrics JSON</a>
+      <a href="{public}/docs">Docs</a>
+      <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
+    </nav>
+
+    <p class="callout"><strong>This spends real USDC.</strong> The cached tier currently authorizes <code>{html.escape(str(TIER_PRICING_USDC[CACHE_ONLY_TIER]))} USDC</code>. Use a burner wallet and keep the explicit <code>--confirm-spend</code> value in the command.</p>
+
+    <h2>Command</h2>
+    <pre>{wallet_command}</pre>
+
+    <h2>Environment Variant</h2>
+    <pre>{env_command}</pre>
+
+    <h2>Expected Result</h2>
+    <pre>{expected_result}</pre>
+
+    <h2>What To Check</h2>
+    <table>
+      <thead><tr><th>Signal</th><th>Expected</th></tr></thead>
+      <tbody>
+        <tr><td>Challenge amount</td><td><code>{html.escape(str(usdc_units(TIER_PRICING_USDC[CACHE_ONLY_TIER])))}</code> for cached tier</td></tr>
+        <tr><td>Paid response</td><td><code>200</code>, markdown present, payment response transaction present</td></tr>
+        <tr><td>Cache behavior</td><td><code>cache.hit=true</code> and <code>supplier_attempts=0</code> for this seeded target</td></tr>
+        <tr><td>Replay behavior</td><td>Second submission returns <code>402</code></td></tr>
+        <tr><td>Attribution</td><td><code>/metrics</code> shows the selected source under paid, accepted, delivered, and replay rejection stages</td></tr>
+      </tbody>
+    </table>
   </main>
 </body>
 </html>"""
@@ -2635,6 +3019,8 @@ def build_demo_html() -> str:
       <div class="pill"><strong>Network</strong>Base mainnet, eip155:8453</div>
       <div class="pill"><strong>Asset</strong>USDC on Base</div>
       <div class="pill"><strong>Docs</strong><a href="{public}/docs">Open docs</a></div>
+      <div class="pill"><strong>Paid test</strong><a href="{public}/paid-test">Run smoke</a></div>
+      <div class="pill"><strong>Operator</strong><a href="{public}/operator">Open dashboard</a></div>
     </div>
     <div class="grid">
       <section class="panel">
@@ -2747,6 +3133,8 @@ def build_sitemap_xml() -> str:
     entries = [
         ("/", "1.0"),
         ("/docs", "0.9"),
+        ("/operator", "0.9"),
+        ("/paid-test", "0.9"),
         ("/demo", "0.9"),
         ("/llms.txt", "0.8"),
         ("/manifest.json", "0.8"),
@@ -2788,6 +3176,23 @@ async def human_docs():
     return build_docs_html()
 
 
+@app.get("/operator", response_class=HTMLResponse, tags=["operations"], summary="Operator conversion dashboard")
+async def operator_dashboard():
+    """Serve a public operator view backed by the metrics endpoint data."""
+    inc_discovery_hit("discovery_operator_hits_total")
+    metric_values = await durable_metrics_snapshot()
+    attribution = await durable_attribution_snapshot()
+    triggered_alerts = await evaluate_alerts(metric_values)
+    return build_operator_dashboard_html(metric_values, attribution, triggered_alerts)
+
+
+@app.get("/paid-test", response_class=HTMLResponse, tags=["discovery"], summary="Real paid x402 smoke test guide")
+async def paid_test_guide():
+    """Serve a concise paid-test guide for burner-wallet smoke checks."""
+    inc_discovery_hit("discovery_paid_test_hits_total")
+    return build_paid_test_html()
+
+
 @app.get("/demo", response_class=HTMLResponse, tags=["discovery"], summary="Interactive AxonGate buyer demo")
 async def demo():
     """Serve a safe buyer console that preserves the x402 payment boundary."""
@@ -2826,6 +3231,8 @@ async def root():
         "x402_json": f"{PUBLIC_BASE_URL}/.well-known/x402.json",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
+        "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
+        "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
         "robots": f"{PUBLIC_BASE_URL}/robots.txt",

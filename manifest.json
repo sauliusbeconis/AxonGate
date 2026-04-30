@@ -30,6 +30,8 @@
       "openapi_examples",
       "client_examples",
       "conversion_telemetry",
+      "operator_dashboard",
+      "paid_smoke_test_guide",
       "interactive_demo",
       "crawler_sitemap",
       "redis_persistent_metrics",
@@ -110,6 +112,8 @@
     "legacy_access": "https://web-production-8136ee.up.railway.app/v1/access",
     "health": "https://web-production-8136ee.up.railway.app/health",
     "docs": "https://web-production-8136ee.up.railway.app/docs",
+    "operator": "https://web-production-8136ee.up.railway.app/operator",
+    "paid_test": "https://web-production-8136ee.up.railway.app/paid-test",
     "demo": "https://web-production-8136ee.up.railway.app/demo",
     "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
     "robots": "https://web-production-8136ee.up.railway.app/robots.txt",
@@ -126,7 +130,8 @@
   },
   "examples": {
     "python_client": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/python_client.py",
-    "curl": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/curl.md"
+    "curl": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/curl.md",
+    "paid_buyer": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/paid_buyer.mjs"
   },
   "openapi_contract": {
     "method": "POST",
@@ -188,6 +193,8 @@
         "payment-identifier"
       ],
       "docs": "https://web-production-8136ee.up.railway.app/docs",
+      "operator": "https://web-production-8136ee.up.railway.app/operator",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test",
       "demo": "https://web-production-8136ee.up.railway.app/demo",
       "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
       "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
@@ -214,6 +221,7 @@
         "paid_attempts",
         "payments_accepted",
         "delivery_success",
+        "payment_replay_rejections",
         "retry_credit_issued",
         "ueg_rejections",
         "supplier_success"
