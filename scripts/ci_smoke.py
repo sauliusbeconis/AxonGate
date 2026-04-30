@@ -80,7 +80,9 @@ async def main() -> None:
 
         metrics = (await client.get("/metrics")).json()
         assert "conversion_funnel" in metrics, "conversion_funnel missing from metrics"
+        assert "attribution" in metrics, "attribution missing from metrics"
         assert "metrics_backend" in metrics, "metrics_backend missing from metrics"
+        assert "attribution_redis_key" in metrics["metrics_backend"], "attribution Redis key missing from metrics"
         assert "alerts" in metrics, "alerts block missing from metrics"
 
 

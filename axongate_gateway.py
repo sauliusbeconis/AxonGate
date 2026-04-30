@@ -61,6 +61,7 @@ try:
     from x402.extensions.payment_identifier import (
         PAYMENT_IDENTIFIER,
         declare_payment_identifier_extension,
+        extract_payment_identifier,
         payment_identifier_resource_server_extension,
     )
 except ImportError:  # pragma: no cover - extension support depends on x402 package version.
@@ -68,6 +69,7 @@ except ImportError:  # pragma: no cover - extension support depends on x402 pack
     declare_discovery_extension = None
     PAYMENT_IDENTIFIER = None
     declare_payment_identifier_extension = None
+    extract_payment_identifier = None
     payment_identifier_resource_server_extension = None
 
 load_dotenv()
@@ -111,6 +113,7 @@ METRICS_PERSISTENCE_ENABLED = os.getenv("AXONGATE_METRICS_PERSISTENCE_ENABLED", 
     "no",
 }
 METRICS_REDIS_KEY = os.getenv("AXONGATE_METRICS_REDIS_KEY", "axongate:metrics")
+ATTRIBUTION_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_REDIS_KEY", "axongate:attribution")
 ALERT_WEBHOOK_URL = os.getenv("AXONGATE_ALERT_WEBHOOK_URL")
 ALERT_WEBHOOK_TOKEN = os.getenv("AXONGATE_ALERT_WEBHOOK_TOKEN")
 ALERT_MIN_INTERVAL_SECONDS = int(os.getenv("AXONGATE_ALERT_MIN_INTERVAL_SECONDS", "300"))
@@ -202,6 +205,7 @@ rate_limit_lock = asyncio.Lock()
 redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and REDIS_URL else None
 alert_windows: dict[str, float] = {}
 alert_lock = asyncio.Lock()
+attribution_counts: dict[str, int] = {}
 metrics: dict[str, int] = {
     "requests_total": 0,
     "legacy_access_requests_total": 0,
@@ -212,6 +216,7 @@ metrics: dict[str, int] = {
     "paid_attempts_total": 0,
     "payments_accepted_total": 0,
     "payment_verified_total": 0,
+    "payment_identifier_seen_total": 0,
     "payment_validation_rejections_total": 0,
     "payment_replay_rejections_total": 0,
     "delivery_success_total": 0,
@@ -480,6 +485,77 @@ async def durable_metrics_snapshot() -> dict[str, int]:
             continue
 
     return snapshot
+
+
+def normalize_attribution_source(value: Optional[str]) -> str:
+    """Return a bounded, low-cardinality source label for public metrics."""
+    raw = (value or "direct").strip().lower()
+    normalized = re.sub(r"[^a-z0-9_.:-]+", "-", raw)[:48].strip("-._:")
+    return normalized or "direct"
+
+
+def attribution_source_from_request(request: Request) -> str:
+    """Infer where a buyer or crawler came from without storing raw user data."""
+    for query_name in ("source", "utm_source", "ref"):
+        query_value = request.query_params.get(query_name)
+        if query_value:
+            return normalize_attribution_source(query_value)
+
+    for header_name in ("X-AxonGate-Source", "X-Source", "X-Client-Name"):
+        header_value = request.headers.get(header_name)
+        if header_value:
+            return normalize_attribution_source(header_value)
+
+    referer = request.headers.get("referer")
+    if referer:
+        hostname = urlparse(referer).hostname
+        if hostname:
+            return normalize_attribution_source(f"referer:{hostname}")
+
+    return "direct"
+
+
+async def persist_attribution_increment(key: str, amount: int) -> None:
+    """Persist a source-attribution increment to Redis without blocking handlers."""
+    if not redis_client or not METRICS_PERSISTENCE_ENABLED:
+        return
+
+    try:
+        await redis_client.hincrby(ATTRIBUTION_REDIS_KEY, key, amount)
+    except Exception as exc:
+        print(f"[METRICS] Redis attribution persistence failed for {key}: {exc}")
+
+
+def inc_attribution(stage: str, source: str, amount: int = 1) -> None:
+    key = f"{stage}:{normalize_attribution_source(source)}"
+    attribution_counts[key] = attribution_counts.get(key, 0) + amount
+    if redis_client and METRICS_PERSISTENCE_ENABLED:
+        schedule_background(persist_attribution_increment(key, amount))
+
+
+async def durable_attribution_snapshot() -> dict[str, dict[str, int]]:
+    """Return source attribution counters grouped by funnel stage."""
+    flat_counts = dict(attribution_counts)
+    if redis_client and METRICS_PERSISTENCE_ENABLED:
+        try:
+            persisted = await redis_client.hgetall(ATTRIBUTION_REDIS_KEY)
+        except Exception as exc:
+            print(f"[METRICS] Redis attribution snapshot failed: {exc}")
+        else:
+            for key, value in persisted.items():
+                try:
+                    flat_counts[key] = int(value)
+                except (TypeError, ValueError):
+                    continue
+
+    grouped: dict[str, dict[str, int]] = {}
+    for key, value in flat_counts.items():
+        stage, _, source = key.partition(":")
+        if not stage or not source:
+            continue
+        grouped.setdefault(stage, {})[source] = value
+
+    return {stage: dict(sorted(sources.items())) for stage, sources in sorted(grouped.items())}
 
 
 def inc_discovery_hit(metric_name: str) -> None:
@@ -1089,6 +1165,37 @@ def payment_reference_from_request(request: Request) -> str:
         return f"payment-payload:{stable_hash(payload_json)}"
 
     return f"payment-state:{stable_hash(str(time.time_ns()))}"
+
+
+def payment_identifier_from_request(request: Request) -> Optional[str]:
+    """Extract an optional x402 payment identifier from the verified payload."""
+    payment_payload = getattr(request.state, "payment_payload", None)
+    if payment_payload is None:
+        return None
+
+    if extract_payment_identifier is not None:
+        try:
+            return extract_payment_identifier(payment_payload)
+        except Exception:
+            pass
+
+    if hasattr(payment_payload, "model_dump"):
+        payload_dict = payment_payload.model_dump(by_alias=True)
+    elif isinstance(payment_payload, dict):
+        payload_dict = payment_payload
+    else:
+        return None
+
+    extension = payload_dict.get("extensions", {}).get("payment-identifier")
+    if not isinstance(extension, dict):
+        return None
+
+    info = extension.get("info")
+    if not isinstance(info, dict):
+        return None
+
+    payment_identifier = info.get("id")
+    return payment_identifier if isinstance(payment_identifier, str) else None
 
 
 def configure_standard_x402_middleware() -> None:
@@ -2768,14 +2875,17 @@ async def discovery_resources(type: Optional[str] = None, limit: int = 20, offse
 async def metrics_snapshot():
     """Expose lightweight operational counters for conversion and margin tuning."""
     metric_values = await durable_metrics_snapshot()
+    attribution = await durable_attribution_snapshot()
     triggered_alerts = await evaluate_alerts(metric_values)
     return {
         "status": "ok",
         "metrics": metric_values,
         "conversion_funnel": conversion_funnel_snapshot(metric_values),
+        "attribution": attribution,
         "metrics_backend": {
             "persistent": bool(redis_client and METRICS_PERSISTENCE_ENABLED),
             "redis_key": METRICS_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
+            "attribution_redis_key": ATTRIBUTION_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
         },
         "alerts": {
             "enabled": bool(ALERT_WEBHOOK_URL),
@@ -2845,6 +2955,7 @@ async def access_context_broker_x402_probe(request: Request):
     inc_metric("requests_total")
     inc_metric("payment_required_total")
     inc_metric("payment_challenges_total")
+    inc_attribution("payment_challenges", attribution_source_from_request(request))
     try:
         await enforce_rate_limit("x402_probe_ip", client_rate_identifier(request), RATE_LIMIT_PROBE_PER_IP)
     except RateLimitExceeded as exc:
@@ -2883,8 +2994,10 @@ async def access_context_broker_x402(
     inc_metric("x402_access_requests_total")
 
     if not hasattr(request.state, "payment_payload"):
+        source = attribution_source_from_request(request)
         inc_metric("payment_required_total")
         inc_metric("payment_challenges_total")
+        inc_attribution("payment_challenges", source)
         try:
             await enforce_rate_limit("x402_unpaid_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
         except RateLimitExceeded as exc:
@@ -2901,8 +3014,14 @@ async def access_context_broker_x402(
         )
 
     payment_reference = payment_reference_from_request(request)
+    payment_identifier = payment_identifier_from_request(request)
+    source = attribution_source_from_request(request)
     inc_metric("paid_attempts_total")
+    inc_attribution("paid_attempts", source)
+    if payment_identifier:
+        inc_metric("payment_identifier_seen_total")
     inc_metric("payments_accepted_total")
+    inc_attribution("payments_accepted", source)
     target_url: Optional[str] = None
     tier: Optional[str] = None
     try:
@@ -2923,6 +3042,7 @@ async def access_context_broker_x402(
         )
         inc_metric("payment_verified_total")
         inc_metric("delivery_success_total")
+        inc_attribution("delivery_success", source)
         inc_metric("standard_delivery_success_total")
     except NetworkUnavailableError as exc:
         raise retry_later_503(exc) from exc
@@ -2943,6 +3063,8 @@ async def access_context_broker_x402(
             "vault_address": load_vault_address(),
             "token_address": BASE_USDC_ADDRESS,
             "amount_usdc": float(price_for_tier(tier)),
+            "payment_identifier": payment_identifier,
+            "source": source,
         },
         "ueg_receipt": {
             "revenue_usdc": float(profitability.revenue_usdc),
@@ -2989,10 +3111,12 @@ async def retry_context_broker_delivery(
     """
     inc_metric("requests_total")
     inc_metric("delivery_credit_retries_total")
+    source = attribution_source_from_request(request)
 
     if not x_axongate_retry_credit:
         inc_metric("payment_required_total")
         inc_metric("payment_challenges_total")
+        inc_attribution("payment_challenges", source)
         try:
             await enforce_rate_limit("retry_missing_credit_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
         except RateLimitExceeded as exc:
@@ -3008,6 +3132,7 @@ async def retry_context_broker_delivery(
     reservation: DeliveryCreditReservation | None = None
     try:
         inc_metric("retry_credit_attempts_total")
+        inc_attribution("retry_credit_attempts", source)
         target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(access_request.tier)
         try:
@@ -3047,6 +3172,7 @@ async def retry_context_broker_delivery(
         inc_metric("delivery_credit_success_total")
         inc_metric("payment_verified_total")
         inc_metric("delivery_success_total")
+        inc_attribution("delivery_success", source)
         inc_metric("retry_delivery_success_total")
     except NetworkUnavailableError as exc:
         credit = None
@@ -3087,6 +3213,7 @@ async def retry_context_broker_delivery(
             "vault_address": load_vault_address(),
             "token_address": BASE_USDC_ADDRESS,
             "amount_usdc": float(amount_usdc),
+            "source": source,
         },
         "ueg_receipt": {
             "revenue_usdc": float(profitability.revenue_usdc),
@@ -3130,10 +3257,12 @@ async def access_context_broker(
     """
     inc_metric("requests_total")
     inc_metric("legacy_access_requests_total")
+    source = attribution_source_from_request(http_request)
 
     if not x_axongate_payment_hash:
         inc_metric("payment_required_total")
         inc_metric("payment_challenges_total")
+        inc_attribution("payment_challenges", source)
         detail = "Payment Required. Provide X-AxonGate-Payment-Hash with a Base USDC transaction hash."
         raise HTTPException(
             status_code=402,
@@ -3147,6 +3276,7 @@ async def access_context_broker(
     cached_markdown: Optional[str] = None
     try:
         inc_metric("paid_attempts_total")
+        inc_attribution("paid_attempts", source)
         target_url = await assert_public_target_url(access_request.target_url)
         tier = normalize_tier(access_request.tier)
         try:
@@ -3172,6 +3302,7 @@ async def access_context_broker(
                 )
         payment = await verify_x402_payment(x_axongate_payment_hash, price)
         inc_metric("payments_accepted_total")
+        inc_attribution("payments_accepted", source)
         if cached_markdown is not None:
             inc_metric("cache_hits_total")
             profitability = await calculate_profitability_for_price(payment.amount_usdc, supplier_attempts=0)
@@ -3188,6 +3319,7 @@ async def access_context_broker(
             )
         inc_metric("payment_verified_total")
         inc_metric("delivery_success_total")
+        inc_attribution("delivery_success", source)
         inc_metric("legacy_delivery_success_total")
     except NetworkUnavailableError as exc:
         credit = None
@@ -3222,6 +3354,7 @@ async def access_context_broker(
             "vault_address": payment.vault_address,
             "token_address": payment.token_address,
             "amount_usdc": float(payment.amount_usdc),
+            "source": source,
         },
         "ueg_receipt": {
             "revenue_usdc": float(profitability.revenue_usdc),

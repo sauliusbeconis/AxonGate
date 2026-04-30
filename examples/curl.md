@@ -7,12 +7,13 @@ the `PAYMENT-SIGNATURE` value, then pass it as an environment variable.
 ```bash
 export AXONGATE_BASE_URL="https://web-production-8136ee.up.railway.app"
 export TARGET_URL="https://example.com"
+export AXONGATE_SOURCE="docs"
 ```
 
 ## Discover Payment Requirements
 
 ```bash
-curl -i "$AXONGATE_BASE_URL/v1/x402/access"
+curl -i "$AXONGATE_BASE_URL/v1/x402/access?source=$AXONGATE_SOURCE"
 ```
 
 The response should be `402 Payment Required` and include `PAYMENT-REQUIRED`
@@ -22,6 +23,19 @@ payment-identifier extensions.
 
 ## Standard x402 Paid Request
 
+For a real Base USDC smoke test from a burner wallet, use the repo-native buyer:
+
+```bash
+npm install
+npm run paid:buyer -- \
+  --wallet-file "C:/path/to/buyer_wallet.json" \
+  --target-url "https://www.iana.org/domains/reserved" \
+  --tier cached \
+  --confirm-spend 0.015 \
+  --source docs \
+  --replay
+```
+
 ```bash
 export PAYMENT_SIGNATURE="<x402 payment proof from your wallet or facilitator>"
 
@@ -29,6 +43,7 @@ curl -sS -X POST "$AXONGATE_BASE_URL/v1/x402/access" \
   -H "Content-Type: application/json" \
   -H "PAYMENT-SIGNATURE: $PAYMENT_SIGNATURE" \
   -H "X-AxonGate-Tier: fresh" \
+  -H "X-AxonGate-Source: $AXONGATE_SOURCE" \
   -d "{
     \"target_url\": \"$TARGET_URL\",
     \"tier\": \"fresh\",
@@ -76,6 +91,7 @@ export RETRY_CREDIT="<value from X-AxonGate-Retry-Credit>"
 curl -sS -X POST "$AXONGATE_BASE_URL/v1/x402/retry" \
   -H "Content-Type: application/json" \
   -H "X-AxonGate-Retry-Credit: $RETRY_CREDIT" \
+  -H "X-AxonGate-Source: $AXONGATE_SOURCE" \
   -d "{
     \"target_url\": \"$TARGET_URL\",
     \"tier\": \"basic\",
@@ -94,6 +110,7 @@ export BASE_TX_HASH="<Base transaction hash>"
 curl -sS -X POST "$AXONGATE_BASE_URL/v1/access" \
   -H "Content-Type: application/json" \
   -H "X-AxonGate-Payment-Hash: $BASE_TX_HASH" \
+  -H "X-AxonGate-Source: $AXONGATE_SOURCE" \
   -d "{
     \"target_url\": \"$TARGET_URL\",
     \"tier\": \"basic\",
@@ -111,6 +128,7 @@ curl -sS "$AXONGATE_BASE_URL/discovery/resources"
 curl -sS "$AXONGATE_BASE_URL/metrics"
 ```
 
-The `/metrics` response includes `conversion_funnel`, which tracks discovery,
-payment challenges, paid attempts, accepted payments, successful deliveries,
-retry credits, Unit Economic Guardian rejections, and supplier outcomes.
+The `/metrics` response includes `conversion_funnel` and source-level
+`attribution`, which track discovery, payment challenges, paid attempts,
+accepted payments, successful deliveries, retry credits, Unit Economic
+Guardian rejections, and supplier outcomes.
