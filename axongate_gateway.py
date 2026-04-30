@@ -73,6 +73,8 @@ BASE_RPC_TIMEOUT_SECONDS = float(os.getenv("BASE_RPC_TIMEOUT_SECONDS", "5"))
 BASE_USDC_ADDRESS = Web3.to_checksum_address(
     os.getenv("BASE_USDC_ADDRESS", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
 )
+BASE_USDC_TOKEN_NAME = os.getenv("BASE_USDC_TOKEN_NAME", "USD Coin")
+BASE_USDC_TOKEN_VERSION = os.getenv("BASE_USDC_TOKEN_VERSION", "2")
 PAYAI_FACILITATOR_URL = os.getenv("PAYAI_FACILITATOR_URL", "https://facilitator.payai.network")
 REDIS_URL = os.getenv("REDIS_URL")
 DEFAULT_CACHE_TTL_SECONDS = int(os.getenv("AXONGATE_CACHE_TTL_SECONDS", "3600"))
@@ -679,8 +681,8 @@ def build_x402_accepts(tier: str = RECOMMENDED_TIER) -> list[dict[str, Any]]:
             "payTo": load_vault_address(),
             "maxTimeoutSeconds": 300,
             "extra": {
-                "name": "USDC",
-                "version": "2",
+                "name": BASE_USDC_TOKEN_NAME,
+                "version": BASE_USDC_TOKEN_VERSION,
                 "decimals": USDC_DECIMALS,
                 "price": f"${price}",
                 "tier": normalized_tier,
@@ -947,8 +949,8 @@ def configure_standard_x402_middleware() -> None:
                 network="eip155:8453",
                 max_timeout_seconds=300,
                 extra={
-                    "name": "USDC",
-                    "version": "2",
+                    "name": BASE_USDC_TOKEN_NAME,
+                    "version": BASE_USDC_TOKEN_VERSION,
                     "decimals": USDC_DECIMALS,
                 },
             ),
@@ -1700,8 +1702,8 @@ def x402_dynamic_price(context: HTTPRequestContext):
         amount=str(usdc_units(price)),
         asset=BASE_USDC_ADDRESS,
         extra={
-            "name": "USDC",
-            "version": "2",
+            "name": BASE_USDC_TOKEN_NAME,
+            "version": BASE_USDC_TOKEN_VERSION,
             "decimals": USDC_DECIMALS,
             "tier": normalized_tier,
         },
