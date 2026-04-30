@@ -194,6 +194,8 @@ web3 = Web3(
 
 processed_txs: set[str] = set()
 processed_txs_lock = asyncio.Lock()
+standard_payment_references: set[str] = set()
+standard_payment_references_lock = asyncio.Lock()
 markdown_cache: dict[str, tuple[float, str]] = {}
 markdown_cache_lock = asyncio.Lock()
 delivery_credits: dict[str, dict[str, Any]] = {}
@@ -591,6 +593,7 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "retry_delivery_success": values.get("retry_delivery_success_total", 0),
         "ueg_checks": values.get("ueg_checks_total", 0),
         "ueg_rejections": values.get("ueg_rejections_total", 0),
+        "payment_replay_rejections": values.get("payment_replay_rejections_total", 0),
         "rate_limit_rejections": values.get("rate_limit_rejections_total", 0),
         "supplier_requests": supplier_requests,
         "supplier_success": values.get("jina_success_total", 0),
@@ -1702,6 +1705,36 @@ async def reserve_processed_tx(tx_hash: str) -> bool:
             return False
         processed_txs.add(tx_hash)
         return True
+
+
+def standard_payment_reference_key(payment_reference: str) -> str:
+    return f"axongate:standard-payment:{stable_hash(payment_reference)}"
+
+
+async def has_standard_payment_reference(payment_reference: str) -> bool:
+    key = standard_payment_reference_key(payment_reference)
+    if redis_client:
+        try:
+            return bool(await redis_client.exists(key))
+        except Exception as exc:
+            print(f"[PAYMENT] Redis standard replay lookup failed for {key}: {exc}")
+
+    async with standard_payment_references_lock:
+        return key in standard_payment_references
+
+
+async def mark_standard_payment_reference(payment_reference: str) -> None:
+    key = standard_payment_reference_key(payment_reference)
+    if redis_client:
+        try:
+            await redis_client.set(key, "1")
+        except Exception as exc:
+            print(f"[PAYMENT] Redis standard replay marker failed for {key}: {exc}")
+        else:
+            return
+
+    async with standard_payment_references_lock:
+        standard_payment_references.add(key)
 
 
 async def call_base_rpc(label: str, rpc_call):
@@ -3020,8 +3053,6 @@ async def access_context_broker_x402(
     inc_attribution("paid_attempts", source)
     if payment_identifier:
         inc_metric("payment_identifier_seen_total")
-    inc_metric("payments_accepted_total")
-    inc_attribution("payments_accepted", source)
     target_url: Optional[str] = None
     tier: Optional[str] = None
     try:
@@ -3034,12 +3065,23 @@ async def access_context_broker_x402(
         except RateLimitExceeded as exc:
             raise rate_limit_429(exc) from exc
 
+        if await has_standard_payment_reference(payment_reference):
+            inc_metric("payment_replay_rejections_total")
+            inc_attribution("payment_replay_rejections", source)
+            raise HTTPException(
+                status_code=402,
+                detail="Payment proof has already been processed. Create a fresh x402 payment for a new delivery.",
+            )
+
+        inc_metric("payments_accepted_total")
+        inc_attribution("payments_accepted", source)
         markdown, cache_hit, profitability = await deliver_paid_markdown(
             target_url=target_url,
             tier=tier,
             force_refresh=access_request.force_refresh,
             amount_usdc=price_for_tier(tier),
         )
+        await mark_standard_payment_reference(payment_reference)
         inc_metric("payment_verified_total")
         inc_metric("delivery_success_total")
         inc_attribution("delivery_success", source)
