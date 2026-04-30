@@ -2639,9 +2639,9 @@ async def access_context_broker_x402(
     """
     Standard PayAI/x402 endpoint.
 
-    PaymentMiddlewareASGI verifies and settles PAYMENT-SIGNATURE before this
-    handler spends the Jina request. This path is what PayAI-style automated
-    buyers should prefer because it follows the standard x402 flow.
+    PaymentMiddlewareASGI verifies PAYMENT-SIGNATURE before this handler and
+    settles only after a successful response. Error paths must not issue retry
+    credits here because the payment has not been settled yet.
     """
     inc_metric("requests_total")
     inc_metric("x402_access_requests_total")
@@ -2670,17 +2670,7 @@ async def access_context_broker_x402(
             await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
             await enforce_rate_limit("payment_reference", payment_reference, RATE_LIMIT_PAID_PER_IP)
         except RateLimitExceeded as exc:
-            credit = await create_delivery_credit(
-                payment_reference=payment_reference,
-                target_url=target_url,
-                tier=tier,
-                force_refresh=access_request.force_refresh,
-                amount_usdc=price_for_tier(tier),
-                mode="x402-facilitator-rate-limit",
-                reason=exc.detail,
-                supplier_attempts_used=0,
-            )
-            raise rate_limit_429(exc, credit) from exc
+            raise rate_limit_429(exc) from exc
 
         profitability = await calculate_profitability_for_price(price_for_tier(tier))
         if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
@@ -2691,18 +2681,7 @@ async def access_context_broker_x402(
         inc_metric("delivery_success_total")
         inc_metric("standard_delivery_success_total")
     except NetworkUnavailableError as exc:
-        credit = None
-        if target_url and tier:
-            credit = await maybe_issue_delivery_credit(
-                exc=exc,
-                payment_reference=payment_reference,
-                target_url=target_url,
-                tier=tier,
-                force_refresh=access_request.force_refresh,
-                amount_usdc=price_for_tier(tier),
-                mode="x402-facilitator",
-            )
-        raise retry_later_503(exc, credit) from exc
+        raise retry_later_503(exc) from exc
     except PaymentValidationError as exc:
         inc_metric("errors_total")
         inc_metric("payment_validation_rejections_total")
