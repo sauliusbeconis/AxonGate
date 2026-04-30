@@ -21,7 +21,7 @@ def build_payload(email: str) -> dict:
     return {
         "service_name": "AxonGate",
         "service_url": AXONGATE_BASE_URL,
-        "website_url": f"{AXONGATE_BASE_URL}/manifest.json",
+        "website_url": f"{AXONGATE_BASE_URL}/manifest.json?source=x402-list",
         "email": email,
         "category": "Data",
         "description": (
@@ -29,12 +29,14 @@ def build_payload(email: str) -> dict:
             "It converts public web pages into clean Markdown for RAG, autonomous research, "
             "and LLM context preparation."
         ),
-        "endpoints": "/v1/x402/access",
+        "endpoints": "/v1/x402/access?tier=fresh&source=x402-list",
         "notes": (
             "Basename axongate.base.eth resolves to the AxonGate vault and advertises "
             "the manifest URL in its text records. The standard x402 endpoint supports "
-            "tiered pricing via ?tier= or X-AxonGate-Tier. Discovery metadata is available "
-            "at /.well-known/x402, /.well-known/agent.json, and /discovery/resources."
+            "tiered pricing via ?tier= or X-AxonGate-Tier, official Bazaar discovery metadata, "
+            "optional payment-identifier, source attribution, and cache-only pricing. "
+            "Discovery metadata is available at /.well-known/x402, /.well-known/agent.json, "
+            "and /discovery/resources."
         ),
     }
 

@@ -1,0 +1,103 @@
+{
+  "base_url": "https://web-production-8136ee.up.railway.app",
+  "sources": {
+    "x402-list": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=x402-list",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=x402-list",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=x402-list"
+    },
+    "payanagent": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=payanagent",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=payanagent",
+      "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
+      "service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn"
+    },
+    "agora402": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agora402",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=agora402",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=agora402"
+    },
+    "agent-bazaar": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agent-bazaar",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=agent-bazaar",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=agent-bazaar"
+    },
+    "the402": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=the402",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=the402",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=the402"
+    },
+    "x402-eco": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=x402-eco",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=x402-eco",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=x402-eco"
+    },
+    "402agents": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=402agents",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=402agents",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=402agents"
+    },
+    "github": {
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=github",
+      "docs": "https://web-production-8136ee.up.railway.app/docs?source=github",
+      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=github"
+    }
+  },
+  "x402_list": {
+    "status": "listed_online",
+    "slug": "axongate",
+    "update_payload": {
+      "service_name": "AxonGate",
+      "service_url": "https://web-production-8136ee.up.railway.app",
+      "website_url": "https://web-production-8136ee.up.railway.app/manifest.json?source=x402-list",
+      "category": "Data",
+      "description": "AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.",
+      "endpoints": "/v1/x402/access?tier=fresh&source=x402-list",
+      "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Standard x402 endpoint supports tiered pricing, Bazaar discovery metadata, payment-identifier, source attribution, and cache-only pricing."
+    }
+  },
+  "payanagent": {
+    "status": "submitted",
+    "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
+    "service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn",
+    "service_payload": {
+      "name": "AxonGate Clean Context Broker",
+      "description": "Paid Web-to-Markdown context extraction for autonomous agents. Returns clean markdown plus payment and unit-economics metadata.",
+      "serviceType": "api",
+      "category": "Data",
+      "pricingModel": "per_request",
+      "priceInCents": 3,
+      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent",
+      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"]
+    }
+  },
+  "agora402": {
+    "status": "ready_requires_listing_fee",
+    "listing_fees_usdc": {
+      "starter": 1,
+      "pro": 5,
+      "featured": 25
+    },
+    "native_listing_payload": {
+      "tier": "starter",
+      "name": "AxonGate",
+      "description": "x402-paid Clean Context Broker for public Web-to-Markdown extraction.",
+      "category": "web-scraping",
+      "endpoint_url": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agora402",
+      "chain": "base",
+      "wallet_base": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
+      "price_usdc": 0.03,
+      "payment_mode": "native",
+      "is_open_source": true,
+      "github_url": "https://github.com/sauliusbeconis/AxonGate",
+      "llm_model": "Not LLM",
+      "input_format": "json",
+      "output_format": "json",
+      "avg_latency_ms": 1500,
+      "rate_limit_rpm": 120,
+      "capabilities": ["web_scraping", "html_to_markdown", "rag_context_generation"],
+      "tags": ["x402", "base", "usdc", "web-to-markdown", "context-broker"]
+    }
+  }
+}

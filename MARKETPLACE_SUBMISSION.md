@@ -30,6 +30,9 @@ https://web-production-8136ee.up.railway.app/.well-known/x402
 PayAI-style discovery:
 https://web-production-8136ee.up.railway.app/discovery/resources
 
+Source-tagged paid endpoint:
+https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=SOURCE_NAME
+
 Operator dashboard:
 https://web-production-8136ee.up.railway.app/operator
 
@@ -76,6 +79,27 @@ Pay to:
 
 x402, Base, USDC, web scraping, Web-to-Markdown, markdown extraction, RAG context, autonomous research, LLM context preparation, paid API, agent marketplace
 
+## Source Attribution
+
+Use `source` in the endpoint query or `X-AxonGate-Source` as a request header.
+Recommended directory source names:
+
+```text
+x402-list
+payanagent
+agora402
+agent-bazaar
+the402
+x402-eco
+github
+```
+
+Example source-tagged endpoint:
+
+```text
+https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent
+```
+
 ## Buyer Payload
 
 ```json
@@ -106,7 +130,30 @@ Price per Call:
 0.015 cached, 0.02 basic, 0.03 fresh, 0.05 deep
 
 x402 Endpoint URL:
-https://web-production-8136ee.up.railway.app/v1/x402/access
+https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agent-bazaar
+
+## PayanAgent Fields
+
+Provider ID:
+`j579abv0vkymwrxw480hy19xhx85t28n`
+
+Service ID:
+`js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`
+
+Service name:
+AxonGate Clean Context Broker
+
+Category:
+Data
+
+Pricing model:
+per_request
+
+Price:
+3 cents
+
+Endpoint:
+https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent
 
 ## x402 List Fields
 
@@ -151,4 +198,4 @@ Agent / manifest URL:
 https://web-production-8136ee.up.railway.app/manifest.json
 
 x402 endpoint:
-https://web-production-8136ee.up.railway.app/v1/x402/access
+https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=402agents
