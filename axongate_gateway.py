@@ -20,6 +20,7 @@ import httpx
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 from web3 import Web3
@@ -55,12 +56,26 @@ except ImportError:  # pragma: no cover - Railway installs x402 from requirement
     AssetAmount = None
     x402ResourceServer = None
 
+try:
+    from x402.extensions.bazaar import OutputConfig, declare_discovery_extension
+    from x402.extensions.payment_identifier import (
+        PAYMENT_IDENTIFIER,
+        declare_payment_identifier_extension,
+        payment_identifier_resource_server_extension,
+    )
+except ImportError:  # pragma: no cover - extension support depends on x402 package version.
+    OutputConfig = None
+    declare_discovery_extension = None
+    PAYMENT_IDENTIFIER = None
+    declare_payment_identifier_extension = None
+    payment_identifier_resource_server_extension = None
+
 load_dotenv()
 
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid Clean Context Broker for Web-to-Markdown extraction on Base.",
-    version="1.1.1",
+    version="1.2.0",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -132,11 +147,14 @@ ALLOWED_TARGET_PORTS = {
 USDC_DECIMALS = 6
 REQUIRED_USDC_FEE = Decimal(os.getenv("AXONGATE_BASE_FEE_USDC", "0.02"))
 REQUIRED_USDC_AMOUNT = int(REQUIRED_USDC_FEE * (Decimal(10) ** USDC_DECIMALS))
+CACHE_ONLY_TIER = "cached"
 TIER_PRICING_USDC = {
+    CACHE_ONLY_TIER: Decimal(os.getenv("AXONGATE_CACHED_PRICE_USDC", "0.015")),
     "basic": Decimal(os.getenv("AXONGATE_BASIC_PRICE_USDC", "0.02")),
     "fresh": Decimal(os.getenv("AXONGATE_FRESH_PRICE_USDC", "0.03")),
     "deep": Decimal(os.getenv("AXONGATE_DEEP_PRICE_USDC", "0.05")),
 }
+CACHED_TIER_CACHE_SOURCES = (CACHE_ONLY_TIER, "basic", "deep")
 RECOMMENDED_TIER = os.getenv("AXONGATE_RECOMMENDED_TIER", "fresh").strip().lower()
 if RECOMMENDED_TIER not in TIER_PRICING_USDC:
     RECOMMENDED_TIER = "fresh"
@@ -251,12 +269,17 @@ PAYMENT_PROOF_HEADERS = (
 
 class AccessRequest(BaseModel):
     target_url: str = Field(..., description="HTTP or HTTPS URL to convert into clean markdown")
-    tier: str = Field(RECOMMENDED_TIER, description="Pricing tier: basic, fresh, or deep")
+    tier: str = Field(RECOMMENDED_TIER, description="Pricing tier: cached, basic, fresh, or deep")
     force_refresh: bool = Field(False, description="Bypass cache when true")
 
     model_config = {
         "json_schema_extra": {
             "examples": [
+                {
+                    "target_url": "https://example.com/reference",
+                    "tier": "cached",
+                    "force_refresh": False,
+                },
                 {
                     "target_url": "https://example.com/research/source",
                     "tier": "fresh",
@@ -645,10 +668,14 @@ def stable_hash(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def tier_names() -> str:
+    return ", ".join(TIER_PRICING_USDC.keys())
+
+
 def normalize_tier(tier: Optional[str]) -> str:
     normalized = (tier or RECOMMENDED_TIER).strip().lower()
     if normalized not in TIER_PRICING_USDC:
-        raise PaymentValidationError("Unsupported tier. Use basic, fresh, or deep.")
+        raise PaymentValidationError(f"Unsupported tier. Use {tier_names()}.")
     return normalized
 
 
@@ -661,11 +688,136 @@ def price_for_tier(tier: Optional[str]) -> Decimal:
 
 
 def cache_ttl_for_tier(tier: str, force_refresh: bool = False) -> int:
-    if force_refresh or tier == "fresh":
+    normalized_tier = normalize_tier(tier)
+    if force_refresh or normalized_tier == "fresh":
         return 0
-    if tier == "deep":
+    if normalized_tier == "deep":
         return max(DEFAULT_CACHE_TTL_SECONDS // 2, 300)
     return DEFAULT_CACHE_TTL_SECONDS
+
+
+def cache_policy_for_tier(tier: str) -> str:
+    normalized_tier = normalize_tier(tier)
+    if normalized_tier == CACHE_ONLY_TIER:
+        return "cache-only; no upstream fetch on miss"
+    if normalized_tier == "fresh":
+        return "bypass cache"
+    if normalized_tier == "deep":
+        return f"short cache, {cache_ttl_for_tier(normalized_tier)} seconds"
+    return f"standard cache, {cache_ttl_for_tier(normalized_tier)} seconds"
+
+
+def build_access_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "target_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Absolute public HTTP/HTTPS URL to convert into clean markdown.",
+            },
+            "tier": {
+                "type": "string",
+                "enum": list(TIER_PRICING_USDC.keys()),
+                "default": RECOMMENDED_TIER,
+                "description": (
+                    "Payment tier. Standard x402 clients should also pass this as ?tier= "
+                    "or X-AxonGate-Tier so the challenge amount matches the request."
+                ),
+            },
+            "force_refresh": {
+                "type": "boolean",
+                "default": False,
+                "description": "Bypass cache for cacheable tiers. Not supported for cached tier.",
+            },
+        },
+        "required": ["target_url"],
+        "additionalProperties": False,
+    }
+
+
+def build_access_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string"},
+            "target_url": {"type": "string"},
+            "tier": {"type": "string"},
+            "markdown": {"type": "string"},
+            "cache": {"type": "object"},
+            "payment": {"type": "object"},
+            "ueg_receipt": {"type": "object"},
+        },
+        "required": ["status", "target_url", "tier", "markdown", "cache", "payment", "ueg_receipt"],
+    }
+
+
+def build_access_request_example(tier: str = RECOMMENDED_TIER) -> dict[str, Any]:
+    normalized_tier = normalize_tier(tier)
+    return {
+        "target_url": "https://example.com/source",
+        "tier": normalized_tier,
+        "force_refresh": normalized_tier == "fresh",
+    }
+
+
+def build_access_response_example(tier: str = RECOMMENDED_TIER) -> dict[str, Any]:
+    normalized_tier = normalize_tier(tier)
+    return {
+        "status": "success",
+        "target_url": "https://example.com/source",
+        "tier": normalized_tier,
+        "markdown": "# Example Domain\n\nExample clean markdown...",
+        "cache": {"hit": normalized_tier == CACHE_ONLY_TIER},
+        "payment": {
+            "mode": "x402-facilitator",
+            "network": "eip155:8453",
+            "vault_address": load_vault_address(),
+            "token_address": BASE_USDC_ADDRESS,
+            "amount_usdc": float(price_for_tier(normalized_tier)),
+        },
+        "ueg_receipt": {
+            "revenue_usdc": float(price_for_tier(normalized_tier)),
+            "projected_profit_usdc": 0.01,
+        },
+    }
+
+
+def enrich_bazaar_method(extension_payload: dict[str, Any], method: str = "POST") -> dict[str, Any]:
+    bazaar = extension_payload.get("bazaar")
+    if isinstance(bazaar, dict):
+        input_info = bazaar.get("info", {}).get("input")
+        if isinstance(input_info, dict):
+            input_info["method"] = method
+    return extension_payload
+
+
+def build_x402_extensions(method: str = "POST") -> dict[str, Any]:
+    extensions: dict[str, Any] = {}
+
+    if declare_discovery_extension is not None and OutputConfig is not None:
+        extensions.update(
+            enrich_bazaar_method(
+                declare_discovery_extension(
+                    input=build_access_request_example(RECOMMENDED_TIER),
+                    input_schema=build_access_input_schema(),
+                    body_type="json",
+                    output=OutputConfig(
+                        example=build_access_response_example(RECOMMENDED_TIER),
+                        schema=build_access_output_schema(),
+                    ),
+                ),
+                method,
+            )
+        )
+
+    if (
+        PAYMENT_IDENTIFIER is not None
+        and declare_payment_identifier_extension is not None
+    ):
+        extensions[PAYMENT_IDENTIFIER] = declare_payment_identifier_extension(required=False)
+
+    return extensions
 
 
 def build_x402_accepts(tier: str = RECOMMENDED_TIER) -> list[dict[str, Any]]:
@@ -734,6 +886,7 @@ def build_x402_resource() -> dict[str, Any]:
                     "amount": str(usdc_units(price)),
                     "price": f"${price}",
                     "currency": "USDC",
+                    "cachePolicy": cache_policy_for_tier(tier),
                 }
                 for tier, price in TIER_PRICING_USDC.items()
             },
@@ -742,47 +895,21 @@ def build_x402_resource() -> dict[str, Any]:
             "type": "http",
             "method": "POST",
             "contentType": "application/json",
-            "bodyFields": {
-                "target_url": {
-                    "type": "string",
-                    "description": "Absolute HTTP/HTTPS URL to convert into clean markdown.",
-                    "required": True,
-                },
-                "tier": {
-                    "type": "string",
-                    "description": "basic, fresh, or deep. For standard x402 payment, also pass tier as ?tier= or X-AxonGate-Tier.",
-                    "required": False,
-                },
-                "force_refresh": {
-                    "type": "boolean",
-                    "description": "Bypass cache for this request.",
-                    "required": False,
-                }
-            },
+            "body": build_access_input_schema(),
         },
-        "outputSchema": {
-            "type": "object",
-            "properties": {
-                "status": {"type": "string"},
-                "target_url": {"type": "string"},
-                "markdown": {"type": "string"},
-                "payment": {"type": "object"},
-                "ueg_receipt": {"type": "object"},
-            },
-        },
+        "outputSchema": build_access_output_schema(),
         "discoverable": True,
     }
 
 
-def build_payment_required_payload(error: str) -> dict[str, Any]:
+def build_payment_required_payload(error: str, tier: Optional[str] = None) -> dict[str, Any]:
     """
     Build a strict x402 PAYMENT-REQUIRED header payload for agent clients.
 
-    Do not add arbitrary discovery fields under `extensions`. Current x402
-    facilitators validate extension schemas, so informal metadata belongs in
-    manifest, llms.txt, docs, and discovery resources instead.
+    Only official x402 extensions are included. Informal metadata belongs in
+    manifest, llms.txt, docs, and discovery resources.
     """
-    return {
+    payload = {
         "x402Version": 2,
         "error": error,
         "resource": {
@@ -790,12 +917,16 @@ def build_payment_required_payload(error: str) -> dict[str, Any]:
             "description": "AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
             "mimeType": "application/json",
         },
-        "accepts": build_x402_accepts(),
+        "accepts": build_x402_accepts(tier or RECOMMENDED_TIER),
     }
+    extensions = build_x402_extensions("POST")
+    if extensions:
+        payload["extensions"] = extensions
+    return payload
 
 
 def build_x402_public_discovery() -> dict[str, Any]:
-    """Return x402 discovery with non-protocol metadata outside extensions."""
+    """Return x402 discovery with official extensions and metadata."""
     payload = build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
     payload["metadata"] = {
         "provider": "AxonGate",
@@ -820,6 +951,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
                 "price": f"${price}",
                 "amount": str(usdc_units(price)),
                 "currency": "USDC",
+                "cachePolicy": cache_policy_for_tier(tier),
             }
             for tier, price in TIER_PRICING_USDC.items()
         },
@@ -827,14 +959,53 @@ def build_x402_public_discovery() -> dict[str, Any]:
     return payload
 
 
-def payment_required_headers(error: str) -> dict[str, str]:
-    payload = build_payment_required_payload(error)
+def payment_required_headers(error: str, tier: Optional[str] = None) -> dict[str, str]:
+    try:
+        normalized_tier = normalize_tier(tier)
+    except PaymentValidationError:
+        normalized_tier = RECOMMENDED_TIER
+    payload = build_payment_required_payload(error, normalized_tier)
     encoded = base64.b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii")
     return {
         "PAYMENT-REQUIRED": encoded,
         "X-Payment-Required": encoded,
         "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
-        "X-AxonGate-Payment-Amount": str(price_for_tier(RECOMMENDED_TIER)),
+        "X-AxonGate-Payment-Amount": str(price_for_tier(normalized_tier)),
+        "X-AxonGate-Payment-Tier": normalized_tier,
+    }
+
+
+def build_openapi_payment_info() -> dict[str, Any]:
+    """Return an OpenAPI vendor extension describing AxonGate's x402 contract."""
+    return {
+        "protocol": "x402",
+        "x402Version": 2,
+        "endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
+        "paymentHeader": "PAYMENT-SIGNATURE",
+        "tierHeader": "X-AxonGate-Tier",
+        "tierQueryParam": "tier",
+        "network": "eip155:8453",
+        "asset": {
+            "symbol": "USDC",
+            "address": BASE_USDC_ADDRESS,
+            "name": BASE_USDC_TOKEN_NAME,
+            "version": BASE_USDC_TOKEN_VERSION,
+            "decimals": USDC_DECIMALS,
+        },
+        "payTo": load_vault_address(),
+        "facilitator": PAYAI_FACILITATOR_URL,
+        "recommendedTier": RECOMMENDED_TIER,
+        "tiers": {
+            tier: {
+                "amount": str(usdc_units(price)),
+                "price_usdc": float(price),
+                "cache_policy": cache_policy_for_tier(tier),
+            }
+            for tier, price in TIER_PRICING_USDC.items()
+        },
+        "challengeDiscovery": f"{PUBLIC_BASE_URL}/.well-known/x402",
+        "bazaarDiscovery": f"{PUBLIC_BASE_URL}/discovery/resources",
+        "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
     }
 
 
@@ -939,6 +1110,8 @@ def configure_standard_x402_middleware() -> None:
     facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=PAYAI_FACILITATOR_URL, timeout=30.0))
     server = x402ResourceServer(facilitator)
     server.register("eip155:8453", ExactEvmServerScheme())
+    if payment_identifier_resource_server_extension is not None:
+        server.register_extension(payment_identifier_resource_server_extension)
 
     routes = {
         "POST /v1/x402/access": RouteConfig(
@@ -957,6 +1130,7 @@ def configure_standard_x402_middleware() -> None:
             resource=f"{PUBLIC_BASE_URL}/v1/x402/access",
             description="AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
             mime_type="application/json",
+            extensions=build_x402_extensions("POST") or None,
         )
     }
 
@@ -1666,7 +1840,7 @@ async def calculate_profitability_for_price(revenue_usdc: Decimal, supplier_atte
     base_fee_wei, eth_quote = await asyncio.gather(fetch_current_base_fee_wei(), fetch_eth_usdc_quote())
     gas_cost_eth = Decimal(base_fee_wei * UEG_GAS_UNITS) / Decimal(10**18)
     dynamic_gas_cost_usdc = gas_cost_eth * eth_quote.price
-    bounded_supplier_attempts = max(1, int(supplier_attempts))
+    bounded_supplier_attempts = max(0, int(supplier_attempts))
     total_jina_cost_usdc = JINA_API_COST_USDC * Decimal(bounded_supplier_attempts)
     projected_profit = revenue_usdc - (dynamic_gas_cost_usdc + total_jina_cost_usdc)
 
@@ -1721,8 +1895,8 @@ async def verify_x402_payment(tx_hash: str, expected_fee_usdc: Decimal = REQUIRE
     This validator normalizes and replay-checks the hash, probes CDP if the SDK
     provides a read-only transaction method, then uses Base RPC receipt data to
     enforce the economic facts: the transaction succeeded, it called the Base USDC
-    contract, and its ERC-20 Transfer event sent exactly 0.02 USDC to the AxonGate
-    vault. Only after those checks pass is the hash stored in processed_txs.
+    contract, and its ERC-20 Transfer event sent the expected tier amount to the
+    AxonGate vault. Only after those checks pass is the hash stored in processed_txs.
     """
     normalized_hash = normalize_tx_hash(tx_hash)
 
@@ -1835,17 +2009,76 @@ async def fetch_clean_markdown(target_url: str) -> str:
 
 async def get_clean_markdown(target_url: str, tier: str, force_refresh: bool = False) -> tuple[str, bool]:
     """Return cleaned markdown, using cache when the selected tier allows it."""
-    ttl = cache_ttl_for_tier(tier, force_refresh)
-    if ttl > 0:
-        cached = await get_cached_markdown(target_url, tier)
-        if cached is not None:
-            inc_metric("cache_hits_total")
-            return cached, True
+    normalized_tier = normalize_tier(tier)
+    cached = await get_cache_candidate_for_tier(target_url, normalized_tier, force_refresh)
+    if cached is not None:
+        inc_metric("cache_hits_total")
+        return cached, True
 
     inc_metric("cache_misses_total")
+    if normalized_tier == CACHE_ONLY_TIER:
+        raise PaymentValidationError(
+            "Cached tier is only available when AxonGate already has a cached copy. Use basic, fresh, or deep first."
+        )
+
     markdown = await fetch_clean_markdown(target_url)
-    await set_cached_markdown(target_url, tier, markdown, ttl)
+    await set_cached_markdown(target_url, normalized_tier, markdown, cache_ttl_for_tier(normalized_tier, force_refresh))
     return markdown, False
+
+
+async def get_cache_candidate_for_tier(target_url: str, tier: str, force_refresh: bool = False) -> Optional[str]:
+    """Return a cache entry that the requested tier is allowed to consume."""
+    normalized_tier = normalize_tier(tier)
+    if force_refresh or normalized_tier == "fresh":
+        return None
+
+    if normalized_tier == CACHE_ONLY_TIER:
+        for source_tier in CACHED_TIER_CACHE_SOURCES:
+            cached = await get_cached_markdown(target_url, source_tier)
+            if cached is not None:
+                return cached
+        return None
+
+    return await get_cached_markdown(target_url, normalized_tier)
+
+
+async def deliver_paid_markdown(
+    *,
+    target_url: str,
+    tier: str,
+    force_refresh: bool,
+    amount_usdc: Decimal,
+    supplier_attempts_on_hit: int = 0,
+    supplier_attempts_on_miss: int = 1,
+) -> tuple[str, bool, UEGReceipt]:
+    """Check cache-aware economics, then deliver markdown without upstream work on cached misses."""
+    normalized_tier = normalize_tier(tier)
+    if normalized_tier == CACHE_ONLY_TIER and force_refresh:
+        raise PaymentValidationError("Cached tier cannot force refresh. Use basic, fresh, or deep for a live fetch.")
+
+    cached = await get_cache_candidate_for_tier(target_url, normalized_tier, force_refresh)
+    if cached is not None:
+        inc_metric("cache_hits_total")
+        profitability = await calculate_profitability_for_price(amount_usdc, supplier_attempts_on_hit)
+        if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+            inc_metric("ueg_rejections_total")
+            raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
+        return cached, True, profitability
+
+    inc_metric("cache_misses_total")
+    if normalized_tier == CACHE_ONLY_TIER:
+        raise PaymentValidationError(
+            "Cached tier is only available when AxonGate already has a cached copy. Use basic, fresh, or deep first."
+        )
+
+    profitability = await calculate_profitability_for_price(amount_usdc, supplier_attempts_on_miss)
+    if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+        inc_metric("ueg_rejections_total")
+        raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
+
+    markdown = await fetch_clean_markdown(target_url)
+    await set_cached_markdown(target_url, normalized_tier, markdown, cache_ttl_for_tier(normalized_tier, force_refresh))
+    return markdown, False, profitability
 
 
 async def maybe_issue_delivery_credit(
@@ -1945,7 +2178,7 @@ def build_llms_txt() -> str:
         indent=2,
     )
     tier_lines = "\n".join(
-        f"- {tier}: {price} USDC, {cache_ttl_for_tier(tier)} second cache TTL"
+        f"- {tier}: {price} USDC, {cache_policy_for_tier(tier)}"
         for tier, price in TIER_PRICING_USDC.items()
     )
 
@@ -2037,7 +2270,7 @@ def build_docs_html() -> str:
         "<tr>"
         f"<td>{html.escape(tier)}</td>"
         f"<td>{html.escape(str(price))} USDC</td>"
-        f"<td>{cache_ttl_for_tier(tier)} seconds</td>"
+        f"<td>{html.escape(cache_policy_for_tier(tier))}</td>"
         "</tr>"
         for tier, price in TIER_PRICING_USDC.items()
     )
@@ -2135,7 +2368,7 @@ def build_docs_html() -> str:
     </div>
 
     <h2>Pricing</h2>
-    <p>The recommended tier for production agent calls is <code>{html.escape(RECOMMENDED_TIER)}</code>. Basic remains available for cache-friendly workloads, while fresh and deep protect margin on higher-value requests.</p>
+    <p>The recommended tier for production agent calls is <code>{html.escape(RECOMMENDED_TIER)}</code>. Cached is available for low-cost reuse after AxonGate already has a copy; basic, fresh, and deep cover live supplier-backed workloads.</p>
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>Cache policy</th></tr></thead>
       <tbody>{tiers_rows}</tbody>
@@ -2319,7 +2552,9 @@ def build_demo_html() -> str:
     document.getElementById("probeButton").addEventListener("click", async () => {{
       show("Fetching payment terms...");
       try {{
-        const response = await fetch("/v1/x402/access");
+        const response = await fetch("/v1/x402/access?tier=" + encodeURIComponent(tier.value), {{
+          headers: {{"X-AxonGate-Tier": tier.value}}
+        }});
         show(await readResponse(response));
       }} catch (error) {{
         show({{"error": String(error)}});
@@ -2615,8 +2850,9 @@ async def access_context_broker_x402_probe(request: Request):
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
 
+    requested_tier = request.query_params.get("tier") or request.headers.get("X-AxonGate-Tier")
     detail = "Payment Required. Use POST with PAYMENT-SIGNATURE and a JSON target_url body."
-    raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
+    raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail, requested_tier))
 
 
 @app.post(
@@ -2655,7 +2891,14 @@ async def access_context_broker_x402(
             raise rate_limit_429(exc) from exc
 
         detail = "Payment Required. Retry with PAYMENT-SIGNATURE for the selected x402 requirement."
-        raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
+        raise HTTPException(
+            status_code=402,
+            detail=detail,
+            headers=payment_required_headers(
+                detail,
+                x_axongate_tier or request.query_params.get("tier") or access_request.tier,
+            ),
+        )
 
     payment_reference = payment_reference_from_request(request)
     inc_metric("paid_attempts_total")
@@ -2664,7 +2907,7 @@ async def access_context_broker_x402(
     tier: Optional[str] = None
     try:
         target_url = await assert_public_target_url(access_request.target_url)
-        tier = normalize_tier(x_axongate_tier or access_request.tier)
+        tier = normalize_tier(x_axongate_tier or request.query_params.get("tier") or access_request.tier)
         try:
             await enforce_rate_limit("x402_paid_ip", client_rate_identifier(request), RATE_LIMIT_PAID_PER_IP)
             await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
@@ -2672,11 +2915,12 @@ async def access_context_broker_x402(
         except RateLimitExceeded as exc:
             raise rate_limit_429(exc) from exc
 
-        profitability = await calculate_profitability_for_price(price_for_tier(tier))
-        if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
-            inc_metric("ueg_rejections_total")
-            raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
-        markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
+        markdown, cache_hit, profitability = await deliver_paid_markdown(
+            target_url=target_url,
+            tier=tier,
+            force_refresh=access_request.force_refresh,
+            amount_usdc=price_for_tier(tier),
+        )
         inc_metric("payment_verified_total")
         inc_metric("delivery_success_total")
         inc_metric("standard_delivery_success_total")
@@ -2755,7 +2999,11 @@ async def retry_context_broker_delivery(
             raise rate_limit_429(exc) from exc
 
         detail = "Payment Required. Provide PAYMENT-SIGNATURE or a valid X-AxonGate-Retry-Credit."
-        raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail))
+        raise HTTPException(
+            status_code=402,
+            detail=detail,
+            headers=payment_required_headers(detail, access_request.tier),
+        )
 
     reservation: DeliveryCreditReservation | None = None
     try:
@@ -2781,16 +3029,20 @@ async def retry_context_broker_delivery(
         )
 
         amount_usdc = Decimal(str(reservation.record["amount_usdc"]))
-        profitability = await calculate_profitability_for_price(
-            amount_usdc,
-            supplier_attempts=reservation.total_supplier_attempts,
-        )
-        if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
-            inc_metric("ueg_rejections_total")
-            await restore_delivery_credit_attempt(reservation)
-            raise PaymentValidationError("Retry credit rejected; projected margin is below AxonGate guard")
+        try:
+            markdown, cache_hit, profitability = await deliver_paid_markdown(
+                target_url=target_url,
+                tier=tier,
+                force_refresh=access_request.force_refresh,
+                amount_usdc=amount_usdc,
+                supplier_attempts_on_hit=max(0, reservation.total_supplier_attempts - 1),
+                supplier_attempts_on_miss=reservation.total_supplier_attempts,
+            )
+        except PaymentValidationError as exc:
+            if "Dynamic UEG" in exc.detail:
+                exc.detail = "Retry credit rejected; projected margin is below AxonGate guard"
+            raise
 
-        markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
         await delete_delivery_credit(reservation.token)
         inc_metric("delivery_credit_success_total")
         inc_metric("payment_verified_total")
@@ -2886,12 +3138,13 @@ async def access_context_broker(
         raise HTTPException(
             status_code=402,
             detail=detail,
-            headers=payment_required_headers(detail),
+            headers=payment_required_headers(detail, access_request.tier),
         )
 
     payment: PaymentVerification | None = None
     target_url: Optional[str] = None
     tier: Optional[str] = None
+    cached_markdown: Optional[str] = None
     try:
         inc_metric("paid_attempts_total")
         target_url = await assert_public_target_url(access_request.target_url)
@@ -2908,13 +3161,31 @@ async def access_context_broker(
             raise rate_limit_429(exc) from exc
 
         price = price_for_tier(tier)
+        if tier == CACHE_ONLY_TIER and access_request.force_refresh:
+            raise PaymentValidationError("Cached tier cannot force refresh. Use basic, fresh, or deep for a live fetch.")
+        if tier == CACHE_ONLY_TIER:
+            cached_markdown = await get_cache_candidate_for_tier(target_url, tier, False)
+            if cached_markdown is None:
+                inc_metric("cache_misses_total")
+                raise PaymentValidationError(
+                    "Cached tier is only available when AxonGate already has a cached copy. Use basic, fresh, or deep first."
+                )
         payment = await verify_x402_payment(x_axongate_payment_hash, price)
         inc_metric("payments_accepted_total")
-        profitability = await calculate_profitability_for_price(payment.amount_usdc)
-        if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
-            inc_metric("ueg_rejections_total")
-            raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
-        markdown, cache_hit = await get_clean_markdown(target_url, tier, access_request.force_refresh)
+        if cached_markdown is not None:
+            inc_metric("cache_hits_total")
+            profitability = await calculate_profitability_for_price(payment.amount_usdc, supplier_attempts=0)
+            if profitability.projected_profit_usdc <= MIN_PROFIT_MARGIN_USDC:
+                inc_metric("ueg_rejections_total")
+                raise PaymentValidationError("Dynamic UEG rejected request; projected margin is too low")
+            markdown, cache_hit = cached_markdown, True
+        else:
+            markdown, cache_hit, profitability = await deliver_paid_markdown(
+                target_url=target_url,
+                tier=tier,
+                force_refresh=access_request.force_refresh,
+                amount_usdc=payment.amount_usdc,
+            )
         inc_metric("payment_verified_total")
         inc_metric("delivery_success_total")
         inc_metric("legacy_delivery_success_total")
@@ -3023,6 +3294,55 @@ async def process_task(payload: ComputeRequest, request: Request, x402_token: st
 
     print("[DISPATCHING RESPONSE] Task complete.")
     return response_payload
+
+
+def custom_openapi() -> dict[str, Any]:
+    """Attach payment-discovery metadata to the generated OpenAPI document."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    payment_info = build_openapi_payment_info()
+    access_post = schema.get("paths", {}).get("/v1/x402/access", {}).get("post")
+    if isinstance(access_post, dict):
+        access_post["x-payment-info"] = payment_info
+        responses = access_post.setdefault("responses", {})
+        payment_required = responses.setdefault("402", {"description": "x402 payment required"})
+        payment_required.setdefault("headers", {}).update(
+            {
+                "PAYMENT-REQUIRED": {
+                    "description": "Base64-encoded x402 PaymentRequired payload.",
+                    "schema": {"type": "string"},
+                },
+                "X-Payment-Required": {
+                    "description": "Compatibility alias for PAYMENT-REQUIRED.",
+                    "schema": {"type": "string"},
+                },
+                "X-AxonGate-Payment-Tier": {
+                    "description": "Resolved pricing tier for the challenge.",
+                    "schema": {"type": "string", "enum": list(TIER_PRICING_USDC.keys())},
+                },
+            }
+        )
+
+    access_request_schema = schema.get("components", {}).get("schemas", {}).get("AccessRequest")
+    if isinstance(access_request_schema, dict):
+        tier_property = access_request_schema.get("properties", {}).get("tier")
+        if isinstance(tier_property, dict):
+            tier_property["enum"] = list(TIER_PRICING_USDC.keys())
+            tier_property["default"] = RECOMMENDED_TIER
+
+    schema["x-payment-info"] = payment_info
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 if __name__ == "__main__":

@@ -50,25 +50,33 @@ async def main() -> None:
         assert probe.status_code == 402, f"x402 probe returned {probe.status_code}"
         assert probe.headers.get("PAYMENT-REQUIRED"), "x402 probe missing PAYMENT-REQUIRED"
         probe_payload = json.loads(base64.b64decode(probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
-        assert "extensions" not in probe_payload, "GET x402 challenge must not include informal extensions"
+        assert "extensions" in probe_payload, "GET x402 challenge missing official extensions"
+        assert "bazaar" in probe_payload["extensions"], "GET x402 challenge missing Bazaar discovery"
+        assert "payment-identifier" in probe_payload["extensions"], "GET x402 challenge missing payment identifier"
 
         unpaid_post = await client.post(
-            "/v1/x402/access",
+            "/v1/x402/access?tier=fresh",
             json={"target_url": "https://example.com", "tier": "fresh", "force_refresh": True},
         )
         assert unpaid_post.status_code == 402, f"unpaid POST returned {unpaid_post.status_code}"
         post_challenge = unpaid_post.headers.get("PAYMENT-REQUIRED") or unpaid_post.headers.get("X-Payment-Required")
         assert post_challenge, "unpaid POST missing payment challenge"
         post_payload = json.loads(base64.b64decode(post_challenge).decode("utf-8"))
-        assert "extensions" not in post_payload, "POST x402 challenge must not include informal extensions"
+        assert "extensions" in post_payload, "POST x402 challenge missing official extensions"
+        assert "bazaar" in post_payload["extensions"], "POST x402 challenge missing Bazaar discovery"
+        assert "payment-identifier" in post_payload["extensions"], "POST x402 challenge missing payment identifier"
 
         x402_discovery = (await client.get("/.well-known/x402")).json()
-        assert "extensions" not in x402_discovery, "public x402 discovery must not include protocol extensions"
+        assert "extensions" in x402_discovery, "public x402 discovery missing protocol extensions"
         assert "metadata" in x402_discovery, "public x402 discovery should keep non-protocol metadata"
+        assert "cached" in x402_discovery["metadata"]["tiers"], "cached tier missing from public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})
         assert schemas.get("AccessRequest", {}).get("examples"), "AccessRequest examples missing"
+        post_operation = openapi.get("paths", {}).get("/v1/x402/access", {}).get("post", {})
+        assert post_operation.get("x-payment-info"), "OpenAPI payment extension missing from paid endpoint"
+        assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
 
         metrics = (await client.get("/metrics")).json()
         assert "conversion_funnel" in metrics, "conversion_funnel missing from metrics"

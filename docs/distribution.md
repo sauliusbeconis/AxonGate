@@ -20,7 +20,7 @@ https://web-production-8136ee.up.railway.app/demo
 | Target | Status | Notes |
 | --- | --- | --- |
 | x402 List | Listed | AxonGate is already present at `https://x402-list.com` as `axongate`, status online. |
-| Coinbase x402 Bazaar | Prepared | Bazaar indexing requires CDP Facilitator integration and at least one successful settlement through CDP verify/settle before resources appear in the catalog. |
+| Coinbase x402 Bazaar | Prepared | AxonGate advertises official Bazaar discovery metadata in x402 challenges; catalog visibility may still require facilitator indexing and settled traffic. |
 | Agora402 | Prepared | Registration requires a one-time USDC listing fee and transaction hash. Native x402 mode is the right fit for AxonGate. |
 | x402.eco | Prepared | Submit a PR to `x402eco/website` adding AxonGate under `data/ecosystem/services-endpoints/`. |
 | PayanAgent | Prepared | Provider registration is API-driven; service listing requires provider registration/API key. |

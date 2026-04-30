@@ -49,6 +49,8 @@ Endpoint paths:
 
 ## Pricing
 
+cached: 0.015 USDC
+
 basic: 0.02 USDC
 
 fresh: 0.03 USDC
@@ -93,7 +95,7 @@ Description:
 AxonGate converts public web pages into clean, token-efficient Markdown for autonomous agents, RAG pipelines, and LLM context preparation. It is x402-native on Base with USDC pay-per-use pricing and machine-readable discovery endpoints.
 
 Price per Call:
-0.02
+0.015 cached, 0.02 basic, 0.03 fresh, 0.05 deep
 
 x402 Endpoint URL:
 https://web-production-8136ee.up.railway.app/v1/x402/access
@@ -124,7 +126,7 @@ Endpoint paths:
 ```
 
 Notes:
-Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header.
+Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, official Bazaar discovery metadata, optional payment-identifier, and a cache-only low-cost tier.
 
 ## 402agents Fields
 

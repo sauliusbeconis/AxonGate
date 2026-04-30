@@ -10,7 +10,7 @@
     "name": "AxonGate",
     "basename": "axongate.base.eth",
     "vault_address": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "status": "active"
   },
   "service": {
@@ -34,7 +34,10 @@
       "crawler_sitemap",
       "redis_persistent_metrics",
       "ops_alert_webhooks",
-      "custom_domain_ready"
+      "custom_domain_ready",
+      "x402_bazaar_discovery",
+      "x402_payment_identifier",
+      "cache_only_pricing"
     ],
     "input_modes": [
       "url"
@@ -79,6 +82,11 @@
       "static_fallback_default": false
     },
     "tiers": {
+      "cached": {
+        "price_usdc": 0.015,
+        "cache_policy": "cache-only",
+        "recommended_for": "low-cost repeat reads when AxonGate already has a cached copy"
+      },
       "basic": {
         "price_usdc": 0.02,
         "cache_policy": "cached",
@@ -127,7 +135,7 @@
     "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
     "payload_schema": {
       "target_url": "string (valid HTTP/HTTPS URL)",
-      "tier": "optional string (basic, fresh, or deep)",
+      "tier": "optional string (cached, basic, fresh, or deep)",
       "force_refresh": "optional boolean"
     },
     "required_headers": [
@@ -144,6 +152,11 @@
       "ueg_receipt": "object"
     },
     "request_examples": [
+      {
+        "target_url": "https://example.com/source",
+        "tier": "cached",
+        "force_refresh": false
+      },
       {
         "target_url": "https://example.com/source",
         "tier": "basic",
@@ -170,6 +183,10 @@
       "x402_version": 2,
       "market_listing": "https://web-production-8136ee.up.railway.app/discovery/resources",
       "payment_required_header": "PAYMENT-REQUIRED",
+      "extensions": [
+        "bazaar",
+        "payment-identifier"
+      ],
       "docs": "https://web-production-8136ee.up.railway.app/docs",
       "demo": "https://web-production-8136ee.up.railway.app/demo",
       "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",

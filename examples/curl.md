@@ -17,7 +17,8 @@ curl -i "$AXONGATE_BASE_URL/v1/x402/access"
 
 The response should be `402 Payment Required` and include `PAYMENT-REQUIRED`
 and `X-Payment-Required` headers. Those headers contain the x402 payment
-requirements for Base USDC.
+requirements for Base USDC, plus official Bazaar discovery and optional
+payment-identifier extensions.
 
 ## Standard x402 Paid Request
 
@@ -41,7 +42,7 @@ Successful responses include:
 {
   "status": "success",
   "target_url": "https://example.com",
-  "tier": "basic",
+  "tier": "fresh",
   "markdown": "...",
   "cache": {"hit": false},
   "payment": {
@@ -52,6 +53,16 @@ Successful responses include:
     "projected_profit_usdc": 0.01
   }
 }
+```
+
+## Cached Tier
+
+The `cached` tier is cheaper and only succeeds when AxonGate already has a
+cached copy from a previous `basic` or `deep` request. It will not trigger Jina
+supplier work on a cache miss.
+
+```bash
+curl -i "$AXONGATE_BASE_URL/v1/x402/access?tier=cached"
 ```
 
 ## Retry A Paid Delivery
