@@ -8,9 +8,9 @@ https://web-production-8136ee.up.railway.app
 
 ## Source-Tagged URLs
 
-Use source tags on submitted endpoint URLs so `/metrics.attribution` can show
-which directory creates payment challenges, paid attempts, accepted payments,
-and deliveries.
+Use source tags on submitted endpoint URLs so `/metrics.rolling_attribution`
+and `/metrics.attribution` can show which directory creates discovery hits,
+payment challenges, paid attempts, accepted payments, and deliveries.
 
 | Source | Paid endpoint | Docs URL | Paid test URL |
 | --- | --- | --- | --- |

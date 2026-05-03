@@ -114,6 +114,9 @@ METRICS_PERSISTENCE_ENABLED = os.getenv("AXONGATE_METRICS_PERSISTENCE_ENABLED", 
 }
 METRICS_REDIS_KEY = os.getenv("AXONGATE_METRICS_REDIS_KEY", "axongate:metrics")
 ATTRIBUTION_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_REDIS_KEY", "axongate:attribution")
+ATTRIBUTION_EVENTS_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_EVENTS_REDIS_KEY", "axongate:attribution:events")
+ATTRIBUTION_EVENT_RETENTION_SECONDS = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_RETENTION_SECONDS", str(7 * 24 * 60 * 60)))
+ATTRIBUTION_EVENT_MEMORY_MAX = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_MEMORY_MAX", "10000"))
 ALERT_WEBHOOK_URL = os.getenv("AXONGATE_ALERT_WEBHOOK_URL")
 ALERT_WEBHOOK_TOKEN = os.getenv("AXONGATE_ALERT_WEBHOOK_TOKEN")
 ALERT_MIN_INTERVAL_SECONDS = int(os.getenv("AXONGATE_ALERT_MIN_INTERVAL_SECONDS", "300"))
@@ -149,6 +152,21 @@ ALLOWED_TARGET_PORTS = {
 
 USDC_DECIMALS = 6
 REQUIRED_USDC_FEE = Decimal(os.getenv("AXONGATE_BASE_FEE_USDC", "0.02"))
+
+ATTRIBUTION_ROLLING_WINDOWS: dict[str, int] = {
+    "1h": 60 * 60,
+    "24h": 24 * 60 * 60,
+    "7d": 7 * 24 * 60 * 60,
+}
+ATTRIBUTION_FUNNEL_STAGES = (
+    "discovery_hits",
+    "payment_challenges",
+    "paid_attempts",
+    "payments_accepted",
+    "delivery_success",
+    "payment_replay_rejections",
+    "retry_credit_attempts",
+)
 REQUIRED_USDC_AMOUNT = int(REQUIRED_USDC_FEE * (Decimal(10) ** USDC_DECIMALS))
 CACHE_ONLY_TIER = "cached"
 TIER_PRICING_USDC = {
@@ -208,6 +226,7 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True) if redis and RED
 alert_windows: dict[str, float] = {}
 alert_lock = asyncio.Lock()
 attribution_counts: dict[str, int] = {}
+attribution_events: dict[str, tuple[int, str, str]] = {}
 metrics: dict[str, int] = {
     "requests_total": 0,
     "legacy_access_requests_total": 0,
@@ -530,9 +549,57 @@ async def persist_attribution_increment(key: str, amount: int) -> None:
         print(f"[METRICS] Redis attribution persistence failed for {key}: {exc}")
 
 
+def prune_memory_attribution_events(now: int) -> None:
+    cutoff = now - ATTRIBUTION_EVENT_RETENTION_SECONDS
+    for event_id, (timestamp, _, _) in list(attribution_events.items()):
+        if timestamp < cutoff:
+            attribution_events.pop(event_id, None)
+
+    overflow = len(attribution_events) - ATTRIBUTION_EVENT_MEMORY_MAX
+    if overflow > 0:
+        oldest = sorted(attribution_events.items(), key=lambda item: item[1][0])[:overflow]
+        for event_id, _ in oldest:
+            attribution_events.pop(event_id, None)
+
+
+async def persist_attribution_event(event_id: str, timestamp: int, stage: str, source: str) -> None:
+    """Persist a timestamped source event for rolling conversion windows."""
+    if not redis_client or not METRICS_PERSISTENCE_ENABLED:
+        return
+
+    member = json.dumps(
+        {"id": event_id, "ts": timestamp, "stage": stage, "source": source},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    try:
+        await redis_client.zadd(ATTRIBUTION_EVENTS_REDIS_KEY, {member: timestamp})
+        await redis_client.zremrangebyscore(
+            ATTRIBUTION_EVENTS_REDIS_KEY,
+            0,
+            timestamp - ATTRIBUTION_EVENT_RETENTION_SECONDS,
+        )
+    except Exception as exc:
+        print(f"[METRICS] Redis attribution event persistence failed for {stage}:{source}: {exc}")
+
+
+def record_attribution_event(stage: str, source: str) -> None:
+    normalized_source = normalize_attribution_source(source)
+    normalized_stage = re.sub(r"[^a-z0-9_]+", "_", stage.strip().lower())[:64].strip("_") or "unknown"
+    timestamp = int(time.time())
+    event_id = f"{time.time_ns()}:{secrets.token_hex(4)}"
+    attribution_events[event_id] = (timestamp, normalized_stage, normalized_source)
+    prune_memory_attribution_events(timestamp)
+    if redis_client and METRICS_PERSISTENCE_ENABLED:
+        schedule_background(persist_attribution_event(event_id, timestamp, normalized_stage, normalized_source))
+
+
 def inc_attribution(stage: str, source: str, amount: int = 1) -> None:
-    key = f"{stage}:{normalize_attribution_source(source)}"
+    normalized_source = normalize_attribution_source(source)
+    key = f"{stage}:{normalized_source}"
     attribution_counts[key] = attribution_counts.get(key, 0) + amount
+    for _ in range(max(0, amount)):
+        record_attribution_event(stage, normalized_source)
     if redis_client and METRICS_PERSISTENCE_ENABLED:
         schedule_background(persist_attribution_increment(key, amount))
 
@@ -562,10 +629,116 @@ async def durable_attribution_snapshot() -> dict[str, dict[str, int]]:
     return {stage: dict(sorted(sources.items())) for stage, sources in sorted(grouped.items())}
 
 
-def inc_discovery_hit(metric_name: str) -> None:
+def attribution_event_from_redis_member(member: str) -> tuple[str, int, str, str] | None:
+    try:
+        data = json.loads(member)
+        event_id = str(data.get("id") or stable_hash(member))
+        timestamp = int(data["ts"])
+        stage = str(data["stage"])
+        source = normalize_attribution_source(str(data["source"]))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+    if timestamp <= 0 or not stage:
+        return None
+    return event_id, timestamp, stage, source
+
+
+def attribution_rates(stage_counts: dict[str, int]) -> dict[str, float]:
+    discovery_hits = stage_counts.get("discovery_hits", 0)
+    challenges = stage_counts.get("payment_challenges", 0)
+    paid_attempts = stage_counts.get("paid_attempts", 0)
+    accepted = stage_counts.get("payments_accepted", 0)
+    delivered = stage_counts.get("delivery_success", 0)
+    return {
+        "challenge_per_discovery": conversion_rate(challenges, discovery_hits),
+        "paid_attempt_per_challenge": conversion_rate(paid_attempts, challenges),
+        "accepted_per_paid_attempt": conversion_rate(accepted, paid_attempts),
+        "delivered_per_accepted": conversion_rate(delivered, accepted),
+    }
+
+
+def rolling_attribution_snapshot(
+    events: dict[str, tuple[int, str, str]],
+    now: Optional[int] = None,
+) -> dict[str, Any]:
+    """Group source-attribution events into operator-friendly time windows."""
+    current_time = int(now or time.time())
+    snapshot: dict[str, Any] = {
+        "generated_at": current_time,
+        "retention_seconds": ATTRIBUTION_EVENT_RETENTION_SECONDS,
+        "windows": {},
+    }
+
+    for label, seconds in ATTRIBUTION_ROLLING_WINDOWS.items():
+        started_at = current_time - seconds
+        totals = {stage: 0 for stage in ATTRIBUTION_FUNNEL_STAGES}
+        sources: dict[str, dict[str, int]] = {}
+        event_count = 0
+
+        for timestamp, stage, source in events.values():
+            if timestamp < started_at or timestamp > current_time:
+                continue
+            event_count += 1
+            totals[stage] = totals.get(stage, 0) + 1
+            source_counts = sources.setdefault(source, {stage_name: 0 for stage_name in ATTRIBUTION_FUNNEL_STAGES})
+            source_counts[stage] = source_counts.get(stage, 0) + 1
+
+        sorted_sources = sorted(
+            sources.items(),
+            key=lambda item: (
+                -item[1].get("delivery_success", 0),
+                -item[1].get("paid_attempts", 0),
+                -item[1].get("payment_challenges", 0),
+                -item[1].get("discovery_hits", 0),
+                item[0],
+            ),
+        )
+        snapshot["windows"][label] = {
+            "seconds": seconds,
+            "started_at": started_at,
+            "ended_at": current_time,
+            "event_count": event_count,
+            "stages": totals,
+            "rates": attribution_rates(totals),
+            "sources": {
+                source: {**counts, "rates": attribution_rates(counts)}
+                for source, counts in sorted_sources
+            },
+        }
+
+    return snapshot
+
+
+async def durable_rolling_attribution_snapshot() -> dict[str, Any]:
+    """Return Redis-backed rolling attribution windows, with memory as fallback."""
+    now = int(time.time())
+    prune_memory_attribution_events(now)
+    events = dict(attribution_events)
+
+    if redis_client and METRICS_PERSISTENCE_ENABLED:
+        cutoff = now - ATTRIBUTION_EVENT_RETENTION_SECONDS
+        try:
+            await redis_client.zremrangebyscore(ATTRIBUTION_EVENTS_REDIS_KEY, 0, cutoff)
+            persisted = await redis_client.zrangebyscore(ATTRIBUTION_EVENTS_REDIS_KEY, cutoff, now)
+        except Exception as exc:
+            print(f"[METRICS] Redis attribution event snapshot failed: {exc}")
+        else:
+            for member in persisted:
+                parsed = attribution_event_from_redis_member(member)
+                if parsed is None:
+                    continue
+                event_id, timestamp, stage, source = parsed
+                events[event_id] = (timestamp, stage, source)
+
+    return rolling_attribution_snapshot(events, now)
+
+
+def inc_discovery_hit(metric_name: str, source: Optional[str] = None) -> None:
     """Count discovery traffic as a separate conversion funnel stage."""
     inc_metric("discovery_hits_total")
     inc_metric(metric_name)
+    inc_attribution("discovery_hits", source or "direct")
 
 
 def conversion_rate(numerator: int, denominator: int) -> float:
@@ -2554,6 +2727,7 @@ def build_docs_html() -> str:
 def build_operator_dashboard_html(
     metric_values: dict[str, int],
     attribution: dict[str, dict[str, int]],
+    rolling_attribution: dict[str, Any],
     triggered_alerts: list[str],
 ) -> str:
     """Render a compact operator view from public metrics."""
@@ -2627,6 +2801,44 @@ def build_operator_dashboard_html(
         )
     attribution_rows = "\n".join(row for _, _, row in sorted(source_rows, reverse=True)) or (
         '<tr><td colspan="6">No source-tagged paid traffic yet.</td></tr>'
+    )
+
+    rolling_windows = rolling_attribution.get("windows", {})
+    rolling_rows = []
+    for label in ATTRIBUTION_ROLLING_WINDOWS:
+        window = rolling_windows.get(label, {})
+        stages = window.get("stages", {})
+        window_rates = window.get("rates", {})
+        rolling_rows.append(
+            "<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{count(stages.get('discovery_hits', 0))}</td>"
+            f"<td>{count(stages.get('payment_challenges', 0))}</td>"
+            f"<td>{count(stages.get('paid_attempts', 0))}</td>"
+            f"<td>{count(stages.get('payments_accepted', 0))}</td>"
+            f"<td>{count(stages.get('delivery_success', 0))}</td>"
+            f"<td>{percent(window_rates.get('paid_attempt_per_challenge', 0))}</td>"
+            f"<td>{percent(window_rates.get('delivered_per_accepted', 0))}</td>"
+            "</tr>"
+        )
+    rolling_funnel_rows = "\n".join(rolling_rows)
+
+    rolling_source_rows = []
+    for source, counts_by_stage in rolling_windows.get("24h", {}).get("sources", {}).items():
+        source_rates = counts_by_stage.get("rates", {})
+        rolling_source_rows.append(
+            "<tr>"
+            f"<td>{html.escape(source)}</td>"
+            f"<td>{count(counts_by_stage.get('discovery_hits', 0))}</td>"
+            f"<td>{count(counts_by_stage.get('payment_challenges', 0))}</td>"
+            f"<td>{count(counts_by_stage.get('paid_attempts', 0))}</td>"
+            f"<td>{count(counts_by_stage.get('payments_accepted', 0))}</td>"
+            f"<td>{count(counts_by_stage.get('delivery_success', 0))}</td>"
+            f"<td>{percent(source_rates.get('paid_attempt_per_challenge', 0))}</td>"
+            "</tr>"
+        )
+    rolling_24h_source_rows = "\n".join(rolling_source_rows) or (
+        '<tr><td colspan="7">No source events in the last 24 hours.</td></tr>'
     )
 
     discovery_rows = "\n".join(
@@ -2754,7 +2966,19 @@ def build_operator_dashboard_html(
 
     <section class="cards">{cards}</section>
 
-    <h2>Funnel By Source</h2>
+    <h2>Rolling Funnel</h2>
+    <table>
+      <thead><tr><th>Window</th><th>Discovery</th><th>Challenges</th><th>Paid</th><th>Accepted</th><th>Delivered</th><th>Paid / Challenge</th><th>Delivered / Accepted</th></tr></thead>
+      <tbody>{rolling_funnel_rows}</tbody>
+    </table>
+
+    <h2>24h Source Funnel</h2>
+    <table>
+      <thead><tr><th>Source</th><th>Discovery</th><th>Challenges</th><th>Paid</th><th>Accepted</th><th>Delivered</th><th>Paid / Challenge</th></tr></thead>
+      <tbody>{rolling_24h_source_rows}</tbody>
+    </table>
+
+    <h2>Cumulative Funnel By Source</h2>
     <table>
       <thead><tr><th>Source</th><th>Challenges</th><th>Paid</th><th>Accepted</th><th>Delivered</th><th>Replay Rejected</th></tr></thead>
       <tbody>{attribution_rows}</tbody>
@@ -3163,61 +3387,62 @@ def build_sitemap_xml() -> str:
 
 
 @app.get("/llms.txt", response_class=PlainTextResponse, tags=["discovery"], summary="Agent-readable service brief")
-async def llms_txt():
+async def llms_txt(request: Request):
     """Expose a concise machine-readable brief for LLM routers and crawlers."""
-    inc_discovery_hit("discovery_llms_hits_total")
+    inc_discovery_hit("discovery_llms_hits_total", attribution_source_from_request(request))
     return build_llms_txt()
 
 
 @app.get("/docs", response_class=HTMLResponse, tags=["discovery"], summary="Human-readable AxonGate docs")
-async def human_docs():
+async def human_docs(request: Request):
     """Serve a lightweight docs page; Swagger remains available at /swagger."""
-    inc_discovery_hit("discovery_docs_hits_total")
+    inc_discovery_hit("discovery_docs_hits_total", attribution_source_from_request(request))
     return build_docs_html()
 
 
 @app.get("/operator", response_class=HTMLResponse, tags=["operations"], summary="Operator conversion dashboard")
-async def operator_dashboard():
+async def operator_dashboard(request: Request):
     """Serve a public operator view backed by the metrics endpoint data."""
-    inc_discovery_hit("discovery_operator_hits_total")
+    inc_discovery_hit("discovery_operator_hits_total", attribution_source_from_request(request))
     metric_values = await durable_metrics_snapshot()
     attribution = await durable_attribution_snapshot()
+    rolling_attribution = await durable_rolling_attribution_snapshot()
     triggered_alerts = await evaluate_alerts(metric_values)
-    return build_operator_dashboard_html(metric_values, attribution, triggered_alerts)
+    return build_operator_dashboard_html(metric_values, attribution, rolling_attribution, triggered_alerts)
 
 
 @app.get("/paid-test", response_class=HTMLResponse, tags=["discovery"], summary="Real paid x402 smoke test guide")
-async def paid_test_guide():
+async def paid_test_guide(request: Request):
     """Serve a concise paid-test guide for burner-wallet smoke checks."""
-    inc_discovery_hit("discovery_paid_test_hits_total")
+    inc_discovery_hit("discovery_paid_test_hits_total", attribution_source_from_request(request))
     return build_paid_test_html()
 
 
 @app.get("/demo", response_class=HTMLResponse, tags=["discovery"], summary="Interactive AxonGate buyer demo")
-async def demo():
+async def demo(request: Request):
     """Serve a safe buyer console that preserves the x402 payment boundary."""
-    inc_discovery_hit("discovery_demo_hits_total")
+    inc_discovery_hit("discovery_demo_hits_total", attribution_source_from_request(request))
     return build_demo_html()
 
 
 @app.get("/robots.txt", response_class=PlainTextResponse, tags=["discovery"], summary="Crawler hints")
-async def robots_txt():
+async def robots_txt(request: Request):
     """Expose crawler hints for public discovery URLs."""
-    inc_discovery_hit("discovery_robots_hits_total")
+    inc_discovery_hit("discovery_robots_hits_total", attribution_source_from_request(request))
     return build_robots_txt()
 
 
 @app.get("/sitemap.xml", tags=["discovery"], summary="XML sitemap")
-async def sitemap_xml():
+async def sitemap_xml(request: Request):
     """Expose a small sitemap for search and agent crawlers."""
-    inc_discovery_hit("discovery_sitemap_hits_total")
+    inc_discovery_hit("discovery_sitemap_hits_total", attribution_source_from_request(request))
     return Response(content=build_sitemap_xml(), media_type="application/xml")
 
 
 @app.get("/", tags=["discovery"], summary="Discovery index")
-async def root():
+async def root(request: Request):
     """Return a lightweight discovery index for crawlers and agent clients."""
-    inc_discovery_hit("discovery_root_hits_total")
+    inc_discovery_hit("discovery_root_hits_total", attribution_source_from_request(request))
     return {
         "status": "alive",
         "agent": "AxonGate",
@@ -3253,44 +3478,44 @@ async def health():
 
 
 @app.get("/manifest.json", tags=["discovery"], summary="Canonical agent manifest")
-async def manifest():
+async def manifest(request: Request):
     """Return the full AxonGate agent card used by other agents for discovery."""
-    inc_discovery_hit("discovery_manifest_hits_total")
+    inc_discovery_hit("discovery_manifest_hits_total", attribution_source_from_request(request))
     return load_agent_card()
 
 
 @app.get("/.well-known/agent.json", tags=["discovery"], summary="Well-known agent card")
-async def well_known_agent():
+async def well_known_agent(request: Request):
     """Expose the agent card at a common agent-discovery well-known path."""
-    inc_discovery_hit("discovery_agent_card_hits_total")
+    inc_discovery_hit("discovery_agent_card_hits_total", attribution_source_from_request(request))
     return load_agent_card()
 
 
 @app.get("/.well-known/agent-card.json", tags=["discovery"], summary="Agent card compatibility alias")
-async def well_known_agent_card_alias():
+async def well_known_agent_card_alias(request: Request):
     """Expose an AgentCard-compatible alias used by some registries."""
-    inc_discovery_hit("discovery_agent_card_hits_total")
+    inc_discovery_hit("discovery_agent_card_hits_total", attribution_source_from_request(request))
     return load_agent_card()
 
 
 @app.get("/.well-known/x402", tags=["discovery"], summary="x402 payment discovery")
-async def well_known_x402():
+async def well_known_x402(request: Request):
     """Expose AxonGate's x402 resource advertisement for crawler discovery."""
-    inc_discovery_hit("discovery_x402_hits_total")
+    inc_discovery_hit("discovery_x402_hits_total", attribution_source_from_request(request))
     return build_x402_public_discovery()
 
 
 @app.get("/.well-known/x402.json", tags=["discovery"], summary="x402 discovery compatibility alias")
-async def well_known_x402_json():
+async def well_known_x402_json(request: Request):
     """Expose an x402 JSON alias for crawlers that require a file extension."""
-    inc_discovery_hit("discovery_x402_hits_total")
+    inc_discovery_hit("discovery_x402_hits_total", attribution_source_from_request(request))
     return build_x402_public_discovery()
 
 
 @app.get("/discovery/resources", tags=["discovery"], summary="PayAI-style resource listing")
-async def discovery_resources(type: Optional[str] = None, limit: int = 20, offset: int = 0):
+async def discovery_resources(request: Request, type: Optional[str] = None, limit: int = 20, offset: int = 0):
     """Return a PayAI-style Bazaar resource listing for AxonGate."""
-    inc_discovery_hit("discovery_resources_hits_total")
+    inc_discovery_hit("discovery_resources_hits_total", attribution_source_from_request(request))
     if type not in (None, "http"):
         items: list[dict[str, Any]] = []
     else:
@@ -3316,16 +3541,21 @@ async def metrics_snapshot():
     """Expose lightweight operational counters for conversion and margin tuning."""
     metric_values = await durable_metrics_snapshot()
     attribution = await durable_attribution_snapshot()
+    rolling_attribution = await durable_rolling_attribution_snapshot()
     triggered_alerts = await evaluate_alerts(metric_values)
     return {
         "status": "ok",
         "metrics": metric_values,
         "conversion_funnel": conversion_funnel_snapshot(metric_values),
         "attribution": attribution,
+        "rolling_attribution": rolling_attribution,
         "metrics_backend": {
             "persistent": bool(redis_client and METRICS_PERSISTENCE_ENABLED),
             "redis_key": METRICS_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
             "attribution_redis_key": ATTRIBUTION_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
+            "attribution_events_redis_key": (
+                ATTRIBUTION_EVENTS_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None
+            ),
         },
         "alerts": {
             "enabled": bool(ALERT_WEBHOOK_URL),

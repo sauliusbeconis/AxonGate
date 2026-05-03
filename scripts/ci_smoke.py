@@ -84,8 +84,15 @@ async def main() -> None:
         assert "conversion_funnel" in metrics, "conversion_funnel missing from metrics"
         assert "payment_replay_rejections" in metrics["conversion_funnel"], "replay rejection funnel metric missing"
         assert "attribution" in metrics, "attribution missing from metrics"
+        assert "rolling_attribution" in metrics, "rolling_attribution missing from metrics"
+        rolling_windows = metrics["rolling_attribution"].get("windows", {})
+        for label in ("1h", "24h", "7d"):
+            assert label in rolling_windows, f"{label} rolling attribution window missing"
+        assert rolling_windows["24h"]["stages"]["discovery_hits"] > 0, "rolling discovery hits should be tracked"
+        assert "direct" in rolling_windows["24h"]["sources"], "rolling source attribution should include direct hits"
         assert "metrics_backend" in metrics, "metrics_backend missing from metrics"
         assert "attribution_redis_key" in metrics["metrics_backend"], "attribution Redis key missing from metrics"
+        assert "attribution_events_redis_key" in metrics["metrics_backend"], "attribution event Redis key missing from metrics"
         assert "alerts" in metrics, "alerts block missing from metrics"
 
 
