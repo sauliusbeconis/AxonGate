@@ -167,6 +167,16 @@ ATTRIBUTION_FUNNEL_STAGES = (
     "payment_replay_rejections",
     "retry_credit_attempts",
 )
+SOURCE_ALIAS_PATHS = (
+    "x402-list",
+    "payanagent",
+    "agora402",
+    "agent-bazaar",
+    "the402",
+    "x402-eco",
+    "402agents",
+    "github",
+)
 REQUIRED_USDC_AMOUNT = int(REQUIRED_USDC_FEE * (Decimal(10) ** USDC_DECIMALS))
 CACHE_ONLY_TIER = "cached"
 TIER_PRICING_USDC = {
@@ -528,6 +538,10 @@ def attribution_source_from_request(request: Request) -> str:
         header_value = request.headers.get(header_name)
         if header_value:
             return normalize_attribution_source(header_value)
+
+    path_match = re.match(r"^/from/([^/]+)/", request.url.path)
+    if path_match:
+        return normalize_attribution_source(path_match.group(1))
 
     referer = request.headers.get("referer")
     if referer:
@@ -1129,6 +1143,7 @@ def build_x402_resource() -> dict[str, Any]:
             "facilitator": PAYAI_FACILITATOR_URL,
             "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
             "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
+            "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/access",
             "recommendedTier": RECOMMENDED_TIER,
             "supplyGuards": {
                 "dnsSsrfProtection": True,
@@ -1204,6 +1219,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "retryCreditHeader": "X-AxonGate-Retry-Credit",
         "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
         "facilitator": PAYAI_FACILITATOR_URL,
+        "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/access",
         "tiers": {
             tier: {
                 "price": f"${price}",
@@ -1230,6 +1246,64 @@ def payment_required_headers(error: str, tier: Optional[str] = None) -> dict[str
         "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
         "X-AxonGate-Payment-Amount": str(price_for_tier(normalized_tier)),
         "X-AxonGate-Payment-Tier": normalized_tier,
+        **buyer_guidance_headers(),
+    }
+
+
+def buyer_guidance_headers() -> dict[str, str]:
+    return {
+        "X-AxonGate-Next-Step": "Create an x402 payment proof, then POST JSON with PAYMENT-SIGNATURE.",
+        "X-AxonGate-Docs": f"{PUBLIC_BASE_URL}/docs",
+        "X-AxonGate-Paid-Test": f"{PUBLIC_BASE_URL}/paid-test",
+        "X-AxonGate-Demo": f"{PUBLIC_BASE_URL}/demo",
+        "X-AxonGate-Buyer-Example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
+        "Link": (
+            f'<{PUBLIC_BASE_URL}/docs>; rel="help", '
+            f'<{PUBLIC_BASE_URL}/paid-test>; rel="payment-test", '
+            f'<{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs>; rel="example"'
+        ),
+    }
+
+
+def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str, Any]:
+    try:
+        normalized_tier = normalize_tier(tier)
+    except PaymentValidationError:
+        normalized_tier = RECOMMENDED_TIER
+
+    return {
+        "message": error,
+        "next_steps": [
+            "Decode the PAYMENT-REQUIRED header for Base USDC payment terms.",
+            "Create an x402 payment proof for the selected tier.",
+            "Retry with POST /v1/x402/access, PAYMENT-SIGNATURE, and a JSON target_url body.",
+        ],
+        "payment": {
+            "protocol": "x402",
+            "network": "eip155:8453",
+            "asset": "USDC",
+            "asset_address": BASE_USDC_ADDRESS,
+            "amount_usdc": float(price_for_tier(normalized_tier)),
+            "tier": normalized_tier,
+            "pay_to": load_vault_address(),
+            "payment_header": "PAYMENT-SIGNATURE",
+        },
+        "request": {
+            "method": "POST",
+            "url": f"{PUBLIC_BASE_URL}/v1/x402/access",
+            "body": {
+                "target_url": "https://example.com/source",
+                "tier": normalized_tier,
+                "force_refresh": normalized_tier == "fresh",
+            },
+        },
+        "links": {
+            "docs": f"{PUBLIC_BASE_URL}/docs",
+            "paid_test": f"{PUBLIC_BASE_URL}/paid-test",
+            "demo": f"{PUBLIC_BASE_URL}/demo",
+            "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
+            "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
+        },
     }
 
 
@@ -1402,26 +1476,31 @@ def configure_standard_x402_middleware() -> None:
     if payment_identifier_resource_server_extension is not None:
         server.register_extension(payment_identifier_resource_server_extension)
 
-    routes = {
-        "POST /v1/x402/access": RouteConfig(
-            accepts=PaymentOption(
-                scheme="exact",
-                pay_to=load_vault_address(),
-                price=x402_dynamic_price,
-                network="eip155:8453",
-                max_timeout_seconds=300,
-                extra={
-                    "name": BASE_USDC_TOKEN_NAME,
-                    "version": BASE_USDC_TOKEN_VERSION,
-                    "decimals": USDC_DECIMALS,
-                },
-            ),
-            resource=f"{PUBLIC_BASE_URL}/v1/x402/access",
-            description="AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
-            mime_type="application/json",
-            extensions=build_x402_extensions("POST") or None,
-        )
-    }
+    route_config = RouteConfig(
+        accepts=PaymentOption(
+            scheme="exact",
+            pay_to=load_vault_address(),
+            price=x402_dynamic_price,
+            network="eip155:8453",
+            max_timeout_seconds=300,
+            extra={
+                "name": BASE_USDC_TOKEN_NAME,
+                "version": BASE_USDC_TOKEN_VERSION,
+                "decimals": USDC_DECIMALS,
+            },
+        ),
+        resource=f"{PUBLIC_BASE_URL}/v1/x402/access",
+        description="AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
+        mime_type="application/json",
+        extensions=build_x402_extensions("POST") or None,
+    )
+    routes = {"POST /v1/x402/access": route_config}
+    routes.update(
+        {
+            f"POST /from/{source}/v1/x402/access": route_config
+            for source in SOURCE_ALIAS_PATHS
+        }
+    )
 
     app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
@@ -2204,6 +2283,17 @@ def x402_dynamic_price(context: HTTPRequestContext):
 
 
 configure_standard_x402_middleware()
+
+
+@app.middleware("http")
+async def enrich_402_buyer_guidance(request: Request, call_next):
+    response = await call_next(request)
+    has_payment_terms = response.headers.get("PAYMENT-REQUIRED") or response.headers.get("X-Payment-Required")
+    if response.status_code == 402 and has_payment_terms:
+        for name, value in buyer_guidance_headers().items():
+            if name not in response.headers:
+                response.headers[name] = value
+    return response
 
 
 async def verify_x402_payment(tx_hash: str, expected_fee_usdc: Decimal = REQUIRED_USDC_FEE) -> PaymentVerification:
@@ -3613,7 +3703,9 @@ async def metrics_snapshot():
 
 @app.head("/v1/x402/access", tags=["x402"], summary="Probe x402 payment requirements")
 @app.get("/v1/x402/access", tags=["x402"], summary="Probe x402 payment requirements")
-async def access_context_broker_x402_probe(request: Request):
+@app.head("/from/{source}/v1/x402/access", include_in_schema=False)
+@app.get("/from/{source}/v1/x402/access", include_in_schema=False)
+async def access_context_broker_x402_probe(request: Request, source: Optional[str] = None):
     """
     Return a machine-readable x402 challenge for directory probes.
 
@@ -3633,7 +3725,11 @@ async def access_context_broker_x402_probe(request: Request):
 
     requested_tier = request.query_params.get("tier") or request.headers.get("X-AxonGate-Tier")
     detail = "Payment Required. Use POST with PAYMENT-SIGNATURE and a JSON target_url body."
-    raise HTTPException(status_code=402, detail=detail, headers=payment_required_headers(detail, requested_tier))
+    raise HTTPException(
+        status_code=402,
+        detail=payment_required_detail(detail, requested_tier),
+        headers=payment_required_headers(detail, requested_tier),
+    )
 
 
 @app.post(
@@ -3648,9 +3744,11 @@ async def access_context_broker_x402_probe(request: Request):
         503: {"description": "Temporary upstream or network outage; retry after 5 seconds"},
     },
 )
+@app.post("/from/{source}/v1/x402/access", include_in_schema=False)
 async def access_context_broker_x402(
     request: Request,
     access_request: AccessRequest,
+    source: Optional[str] = None,
     x_axongate_tier: Optional[str] = Header(None, alias="X-AxonGate-Tier"),
 ):
     """
@@ -3674,13 +3772,11 @@ async def access_context_broker_x402(
             raise rate_limit_429(exc) from exc
 
         detail = "Payment Required. Retry with PAYMENT-SIGNATURE for the selected x402 requirement."
+        requested_tier = x_axongate_tier or request.query_params.get("tier") or access_request.tier
         raise HTTPException(
             status_code=402,
-            detail=detail,
-            headers=payment_required_headers(
-                detail,
-                x_axongate_tier or request.query_params.get("tier") or access_request.tier,
-            ),
+            detail=payment_required_detail(detail, requested_tier),
+            headers=payment_required_headers(detail, requested_tier),
         )
 
     payment_reference = payment_reference_from_request(request)
@@ -3804,7 +3900,7 @@ async def retry_context_broker_delivery(
         detail = "Payment Required. Provide PAYMENT-SIGNATURE or a valid X-AxonGate-Retry-Credit."
         raise HTTPException(
             status_code=402,
-            detail=detail,
+            detail=payment_required_detail(detail, access_request.tier),
             headers=payment_required_headers(detail, access_request.tier),
         )
 
@@ -3945,7 +4041,7 @@ async def access_context_broker(
         detail = "Payment Required. Provide X-AxonGate-Payment-Hash with a Base USDC transaction hash."
         raise HTTPException(
             status_code=402,
-            detail=detail,
+            detail=payment_required_detail(detail, access_request.tier),
             headers=payment_required_headers(detail, access_request.tier),
         )
 
@@ -4138,6 +4234,14 @@ def custom_openapi() -> dict[str, Any]:
                 "X-AxonGate-Payment-Tier": {
                     "description": "Resolved pricing tier for the challenge.",
                     "schema": {"type": "string", "enum": list(TIER_PRICING_USDC.keys())},
+                },
+                "X-AxonGate-Paid-Test": {
+                    "description": "Human/operator guide for running a real paid smoke test.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Buyer-Example": {
+                    "description": "Repository example for creating and sending an x402 payment proof.",
+                    "schema": {"type": "string", "format": "uri"},
                 },
             }
         )

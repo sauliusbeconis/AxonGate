@@ -15,12 +15,13 @@ import httpx
 
 SUBMIT_URL = "https://x402-list.com/api/v1/submit"
 AXONGATE_BASE_URL = "https://web-production-8136ee.up.railway.app"
+X402_LIST_SOURCE_PATH = "/from/x402-list/v1/x402/access"
 
 
 def build_payload(email: str) -> dict:
     return {
+        "url": AXONGATE_BASE_URL,
         "service_name": "AxonGate",
-        "service_url": AXONGATE_BASE_URL,
         "website_url": f"{AXONGATE_BASE_URL}/manifest.json?source=x402-list",
         "email": email,
         "category": "Data",
@@ -29,11 +30,13 @@ def build_payload(email: str) -> dict:
             "It converts public web pages into clean Markdown for RAG, autonomous research, "
             "and LLM context preparation."
         ),
-        "endpoints": "/v1/x402/access?tier=fresh&source=x402-list",
+        "endpoints": [X402_LIST_SOURCE_PATH],
         "notes": (
             "Basename axongate.base.eth resolves to the AxonGate vault and advertises "
             "the manifest URL in its text records. The standard x402 endpoint supports "
-            "tiered pricing via ?tier= or X-AxonGate-Tier, official Bazaar discovery metadata, "
+            "tiered pricing via ?tier= or X-AxonGate-Tier. The submitted path is a source "
+            "alias for attribution and serves the same canonical x402 payment terms. "
+            "The endpoint supports official Bazaar discovery metadata, "
             "optional payment-identifier, source attribution, and cache-only pricing. "
             "Discovery metadata is available at /.well-known/x402, /.well-known/agent.json, "
             "and /discovery/resources."
@@ -55,13 +58,14 @@ def main() -> int:
     args = parse_args()
     payload = build_payload(args.email)
 
-    print(json.dumps(payload, indent=2))
+    printable_payload = {**payload, "email": "<redacted>"}
+    print(json.dumps(printable_payload, indent=2))
 
     if not args.submit:
         print("\nDry run only. Add --submit to send this to x402-list.com.")
         return 0
 
-    response = httpx.post(SUBMIT_URL, data=payload, timeout=30, follow_redirects=True)
+    response = httpx.post(SUBMIT_URL, json=payload, timeout=30, follow_redirects=True)
     print(f"\nHTTP {response.status_code}")
     print(response.text)
     return 0 if response.status_code in {200, 201, 202} else 1

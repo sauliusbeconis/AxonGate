@@ -19,7 +19,18 @@ curl -i "$AXONGATE_BASE_URL/v1/x402/access?source=$AXONGATE_SOURCE"
 The response should be `402 Payment Required` and include `PAYMENT-REQUIRED`
 and `X-Payment-Required` headers. Those headers contain the x402 payment
 requirements for Base USDC, plus official Bazaar discovery and optional
-payment-identifier extensions.
+payment-identifier extensions. The response also includes low-friction buyer
+headers such as `X-AxonGate-Docs`, `X-AxonGate-Paid-Test`,
+`X-AxonGate-Demo`, and `X-AxonGate-Buyer-Example`.
+
+Directories that cannot submit query-string source tags can use a path alias:
+
+```bash
+curl -i "$AXONGATE_BASE_URL/from/x402-list/v1/x402/access"
+```
+
+That alias serves the same canonical x402 payment terms while attributing the
+probe to `x402-list`.
 
 ## Standard x402 Paid Request
 

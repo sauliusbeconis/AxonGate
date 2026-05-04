@@ -2,7 +2,7 @@
   "base_url": "https://web-production-8136ee.up.railway.app",
   "sources": {
     "x402-list": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=x402-list",
+      "endpoint": "https://web-production-8136ee.up.railway.app/from/x402-list/v1/x402/access",
       "docs": "https://web-production-8136ee.up.railway.app/docs?source=x402-list",
       "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=x402-list"
     },
@@ -48,13 +48,14 @@
     "status": "listed_online",
     "slug": "axongate",
     "update_payload": {
+      "url": "https://web-production-8136ee.up.railway.app",
       "service_name": "AxonGate",
-      "service_url": "https://web-production-8136ee.up.railway.app",
       "website_url": "https://web-production-8136ee.up.railway.app/manifest.json?source=x402-list",
+      "email": "<operator email>",
       "category": "Data",
       "description": "AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.",
-      "endpoints": "/v1/x402/access?tier=fresh&source=x402-list",
-      "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Standard x402 endpoint supports tiered pricing, Bazaar discovery metadata, payment-identifier, source attribution, and cache-only pricing."
+      "endpoints": ["/from/x402-list/v1/x402/access"],
+      "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoint is a source-attribution alias that serves the same canonical x402 terms as /v1/x402/access. Standard x402 endpoint supports tiered pricing, Bazaar discovery metadata, payment-identifier, source attribution, and cache-only pricing."
     }
   },
   "payanagent": {

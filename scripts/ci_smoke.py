@@ -51,10 +51,17 @@ async def main() -> None:
         probe = await client.get("/v1/x402/access")
         assert probe.status_code == 402, f"x402 probe returned {probe.status_code}"
         assert probe.headers.get("PAYMENT-REQUIRED"), "x402 probe missing PAYMENT-REQUIRED"
+        assert probe.headers.get("X-AxonGate-Paid-Test"), "x402 probe missing paid-test buyer path"
         probe_payload = json.loads(base64.b64decode(probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
         assert "extensions" in probe_payload, "GET x402 challenge missing official extensions"
         assert "bazaar" in probe_payload["extensions"], "GET x402 challenge missing Bazaar discovery"
         assert "payment-identifier" in probe_payload["extensions"], "GET x402 challenge missing payment identifier"
+        probe_body = probe.json()
+        assert "next_steps" in probe_body.get("detail", {}), "x402 probe body missing buyer next steps"
+
+        source_alias_probe = await client.get("/from/x402-list/v1/x402/access")
+        assert source_alias_probe.status_code == 402, f"source alias probe returned {source_alias_probe.status_code}"
+        assert source_alias_probe.headers.get("PAYMENT-REQUIRED"), "source alias probe missing payment terms"
 
         unpaid_post = await client.post(
             "/v1/x402/access?tier=fresh",
@@ -67,6 +74,7 @@ async def main() -> None:
         assert "extensions" in post_payload, "POST x402 challenge missing official extensions"
         assert "bazaar" in post_payload["extensions"], "POST x402 challenge missing Bazaar discovery"
         assert "payment-identifier" in post_payload["extensions"], "POST x402 challenge missing payment identifier"
+        assert unpaid_post.headers.get("X-AxonGate-Buyer-Example"), "unpaid POST missing buyer example header"
 
         x402_discovery = (await client.get("/.well-known/x402")).json()
         assert "extensions" in x402_discovery, "public x402 discovery missing protocol extensions"
