@@ -45,8 +45,10 @@
     }
   },
   "x402_list": {
-    "status": "listed_online",
+    "status": "listed_online_update_rate_limited",
     "slug": "axongate",
+    "last_update_attempt": "2026-05-04",
+    "last_update_result": "HTTP 429: repeat submissions are blocked during the 7-day review window",
     "update_payload": {
       "url": "https://web-production-8136ee.up.railway.app",
       "service_name": "AxonGate",

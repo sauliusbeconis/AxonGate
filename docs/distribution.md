@@ -27,7 +27,7 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 
 | Target | Status | Action |
 | --- | --- | --- |
-| x402 List | Listed, online | AxonGate is present as slug `axongate`. Existing listing currently uses the canonical URL. Re-submit/update with source-tagged endpoint when a reviewer contact email is available. |
+| x402 List | Listed, online | AxonGate is present as slug `axongate`. Existing listing currently uses the canonical URL. Source-alias update was attempted on 2026-05-04, but x402-list rate-limited repeat submissions during the 7-day review window. Re-submit `/from/x402-list/v1/x402/access` after the window opens. |
 | PayanAgent | Submitted | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`, service ID `js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`. API key is stored only in local ignored `.env`. |
 | Agora402 | Ready, gated | Requires a one-time listing fee: starter 1 USDC, pro 5 USDC, featured 25 USDC. Use the prepared payload below after paying the chosen listing tier. |
 | Agent Bazaar | Ready, manual | Submission form requires sign-in/review. Use the prepared fields below. |
