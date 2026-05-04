@@ -37,6 +37,7 @@ async def main() -> None:
             "/llms.txt",
             "/docs",
             "/operator",
+            "/quickstart",
             "/paid-test",
             "/demo",
             "/robots.txt",
@@ -51,6 +52,7 @@ async def main() -> None:
         probe = await client.get("/v1/x402/access")
         assert probe.status_code == 402, f"x402 probe returned {probe.status_code}"
         assert probe.headers.get("PAYMENT-REQUIRED"), "x402 probe missing PAYMENT-REQUIRED"
+        assert probe.headers.get("X-AxonGate-Quickstart"), "x402 probe missing quickstart path"
         assert probe.headers.get("X-AxonGate-Paid-Test"), "x402 probe missing paid-test buyer path"
         probe_payload = json.loads(base64.b64decode(probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
         assert "extensions" in probe_payload, "GET x402 challenge missing official extensions"

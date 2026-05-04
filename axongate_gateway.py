@@ -264,6 +264,7 @@ metrics: dict[str, int] = {
     "discovery_llms_hits_total": 0,
     "discovery_docs_hits_total": 0,
     "discovery_operator_hits_total": 0,
+    "discovery_quickstart_hits_total": 0,
     "discovery_paid_test_hits_total": 0,
     "discovery_demo_hits_total": 0,
     "discovery_robots_hits_total": 0,
@@ -1134,6 +1135,7 @@ def build_x402_resource() -> dict[str, Any]:
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
             "docs": f"{PUBLIC_BASE_URL}/docs",
             "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
+            "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
@@ -1209,6 +1211,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
+        "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
@@ -1254,11 +1257,13 @@ def buyer_guidance_headers() -> dict[str, str]:
     return {
         "X-AxonGate-Next-Step": "Create an x402 payment proof, then POST JSON with PAYMENT-SIGNATURE.",
         "X-AxonGate-Docs": f"{PUBLIC_BASE_URL}/docs",
+        "X-AxonGate-Quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "X-AxonGate-Paid-Test": f"{PUBLIC_BASE_URL}/paid-test",
         "X-AxonGate-Demo": f"{PUBLIC_BASE_URL}/demo",
         "X-AxonGate-Buyer-Example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
         "Link": (
             f'<{PUBLIC_BASE_URL}/docs>; rel="help", '
+            f'<{PUBLIC_BASE_URL}/quickstart>; rel="quickstart", '
             f'<{PUBLIC_BASE_URL}/paid-test>; rel="payment-test", '
             f'<{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs>; rel="example"'
         ),
@@ -1299,6 +1304,7 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
         },
         "links": {
             "docs": f"{PUBLIC_BASE_URL}/docs",
+            "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paid_test": f"{PUBLIC_BASE_URL}/paid-test",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
@@ -2599,6 +2605,7 @@ Summary: x402-paid Clean Context Broker that converts public web pages into clea
 Canonical base URL: {PUBLIC_BASE_URL}
 Human docs: {public_url("/docs")}
 Operator dashboard: {public_url("/operator")}
+Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
@@ -2613,6 +2620,8 @@ Sitemap: {public_url("/sitemap.xml")}
 Python client example: {GITHUB_REPO_URL}/blob/main/examples/python_client.py
 cURL examples: {GITHUB_REPO_URL}/blob/main/examples/curl.md
 Paid buyer example: {GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs
+MCP server example: {GITHUB_REPO_URL}/blob/main/examples/axongate_mcp.mjs
+MCP guide: {GITHUB_REPO_URL}/blob/main/examples/mcp.md
 
 ## Payment
 
@@ -2764,6 +2773,7 @@ def build_docs_html() -> str:
       <a href="{public}/discovery/resources">Resource listing</a>
       <a href="{public}/llms.txt">llms.txt</a>
       <a href="{public}/operator">Operator dashboard</a>
+      <a href="{public}/quickstart">Quickstart</a>
       <a href="{public}/paid-test">Paid test guide</a>
       <a href="{public}/demo">Demo</a>
       <a href="{public}/openapi.json">OpenAPI JSON</a>
@@ -2771,6 +2781,8 @@ def build_docs_html() -> str:
       <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/python_client.py">Python client</a>
       <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/curl.md">cURL examples</a>
       <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/paid_buyer.mjs">Paid buyer</a>
+      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/axongate_mcp.mjs">MCP server</a>
+      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/mcp.md">MCP guide</a>
     </section>
 
     <h2>Service Contract</h2>
@@ -2937,6 +2949,7 @@ def build_operator_dashboard_html(
             f"<tr><td>x402 Discovery</td><td>{count(metric('discovery_x402_hits_total'))}</td></tr>",
             f"<tr><td>Docs</td><td>{count(metric('discovery_docs_hits_total'))}</td></tr>",
             f"<tr><td>Operator</td><td>{count(metric('discovery_operator_hits_total'))}</td></tr>",
+            f"<tr><td>Quickstart</td><td>{count(metric('discovery_quickstart_hits_total'))}</td></tr>",
             f"<tr><td>Paid Test Guide</td><td>{count(metric('discovery_paid_test_hits_total'))}</td></tr>",
             f"<tr><td>Demo</td><td>{count(metric('discovery_demo_hits_total'))}</td></tr>",
             f"<tr><td>Agent Cards</td><td>{count(metric('discovery_agent_card_hits_total'))}</td></tr>",
@@ -3097,6 +3110,187 @@ def build_operator_dashboard_html(
 </html>"""
 
 
+def build_quickstart_html() -> str:
+    """Render the shortest path from discovery to a first paid AxonGate result."""
+    public = html.escape(PUBLIC_BASE_URL)
+    github = html.escape(GITHUB_REPO_URL)
+    cached_price = html.escape(str(TIER_PRICING_USDC[CACHE_ONLY_TIER]))
+    fresh_price = html.escape(str(TIER_PRICING_USDC["fresh"]))
+    mcp_config = html.escape(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "axongate": {
+                        "command": "node",
+                        "args": ["C:/path/to/AxonGate-Vault/examples/axongate_mcp.mjs"],
+                        "env": {
+                            "AXONGATE_BASE_URL": PUBLIC_BASE_URL,
+                            "AXONGATE_WALLET_FILE": "C:/path/to/burner_wallet.json",
+                            "AXONGATE_CONFIRM_SPEND": str(TIER_PRICING_USDC["fresh"]),
+                        },
+                    }
+                }
+            },
+            indent=2,
+        )
+    )
+    mcp_probe = html.escape(
+        """Tool: probe_payment_terms
+Input:
+{
+  "tier": "fresh",
+  "source": "quickstart-mcp"
+}"""
+    )
+    mcp_paid = html.escape(
+        f"""Tool: fetch_clean_context
+Input:
+{{
+  "target_url": "https://www.iana.org/domains/reserved",
+  "tier": "fresh",
+  "force_refresh": true,
+  "confirm_spend_usdc": "{TIER_PRICING_USDC["fresh"]}",
+  "source": "quickstart-mcp",
+  "max_markdown_chars": 12000
+}}"""
+    )
+    terminal_commands = html.escape(
+        f"""npm install
+npm run paid:buyer -- \\
+  --wallet-file "C:/path/to/burner_wallet.json" \\
+  --target-url "https://www.iana.org/domains/reserved" \\
+  --tier fresh \\
+  --force-refresh \\
+  --confirm-spend {TIER_PRICING_USDC["fresh"]} \\
+  --source quickstart"""
+    )
+    expected_output = html.escape(
+        """PAID
+{
+  "http_status": 200,
+  "status": "success",
+  "target_url": "https://www.iana.org/domains/reserved",
+  "tier": "fresh",
+  "markdown_chars": 1000,
+  "payment": {
+    "mode": "x402-facilitator",
+    "amount_usdc": 0.03,
+    "source": "quickstart"
+  }
+}"""
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Quickstart</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --warn: #f4be62;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+    }}
+    main {{ max-width: 1040px; margin: 0 auto; padding: 36px 18px 68px; }}
+    h1 {{ margin: 0 0 10px; font-size: 2.2rem; line-height: 1.1; }}
+    h2 {{ margin: 32px 0 10px; font-size: 1.18rem; }}
+    h3 {{ margin: 18px 0 8px; font-size: 1rem; }}
+    p, li {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .links a {{ display: inline-block; margin: 0 12px 10px 0; }}
+    .steps {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 18px 0; }}
+    .step, .callout {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--panel);
+    }}
+    .step strong {{ display: block; color: var(--text); margin-bottom: 4px; }}
+    .callout {{ border-left: 4px solid var(--warn); }}
+    pre {{
+      overflow-x: auto;
+      white-space: pre;
+      background: var(--code);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 15px;
+      color: var(--text);
+    }}
+    code {{ background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--text); }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
+    th {{ color: var(--text); }}
+    td {{ color: var(--muted); }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AxonGate Quickstart</h1>
+    <p>Turn a public URL into clean RAG-ready markdown with one paid x402 call. Use the terminal buyer for a direct smoke test, or attach the MCP server so an agent can call AxonGate as a tool.</p>
+    <nav class="links" aria-label="Quickstart links">
+      <a href="{public}/demo">Demo</a>
+      <a href="{public}/paid-test">Paid Test</a>
+      <a href="{public}/docs">Docs</a>
+      <a href="{public}/operator">Operator</a>
+      <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
+      <a href="{github}/blob/main/examples/axongate_mcp.mjs">MCP Server</a>
+    </nav>
+
+    <div class="steps">
+      <div class="step"><strong>1. Fund burner wallet</strong>Use Base USDC. Fresh costs <code>{fresh_price} USDC</code>; cached costs <code>{cached_price} USDC</code>.</div>
+      <div class="step"><strong>2. Run the buyer</strong>The script probes payment terms, signs x402, pays, and returns markdown.</div>
+      <div class="step"><strong>3. Watch attribution</strong>Use <code>source=quickstart</code> so `/metrics` shows the conversion path.</div>
+      <div class="step"><strong>4. Add MCP</strong>Let an agent call <code>fetch_clean_context</code> with explicit spend confirmation.</div>
+    </div>
+
+    <p class="callout"><strong>This can spend real USDC.</strong> Every paid path requires an explicit <code>confirm-spend</code> or <code>confirm_spend_usdc</code> value that must match the selected tier.</p>
+
+    <h2>Fast Terminal Path</h2>
+    <pre>{terminal_commands}</pre>
+
+    <h2>Expected Shape</h2>
+    <pre>{expected_output}</pre>
+
+    <h2>MCP Agent Path</h2>
+    <p>Add the server to an MCP-capable client, then call the probe tool first. The paid tool refuses to run unless the confirmed spend matches the selected tier price.</p>
+    <h3>Client Config</h3>
+    <pre>{mcp_config}</pre>
+    <h3>Probe Tool</h3>
+    <pre>{mcp_probe}</pre>
+    <h3>Paid Tool</h3>
+    <pre>{mcp_paid}</pre>
+
+    <h2>Pricing</h2>
+    <table>
+      <thead><tr><th>Tier</th><th>Price</th><th>Best For</th></tr></thead>
+      <tbody>
+        <tr><td><code>cached</code></td><td>{cached_price} USDC</td><td>Repeat reads when AxonGate already has a cached copy</td></tr>
+        <tr><td><code>basic</code></td><td>{html.escape(str(TIER_PRICING_USDC["basic"]))} USDC</td><td>Cache-friendly production calls</td></tr>
+        <tr><td><code>fresh</code></td><td>{fresh_price} USDC</td><td>Current public web context and first real tests</td></tr>
+        <tr><td><code>deep</code></td><td>{html.escape(str(TIER_PRICING_USDC["deep"]))} USDC</td><td>Higher-value calls with a short cache window</td></tr>
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>"""
+
+
 def build_paid_test_html() -> str:
     """Render a focused guide for running a real paid smoke test."""
     public = html.escape(PUBLIC_BASE_URL)
@@ -3205,6 +3399,7 @@ REPLAY
     <nav class="links" aria-label="Paid test links">
       <a href="{public}/operator">Operator Dashboard</a>
       <a href="{public}/metrics">Metrics JSON</a>
+      <a href="{public}/quickstart">Quickstart</a>
       <a href="{public}/docs">Docs</a>
       <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
     </nav>
@@ -3333,6 +3528,7 @@ def build_demo_html() -> str:
       <div class="pill"><strong>Network</strong>Base mainnet, eip155:8453</div>
       <div class="pill"><strong>Asset</strong>USDC on Base</div>
       <div class="pill"><strong>Docs</strong><a href="{public}/docs">Open docs</a></div>
+      <div class="pill"><strong>Quickstart</strong><a href="{public}/quickstart">First paid call</a></div>
       <div class="pill"><strong>Paid test</strong><a href="{public}/paid-test">Run smoke</a></div>
       <div class="pill"><strong>Operator</strong><a href="{public}/operator">Open dashboard</a></div>
     </div>
@@ -3448,6 +3644,7 @@ def build_sitemap_xml() -> str:
         ("/", "1.0"),
         ("/docs", "0.9"),
         ("/operator", "0.9"),
+        ("/quickstart", "0.95"),
         ("/paid-test", "0.9"),
         ("/demo", "0.9"),
         ("/llms.txt", "0.8"),
@@ -3501,6 +3698,13 @@ async def operator_dashboard(request: Request):
     return build_operator_dashboard_html(metric_values, attribution, rolling_attribution, triggered_alerts)
 
 
+@app.get("/quickstart", response_class=HTMLResponse, tags=["discovery"], summary="First paid AxonGate conversion quickstart")
+async def quickstart(request: Request):
+    """Serve the shortest path from discovery to a first paid result."""
+    inc_discovery_hit("discovery_quickstart_hits_total", attribution_source_from_request(request))
+    return build_quickstart_html()
+
+
 @app.get("/paid-test", response_class=HTMLResponse, tags=["discovery"], summary="Real paid x402 smoke test guide")
 async def paid_test_guide(request: Request):
     """Serve a concise paid-test guide for burner-wallet smoke checks."""
@@ -3547,6 +3751,7 @@ async def root(request: Request):
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
+        "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
@@ -3556,6 +3761,7 @@ async def root(request: Request):
         "swagger": f"{PUBLIC_BASE_URL}/swagger",
         "python_client_example": f"{GITHUB_REPO_URL}/blob/main/examples/python_client.py",
         "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
+        "mcp_server_example": f"{GITHUB_REPO_URL}/blob/main/examples/axongate_mcp.mjs",
         "standard_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "legacy_tx_hash_endpoint": f"{PUBLIC_BASE_URL}/v1/access",
         "retry_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
@@ -4237,6 +4443,10 @@ def custom_openapi() -> dict[str, Any]:
                 },
                 "X-AxonGate-Paid-Test": {
                     "description": "Human/operator guide for running a real paid smoke test.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Quickstart": {
+                    "description": "Shortest path for a first paid AxonGate result and MCP setup.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Buyer-Example": {

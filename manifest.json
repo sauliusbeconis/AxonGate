@@ -31,7 +31,9 @@
       "client_examples",
       "conversion_telemetry",
       "operator_dashboard",
+      "buyer_quickstart",
       "paid_smoke_test_guide",
+      "mcp_server_example",
       "interactive_demo",
       "crawler_sitemap",
       "redis_persistent_metrics",
@@ -113,6 +115,7 @@
     "health": "https://web-production-8136ee.up.railway.app/health",
     "docs": "https://web-production-8136ee.up.railway.app/docs",
     "operator": "https://web-production-8136ee.up.railway.app/operator",
+    "quickstart": "https://web-production-8136ee.up.railway.app/quickstart",
     "paid_test": "https://web-production-8136ee.up.railway.app/paid-test",
     "demo": "https://web-production-8136ee.up.railway.app/demo",
     "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
@@ -131,7 +134,9 @@
   "examples": {
     "python_client": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/python_client.py",
     "curl": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/curl.md",
-    "paid_buyer": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/paid_buyer.mjs"
+    "paid_buyer": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/paid_buyer.mjs",
+    "mcp_server": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/axongate_mcp.mjs",
+    "mcp_guide": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/mcp.md"
   },
   "openapi_contract": {
     "method": "POST",
@@ -194,6 +199,7 @@
       ],
       "docs": "https://web-production-8136ee.up.railway.app/docs",
       "operator": "https://web-production-8136ee.up.railway.app/operator",
+      "quickstart": "https://web-production-8136ee.up.railway.app/quickstart",
       "paid_test": "https://web-production-8136ee.up.railway.app/paid-test",
       "demo": "https://web-production-8136ee.up.railway.app/demo",
       "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",

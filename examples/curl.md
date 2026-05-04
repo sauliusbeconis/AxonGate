@@ -20,7 +20,7 @@ The response should be `402 Payment Required` and include `PAYMENT-REQUIRED`
 and `X-Payment-Required` headers. Those headers contain the x402 payment
 requirements for Base USDC, plus official Bazaar discovery and optional
 payment-identifier extensions. The response also includes low-friction buyer
-headers such as `X-AxonGate-Docs`, `X-AxonGate-Paid-Test`,
+headers such as `X-AxonGate-Docs`, `X-AxonGate-Quickstart`, `X-AxonGate-Paid-Test`,
 `X-AxonGate-Demo`, and `X-AxonGate-Buyer-Example`.
 
 Directories that cannot submit query-string source tags can use a path alias:
@@ -133,6 +133,7 @@ curl -sS -X POST "$AXONGATE_BASE_URL/v1/access" \
 
 ```bash
 curl -sS "$AXONGATE_BASE_URL/manifest.json"
+curl -sS "$AXONGATE_BASE_URL/quickstart"
 curl -sS "$AXONGATE_BASE_URL/llms.txt"
 curl -sS "$AXONGATE_BASE_URL/.well-known/x402"
 curl -sS "$AXONGATE_BASE_URL/discovery/resources"

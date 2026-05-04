@@ -4,12 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "mcp:server": "node examples/axongate_mcp.mjs",
     "paid:buyer": "node examples/paid_buyer.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@x402/evm": "^2.11.0",
     "@x402/fetch": "^2.11.0",
     "dotenv": "^17.4.2",
-    "viem": "^2.48.4"
+    "viem": "^2.48.4",
+    "zod": "^4.4.3"
   }
 }
