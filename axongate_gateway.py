@@ -22,6 +22,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from jsonschema import ValidationError as JsonSchemaValidationError
+from jsonschema import validate as validate_json_schema
 from pydantic import BaseModel, Field
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
@@ -166,10 +168,14 @@ ATTRIBUTION_FUNNEL_STAGES = (
     "delivery_success",
     "payment_replay_rejections",
     "retry_credit_attempts",
+    "proof_pack_quotes",
+    "proof_pack_requests",
+    "proof_pack_delivery_success",
 )
 SOURCE_ALIAS_PATHS = (
     "x402-list",
     "payanagent",
+    "payanagent-starter",
     "agora402",
     "agent-bazaar",
     "the402",
@@ -187,6 +193,26 @@ TIER_PRICING_USDC = {
     "fresh": Decimal(os.getenv("AXONGATE_FRESH_PRICE_USDC", "0.03")),
     "deep": Decimal(os.getenv("AXONGATE_DEEP_PRICE_USDC", "0.05")),
 }
+DEFAULT_PROOF_PACK = "standard"
+PROOF_PACK_PRICING_USDC = {
+    "quick": Decimal(os.getenv("AXONGATE_PROOF_QUICK_PRICE_USDC", "0.10")),
+    DEFAULT_PROOF_PACK: Decimal(os.getenv("AXONGATE_PROOF_STANDARD_PRICE_USDC", "0.25")),
+    "deep": Decimal(os.getenv("AXONGATE_PROOF_DEEP_PRICE_USDC", "1.00")),
+}
+PROOF_PACK_INTERNAL_TIERS = {
+    "quick": "basic",
+    DEFAULT_PROOF_PACK: "basic",
+    "deep": "deep",
+}
+PROOF_PRO_PAYMENT_URL = os.getenv("AXONGATE_PROOF_PRO_PAYMENT_URL", "").strip()
+PROOF_TEAM_PAYMENT_URL = os.getenv("AXONGATE_PROOF_TEAM_PAYMENT_URL", "").strip()
+LLM_ENABLED = os.getenv("AXONGATE_LLM_ENABLED", "false").lower() in {"1", "true", "yes"}
+LLM_API_KEY = os.getenv("AXONGATE_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+LLM_BASE_URL = os.getenv("AXONGATE_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+LLM_MODEL = os.getenv("AXONGATE_LLM_MODEL", "gpt-5-mini")
+LLM_FAST_MODEL = os.getenv("AXONGATE_LLM_FAST_MODEL", "gpt-5-nano")
+LLM_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_LLM_TIMEOUT_SECONDS", "20"))
+LLM_MAX_INPUT_CHARS = int(os.getenv("AXONGATE_LLM_MAX_INPUT_CHARS", "24000"))
 CACHE_ONLY_TIERS = {STARTER_TIER, CACHE_ONLY_TIER}
 CACHED_TIER_CACHE_SOURCES = (STARTER_TIER, CACHE_ONLY_TIER, "basic", "deep")
 RECOMMENDED_TIER = os.getenv("AXONGATE_RECOMMENDED_TIER", "fresh").strip().lower()
@@ -270,6 +296,7 @@ metrics: dict[str, int] = {
     "discovery_quickstart_hits_total": 0,
     "discovery_paid_test_hits_total": 0,
     "discovery_quote_hits_total": 0,
+    "discovery_proof_pack_hits_total": 0,
     "discovery_demo_hits_total": 0,
     "discovery_robots_hits_total": 0,
     "discovery_sitemap_hits_total": 0,
@@ -298,6 +325,11 @@ metrics: dict[str, int] = {
     "alert_checks_total": 0,
     "alerts_sent_total": 0,
     "alert_errors_total": 0,
+    "proof_pack_quotes_total": 0,
+    "proof_pack_requests_total": 0,
+    "proof_pack_llm_success_total": 0,
+    "proof_pack_llm_fallback_total": 0,
+    "proof_pack_delivery_success_total": 0,
     "errors_total": 0,
 }
 CDP_TRANSACTION_METHOD_NAMES = ("get_transaction", "get_evm_transaction", "get_transaction_receipt")
@@ -332,6 +364,35 @@ class AccessRequest(BaseModel):
                     "target_url": "https://example.com/reference",
                     "tier": "basic",
                     "force_refresh": False,
+                },
+            ]
+        }
+    }
+
+
+class ProofPackRequest(BaseModel):
+    target_url: str = Field(..., description="HTTP or HTTPS source URL to turn into a citation-backed report")
+    question: str = Field(
+        "What does this source establish?",
+        description="Buyer question or evidence objective for this proof pack",
+    )
+    pack: str = Field(DEFAULT_PROOF_PACK, description="Proof Pack level: quick, standard, or deep")
+    force_refresh: bool = Field(False, description="Bypass source cache when true; deep packs refresh by default")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "target_url": "https://example.com/source",
+                    "question": "What does this source establish?",
+                    "pack": DEFAULT_PROOF_PACK,
+                    "force_refresh": False,
+                },
+                {
+                    "target_url": "https://example.com/research",
+                    "question": "Which claims can our agent cite from this page?",
+                    "pack": "deep",
+                    "force_refresh": True,
                 },
             ]
         }
@@ -785,6 +846,11 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "delivery_success": delivered,
         "retry_credit_issued": values.get("delivery_credits_issued_total", 0),
         "retry_delivery_success": values.get("retry_delivery_success_total", 0),
+        "proof_pack_quotes": values.get("proof_pack_quotes_total", 0),
+        "proof_pack_requests": values.get("proof_pack_requests_total", 0),
+        "proof_pack_llm_success": values.get("proof_pack_llm_success_total", 0),
+        "proof_pack_llm_fallback": values.get("proof_pack_llm_fallback_total", 0),
+        "proof_pack_delivery_success": values.get("proof_pack_delivery_success_total", 0),
         "ueg_checks": values.get("ueg_checks_total", 0),
         "ueg_rejections": values.get("ueg_rejections_total", 0),
         "payment_replay_rejections": values.get("payment_replay_rejections_total", 0),
@@ -945,10 +1011,21 @@ def tier_names() -> str:
     return ", ".join(TIER_PRICING_USDC.keys())
 
 
+def proof_pack_names() -> str:
+    return ", ".join(PROOF_PACK_PRICING_USDC.keys())
+
+
 def normalize_tier(tier: Optional[str]) -> str:
     normalized = (tier or RECOMMENDED_TIER).strip().lower()
     if normalized not in TIER_PRICING_USDC:
         raise PaymentValidationError(f"Unsupported tier. Use {tier_names()}.")
+    return normalized
+
+
+def normalize_proof_pack(pack: Optional[str]) -> str:
+    normalized = (pack or DEFAULT_PROOF_PACK).strip().lower()
+    if normalized not in PROOF_PACK_PRICING_USDC:
+        raise PaymentValidationError(f"Unsupported Proof Pack. Use {proof_pack_names()}.")
     return normalized
 
 
@@ -962,6 +1039,23 @@ def usdc_units(amount: Decimal) -> int:
 
 def price_for_tier(tier: Optional[str]) -> Decimal:
     return TIER_PRICING_USDC[normalize_tier(tier)]
+
+
+def price_for_proof_pack(pack: Optional[str]) -> Decimal:
+    return PROOF_PACK_PRICING_USDC[normalize_proof_pack(pack)]
+
+
+def proof_pack_internal_tier(pack: Optional[str]) -> str:
+    return PROOF_PACK_INTERNAL_TIERS[normalize_proof_pack(pack)]
+
+
+def proof_pack_cache_policy(pack: str) -> str:
+    normalized_pack = normalize_proof_pack(pack)
+    if normalized_pack == "quick":
+        return "cache-friendly source read with deterministic fallback"
+    if normalized_pack == "deep":
+        return "deep evidence pack with short-cache source material and fresh-by-default refresh"
+    return "cache-aware source read with LLM-assisted evidence synthesis when configured"
 
 
 def cache_ttl_for_tier(tier: str, force_refresh: bool = False) -> int:
@@ -1097,6 +1191,122 @@ def build_access_response_example(tier: str = RECOMMENDED_TIER) -> dict[str, Any
     }
 
 
+def build_proof_pack_input_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "target_url": {
+                "type": "string",
+                "format": "uri",
+                "description": "Absolute public HTTP/HTTPS URL to evaluate.",
+            },
+            "question": {
+                "type": "string",
+                "default": "What does this source establish?",
+                "description": "Evidence objective or buyer question.",
+            },
+            "pack": {
+                "type": "string",
+                "enum": list(PROOF_PACK_PRICING_USDC.keys()),
+                "default": DEFAULT_PROOF_PACK,
+                "description": (
+                    "Proof Pack level. Standard x402 clients should also pass this as ?pack= "
+                    "or X-AxonGate-Pack so the payment challenge amount matches the request."
+                ),
+            },
+            "force_refresh": {
+                "type": "boolean",
+                "default": False,
+                "description": "Bypass source cache. Deep packs refresh by default.",
+            },
+        },
+        "required": ["target_url"],
+        "additionalProperties": False,
+    }
+
+
+def build_proof_pack_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string"},
+            "target_url": {"type": "string"},
+            "question": {"type": "string"},
+            "pack": {"type": "string"},
+            "answer": {"type": "string"},
+            "executive_summary": {"type": "string"},
+            "confidence_score": {"type": "number"},
+            "key_claims": {"type": "array"},
+            "citations": {"type": "array"},
+            "risks": {"type": "array"},
+            "source_profile": {"type": "object"},
+            "cache": {"type": "object"},
+            "payment": {"type": "object"},
+            "ueg_receipt": {"type": "object"},
+        },
+        "required": [
+            "status",
+            "target_url",
+            "question",
+            "pack",
+            "answer",
+            "executive_summary",
+            "confidence_score",
+            "key_claims",
+            "citations",
+            "risks",
+            "source_profile",
+            "cache",
+            "payment",
+            "ueg_receipt",
+        ],
+    }
+
+
+def build_proof_pack_request_example(pack: str = DEFAULT_PROOF_PACK) -> dict[str, Any]:
+    normalized_pack = normalize_proof_pack(pack)
+    return {
+        "target_url": "https://example.com/source",
+        "question": "What does this source establish?",
+        "pack": normalized_pack,
+        "force_refresh": normalized_pack == "deep",
+    }
+
+
+def build_proof_pack_response_example(pack: str = DEFAULT_PROOF_PACK) -> dict[str, Any]:
+    normalized_pack = normalize_proof_pack(pack)
+    return {
+        "status": "success",
+        "target_url": "https://example.com/source",
+        "question": "What does this source establish?",
+        "pack": normalized_pack,
+        "answer": "The source establishes the cited facts below, with each key claim tied to extracted evidence.",
+        "executive_summary": "A concise evidence summary derived from the cited source material.",
+        "confidence_score": 0.72,
+        "key_claims": [
+            {"claim": "Example claim supported by the cited excerpt.", "citation_ids": ["c1"], "confidence": 0.72}
+        ],
+        "citations": [{"id": "c1", "url": "https://example.com/source", "excerpt": "Example evidence excerpt."}],
+        "risks": ["Only one public source was evaluated."],
+        "source_profile": {
+            "final_url": "https://example.com/source",
+            "content_sha256": stable_hash("# Example source"),
+        },
+        "cache": {"hit": False},
+        "payment": {
+            "mode": "x402-facilitator",
+            "network": "eip155:8453",
+            "vault_address": load_vault_address(),
+            "token_address": BASE_USDC_ADDRESS,
+            "amount_usdc": float(price_for_proof_pack(normalized_pack)),
+        },
+        "ueg_receipt": {
+            "revenue_usdc": float(price_for_proof_pack(normalized_pack)),
+            "projected_profit_usdc": 0.2,
+        },
+    }
+
+
 def enrich_bazaar_method(extension_payload: dict[str, Any], method: str = "POST") -> dict[str, Any]:
     bazaar = extension_payload.get("bazaar")
     if isinstance(bazaar, dict):
@@ -1120,6 +1330,35 @@ def build_x402_extensions(method: str = "POST", tier: str = RECOMMENDED_TIER) ->
                     output=OutputConfig(
                         example=build_access_response_example(normalized_tier),
                         schema=build_access_output_schema(),
+                    ),
+                ),
+                method,
+            )
+        )
+
+    if (
+        PAYMENT_IDENTIFIER is not None
+        and declare_payment_identifier_extension is not None
+    ):
+        extensions[PAYMENT_IDENTIFIER] = declare_payment_identifier_extension(required=False)
+
+    return extensions
+
+
+def build_proof_pack_x402_extensions(method: str = "POST", pack: str = DEFAULT_PROOF_PACK) -> dict[str, Any]:
+    extensions: dict[str, Any] = {}
+    normalized_pack = normalize_proof_pack(pack)
+
+    if declare_discovery_extension is not None and OutputConfig is not None:
+        extensions.update(
+            enrich_bazaar_method(
+                declare_discovery_extension(
+                    input=build_proof_pack_request_example(normalized_pack),
+                    input_schema=build_proof_pack_input_schema(),
+                    body_type="json",
+                    output=OutputConfig(
+                        example=build_proof_pack_response_example(normalized_pack),
+                        schema=build_proof_pack_output_schema(),
                     ),
                 ),
                 method,
@@ -1161,6 +1400,32 @@ def build_x402_accepts(tier: str = RECOMMENDED_TIER) -> list[dict[str, Any]]:
     ]
 
 
+def build_proof_pack_x402_accepts(pack: str = DEFAULT_PROOF_PACK) -> list[dict[str, Any]]:
+    """Return x402 payment requirements for Proof Packs."""
+    normalized_pack = normalize_proof_pack(pack)
+    price = price_for_proof_pack(normalized_pack)
+    return [
+        {
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "amount": str(usdc_units(price)),
+            "asset": BASE_USDC_ADDRESS,
+            "payTo": load_vault_address(),
+            "maxTimeoutSeconds": 300,
+            "extra": {
+                "name": BASE_USDC_TOKEN_NAME,
+                "version": BASE_USDC_TOKEN_VERSION,
+                "decimals": USDC_DECIMALS,
+                "price": f"${price}",
+                "pack": normalized_pack,
+                "mimeType": "application/json",
+                "resource": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+                "description": "Citation-backed Proof Pack for agent builders.",
+            },
+        }
+    ]
+
+
 def build_x402_resource() -> dict[str, Any]:
     """Build the resource object used by PayAI-style discovery endpoints."""
     return {
@@ -1185,6 +1450,9 @@ def build_x402_resource() -> dict[str, Any]:
             "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
             "quote": f"{PUBLIC_BASE_URL}/quote",
             "quoteApi": f"{PUBLIC_BASE_URL}/v1/x402/quote",
+            "proofPack": f"{PUBLIC_BASE_URL}/proof-pack",
+            "proofPackQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
+            "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1194,6 +1462,7 @@ def build_x402_resource() -> dict[str, Any]:
             "legacyTxHashEndpoint": f"{PUBLIC_BASE_URL}/v1/access",
             "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
             "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/access",
+            "proofPackSourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
             "recommendedTier": RECOMMENDED_TIER,
             "supplyGuards": {
                 "dnsSsrfProtection": True,
@@ -1223,6 +1492,55 @@ def build_x402_resource() -> dict[str, Any]:
     }
 
 
+def build_proof_pack_resource() -> dict[str, Any]:
+    """Build the Proof Pack resource object used by PayAI-style discovery endpoints."""
+    return {
+        "resource": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        "type": "http",
+        "x402Version": 2,
+        "method": "POST",
+        "accepts": build_proof_pack_x402_accepts(DEFAULT_PROOF_PACK),
+        "lastUpdated": int(time.time()),
+        "metadata": {
+            "provider": "AxonGate",
+            "basename": "axongate.base.eth",
+            "category": "evidence-reports",
+            "service": "AxonGate Proof Packs",
+            "description": "Paid, citation-backed evidence reports for agent builders and RAG evaluators.",
+            "tags": ["x402", "base", "usdc", "proof-pack", "citations", "agent-builders", "evidence"],
+            "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
+            "docs": f"{PUBLIC_BASE_URL}/proof-pack",
+            "quoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
+            "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
+            "packHeader": "X-AxonGate-Pack",
+            "defaultPack": DEFAULT_PROOF_PACK,
+            "llm": {
+                "enabled": bool(LLM_ENABLED and LLM_API_KEY),
+                "model": LLM_MODEL,
+                "fastModel": LLM_FAST_MODEL,
+                "deterministicFallback": True,
+            },
+            "pricing": {
+                pack: {
+                    "amount": str(usdc_units(price)),
+                    "price": f"${price}",
+                    "currency": "USDC",
+                    "cachePolicy": proof_pack_cache_policy(pack),
+                }
+                for pack, price in PROOF_PACK_PRICING_USDC.items()
+            },
+        },
+        "inputSchema": {
+            "type": "http",
+            "method": "POST",
+            "contentType": "application/json",
+            "body": build_proof_pack_input_schema(),
+        },
+        "outputSchema": build_proof_pack_output_schema(),
+        "discoverable": True,
+    }
+
+
 def build_payment_required_payload(error: str, tier: Optional[str] = None) -> dict[str, Any]:
     """
     Build a strict x402 PAYMENT-REQUIRED header payload for agent clients.
@@ -1247,6 +1565,25 @@ def build_payment_required_payload(error: str, tier: Optional[str] = None) -> di
     return payload
 
 
+def build_proof_pack_payment_required_payload(error: str, pack: Optional[str] = None) -> dict[str, Any]:
+    """Build an x402 PAYMENT-REQUIRED payload for Proof Packs."""
+    normalized_pack = normalize_proof_pack(pack or DEFAULT_PROOF_PACK)
+    payload = {
+        "x402Version": 2,
+        "error": error,
+        "resource": {
+            "url": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+            "description": "AxonGate Proof Pack: citation-backed evidence report.",
+            "mimeType": "application/json",
+        },
+        "accepts": build_proof_pack_x402_accepts(normalized_pack),
+    }
+    extensions = build_proof_pack_x402_extensions("POST", normalized_pack)
+    if extensions:
+        payload["extensions"] = extensions
+    return payload
+
+
 def build_x402_public_discovery() -> dict[str, Any]:
     """Return x402 discovery with official extensions and metadata."""
     payload = build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
@@ -1264,16 +1601,25 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quoteApi": f"{PUBLIC_BASE_URL}/v1/x402/quote",
+        "proofPack": f"{PUBLIC_BASE_URL}/proof-pack",
+        "proofPackQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
+        "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
         "paymentHashHeader": "X-AxonGate-Payment-Hash",
         "standardPaymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
+        "proofPackHeader": "X-AxonGate-Pack",
         "retryCreditHeader": "X-AxonGate-Retry-Credit",
         "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
         "facilitator": PAYAI_FACILITATOR_URL,
         "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/access",
+        "proofPackSourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
+        "resources": [
+            f"{PUBLIC_BASE_URL}/v1/x402/access",
+            f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        ],
         "tiers": {
             tier: {
                 "price": f"${price}",
@@ -1282,6 +1628,15 @@ def build_x402_public_discovery() -> dict[str, Any]:
                 "cachePolicy": cache_policy_for_tier(tier),
             }
             for tier, price in TIER_PRICING_USDC.items()
+        },
+        "proofPacks": {
+            pack: {
+                "price": f"${price}",
+                "amount": str(usdc_units(price)),
+                "currency": "USDC",
+                "cachePolicy": proof_pack_cache_policy(pack),
+            }
+            for pack, price in PROOF_PACK_PRICING_USDC.items()
         },
     }
     return payload
@@ -1304,6 +1659,23 @@ def payment_required_headers(error: str, tier: Optional[str] = None) -> dict[str
     }
 
 
+def proof_pack_payment_required_headers(error: str, pack: Optional[str] = None) -> dict[str, str]:
+    try:
+        normalized_pack = normalize_proof_pack(pack)
+    except PaymentValidationError:
+        normalized_pack = DEFAULT_PROOF_PACK
+    payload = build_proof_pack_payment_required_payload(error, normalized_pack)
+    encoded = base64.b64encode(json.dumps(payload, separators=(",", ":")).encode("utf-8")).decode("ascii")
+    return {
+        "PAYMENT-REQUIRED": encoded,
+        "X-Payment-Required": encoded,
+        "X-AxonGate-Payment-Asset": BASE_USDC_ADDRESS,
+        "X-AxonGate-Payment-Amount": str(price_for_proof_pack(normalized_pack)),
+        "X-AxonGate-Payment-Pack": normalized_pack,
+        **buyer_guidance_headers(),
+    }
+
+
 def buyer_guidance_headers() -> dict[str, str]:
     return {
         "X-AxonGate-Next-Step": "Create an x402 payment proof, then POST JSON with PAYMENT-SIGNATURE.",
@@ -1311,6 +1683,8 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "X-AxonGate-Paid-Test": f"{PUBLIC_BASE_URL}/paid-test",
         "X-AxonGate-Quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
+        "X-AxonGate-Proof-Pack": f"{PUBLIC_BASE_URL}/proof-pack",
+        "X-AxonGate-Proof-Pack-Quote": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
         "X-AxonGate-Demo": f"{PUBLIC_BASE_URL}/demo",
         "X-AxonGate-Buyer-Example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
         "Link": (
@@ -1318,6 +1692,8 @@ def buyer_guidance_headers() -> dict[str, str]:
             f'<{PUBLIC_BASE_URL}/quickstart>; rel="quickstart", '
             f'<{PUBLIC_BASE_URL}/paid-test>; rel="payment-test", '
             f'<{PUBLIC_BASE_URL}/v1/x402/quote>; rel="quote", '
+            f'<{PUBLIC_BASE_URL}/proof-pack>; rel="service", '
+            f'<{PUBLIC_BASE_URL}/v1/proof-pack/quote>; rel="proof-pack-quote", '
             f'<{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs>; rel="example"'
         ),
     }
@@ -1363,15 +1739,56 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
     }
 
 
+def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -> dict[str, Any]:
+    try:
+        normalized_pack = normalize_proof_pack(pack)
+    except PaymentValidationError:
+        normalized_pack = DEFAULT_PROOF_PACK
+
+    return {
+        "message": error,
+        "next_steps": [
+            "Decode the PAYMENT-REQUIRED header for Base USDC payment terms.",
+            "Create an x402 payment proof for the selected Proof Pack.",
+            "Retry with POST /v1/x402/proof-pack, PAYMENT-SIGNATURE, and a matching ?pack= or X-AxonGate-Pack value.",
+        ],
+        "payment": {
+            "protocol": "x402",
+            "network": "eip155:8453",
+            "asset": "USDC",
+            "asset_address": BASE_USDC_ADDRESS,
+            "amount_usdc": float(price_for_proof_pack(normalized_pack)),
+            "pack": normalized_pack,
+            "pay_to": load_vault_address(),
+            "payment_header": "PAYMENT-SIGNATURE",
+        },
+        "request": {
+            "method": "POST",
+            "url": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}",
+            "body": build_proof_pack_request_example(normalized_pack),
+        },
+        "links": {
+            "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
+            "quote": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
+            "docs": f"{PUBLIC_BASE_URL}/docs",
+            "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
+            "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
+        },
+    }
+
+
 def build_openapi_payment_info() -> dict[str, Any]:
     """Return an OpenAPI vendor extension describing AxonGate's x402 contract."""
     return {
         "protocol": "x402",
         "x402Version": 2,
         "endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
+        "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "paymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
         "tierQueryParam": "tier",
+        "proofPackHeader": "X-AxonGate-Pack",
+        "proofPackQueryParam": "pack",
         "network": "eip155:8453",
         "asset": {
             "symbol": "USDC",
@@ -1390,6 +1807,14 @@ def build_openapi_payment_info() -> dict[str, Any]:
                 "cache_policy": cache_policy_for_tier(tier),
             }
             for tier, price in TIER_PRICING_USDC.items()
+        },
+        "proofPacks": {
+            pack: {
+                "amount": str(usdc_units(price)),
+                "price_usdc": float(price),
+                "cache_policy": proof_pack_cache_policy(pack),
+            }
+            for pack, price in PROOF_PACK_PRICING_USDC.items()
         },
         "challengeDiscovery": f"{PUBLIC_BASE_URL}/.well-known/x402",
         "bazaarDiscovery": f"{PUBLIC_BASE_URL}/discovery/resources",
@@ -1550,7 +1975,26 @@ def configure_standard_x402_middleware() -> None:
         mime_type="application/json",
         extensions=build_x402_extensions("POST") or None,
     )
+    proof_pack_route_config = RouteConfig(
+        accepts=PaymentOption(
+            scheme="exact",
+            pay_to=load_vault_address(),
+            price=x402_dynamic_price,
+            network="eip155:8453",
+            max_timeout_seconds=300,
+            extra={
+                "name": BASE_USDC_TOKEN_NAME,
+                "version": BASE_USDC_TOKEN_VERSION,
+                "decimals": USDC_DECIMALS,
+            },
+        ),
+        resource=f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        description="AxonGate Proof Pack: paid citation-backed evidence report.",
+        mime_type="application/json",
+        extensions=build_proof_pack_x402_extensions("POST") or None,
+    )
     routes = {"POST /v1/x402/access": route_config}
+    routes["POST /v1/x402/proof-pack"] = proof_pack_route_config
     routes.update(
         {
             f"POST /from/{source}/v1/x402/access": route_config
@@ -1560,6 +2004,12 @@ def configure_standard_x402_middleware() -> None:
     routes.update(
         {
             f"POST /from/{source}/v1/x402/starter": route_config
+            for source in SOURCE_ALIAS_PATHS
+        }
+    )
+    routes.update(
+        {
+            f"POST /from/{source}/v1/x402/proof-pack": proof_pack_route_config
             for source in SOURCE_ALIAS_PATHS
         }
     )
@@ -2327,11 +2777,29 @@ async def check_profitability() -> bool:
 def x402_dynamic_price(context: HTTPRequestContext):
     """Return tier-aware x402 price for PayAI middleware."""
     tier = None
+    pack = None
     if context:
-        if context.path.endswith("/v1/x402/starter"):
+        if context.path.endswith("/v1/x402/proof-pack"):
+            if context.adapter:
+                pack = context.adapter.get_query_param("pack") or context.adapter.get_header("x-axongate-pack")
+        elif context.path.endswith("/v1/x402/starter"):
             tier = STARTER_TIER
         elif context.adapter:
             tier = context.adapter.get_query_param("tier") or context.adapter.get_header("x-axongate-tier")
+
+    if pack is not None or (context and context.path.endswith("/v1/x402/proof-pack")):
+        normalized_pack = normalize_proof_pack(pack)
+        price = price_for_proof_pack(normalized_pack)
+        return AssetAmount(
+            amount=str(usdc_units(price)),
+            asset=BASE_USDC_ADDRESS,
+            extra={
+                "name": BASE_USDC_TOKEN_NAME,
+                "version": BASE_USDC_TOKEN_VERSION,
+                "decimals": USDC_DECIMALS,
+                "pack": normalized_pack,
+            },
+        )
 
     normalized_tier = normalize_tier(tier)
     price = price_for_tier(normalized_tier)
@@ -2714,6 +3182,512 @@ async def build_conversion_quote(target_url: str, source: str = "quote") -> dict
     }
 
 
+PROOF_PACK_LLM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer": {"type": "string", "minLength": 1},
+        "executive_summary": {"type": "string", "minLength": 1},
+        "confidence_score": {"type": "number", "minimum": 0, "maximum": 1},
+        "key_claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string", "minLength": 1},
+                    "citation_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+                "required": ["claim", "citation_ids", "confidence"],
+                "additionalProperties": False,
+            },
+        },
+        "risks": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["answer", "executive_summary", "confidence_score", "key_claims", "risks"],
+    "additionalProperties": False,
+}
+
+
+def proof_pack_payment_probe_url(pack: str, source: str) -> str:
+    normalized_pack = normalize_proof_pack(pack)
+    normalized_source = normalize_attribution_source(source)
+    return f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}&source={normalized_source}"
+
+
+def proof_pack_buyer_command(target_url: str, question: str, pack: str, source: str) -> str:
+    normalized_pack = normalize_proof_pack(pack)
+    normalized_source = normalize_attribution_source(source)
+    return (
+        "npm run paid:buyer -- "
+        "--product proof-pack "
+        '--wallet-file "C:/path/to/buyer_wallet.json" '
+        f'--target-url "{target_url}" '
+        f'--question "{question}" '
+        f"--pack {normalized_pack} "
+        f"--confirm-spend {PROOF_PACK_PRICING_USDC[normalized_pack]} "
+        f"--source {normalized_source}"
+    )
+
+
+def proof_pack_question(value: Optional[str]) -> str:
+    question = re.sub(r"\s+", " ", (value or "What does this source establish?").strip())
+    return question[:600] or "What does this source establish?"
+
+
+def proof_pack_evidence_limit(pack: str) -> int:
+    normalized_pack = normalize_proof_pack(pack)
+    return {"quick": 5, DEFAULT_PROOF_PACK: 8, "deep": 12}[normalized_pack]
+
+
+def proof_pack_llm_input_limit(pack: str) -> int:
+    normalized_pack = normalize_proof_pack(pack)
+    if normalized_pack == "quick":
+        return min(LLM_MAX_INPUT_CHARS, 12000)
+    if normalized_pack == "deep":
+        return min(max(LLM_MAX_INPUT_CHARS, 24000), 50000)
+    return LLM_MAX_INPUT_CHARS
+
+
+def clean_evidence_excerpt(value: str, max_chars: int = 420) -> str:
+    cleaned = re.sub(r"\s+", " ", value).strip(" -\t\r\n")
+    cleaned = re.sub(r"^#+\s*", "", cleaned)
+    if len(cleaned) <= max_chars:
+        return cleaned
+    clipped = cleaned[:max_chars].rsplit(" ", 1)[0].strip()
+    return f"{clipped}..."
+
+
+def split_markdown_evidence(markdown: str) -> list[str]:
+    """Extract stable paragraph-like evidence candidates from markdown."""
+    candidates: list[str] = []
+    buffer: list[str] = []
+    in_code = False
+
+    def flush() -> None:
+        if not buffer:
+            return
+        text = clean_evidence_excerpt(" ".join(buffer))
+        buffer.clear()
+        if len(text) >= 45 and not text.lower().startswith(("image:", "title:")):
+            candidates.append(text)
+
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if line.startswith("```"):
+            flush()
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        if not line:
+            flush()
+            continue
+        if line.startswith("#"):
+            flush()
+            heading = clean_evidence_excerpt(line)
+            if len(heading) >= 12:
+                candidates.append(heading)
+            continue
+        if line.startswith("|") and line.endswith("|"):
+            flush()
+            table_text = clean_evidence_excerpt(line.replace("|", " "))
+            if len(table_text) >= 45:
+                candidates.append(table_text)
+            continue
+        if re.match(r"^[-*+]\s+", line) or re.match(r"^\d+[.)]\s+", line):
+            flush()
+            bullet = clean_evidence_excerpt(re.sub(r"^([-*+]|\d+[.)])\s+", "", line))
+            if len(bullet) >= 35:
+                candidates.append(bullet)
+            continue
+
+        buffer.append(line)
+        if sum(len(item) for item in buffer) > 520:
+            flush()
+
+    flush()
+    return candidates
+
+
+def extract_proof_pack_evidence(markdown: str, target_url: str, pack: str = DEFAULT_PROOF_PACK) -> list[dict[str, Any]]:
+    """Create stable citation IDs from extracted source material."""
+    max_items = proof_pack_evidence_limit(pack)
+    seen: set[str] = set()
+    citations: list[dict[str, Any]] = []
+
+    for candidate in split_markdown_evidence(markdown):
+        fingerprint = stable_hash(candidate.lower())[:16]
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        citations.append(
+            {
+                "id": f"c{len(citations) + 1}",
+                "url": target_url,
+                "excerpt": candidate,
+                "fingerprint": fingerprint,
+            }
+        )
+        if len(citations) >= max_items:
+            break
+
+    if not citations:
+        fallback_excerpt = clean_evidence_excerpt(markdown[:600] or "No extractable source text was returned.")
+        citations.append(
+            {
+                "id": "c1",
+                "url": target_url,
+                "excerpt": fallback_excerpt,
+                "fingerprint": stable_hash(fallback_excerpt.lower())[:16],
+            }
+        )
+
+    return citations
+
+
+def claim_from_excerpt(excerpt: str) -> str:
+    first_sentence = re.split(r"(?<=[.!?])\s+", excerpt, maxsplit=1)[0]
+    return clean_evidence_excerpt(first_sentence, 220)
+
+
+def clamp_confidence(value: Any, fallback: float = 0.0) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = fallback
+    return round(max(0.0, min(1.0, number)), 2)
+
+
+def deterministic_proof_pack(
+    *,
+    target_url: str,
+    question: str,
+    pack: str,
+    markdown: str,
+    citations: list[dict[str, Any]],
+    cache_hit: bool,
+    fallback_reason: str,
+) -> dict[str, Any]:
+    normalized_pack = normalize_proof_pack(pack)
+    confidence = {
+        "quick": 0.46,
+        DEFAULT_PROOF_PACK: 0.54,
+        "deep": 0.6,
+    }[normalized_pack]
+    confidence = clamp_confidence(confidence + min(len(citations), 8) * 0.015)
+    cited_summary = " ".join(citation["excerpt"] for citation in citations[:3])
+    executive_summary = clean_evidence_excerpt(cited_summary, 620)
+    key_claims = [
+        {
+            "claim": claim_from_excerpt(citation["excerpt"]),
+            "citation_ids": [citation["id"]],
+            "confidence": confidence,
+        }
+        for citation in citations[: min(5, len(citations))]
+    ]
+    risks = [
+        "Deterministic extractive fallback was used; no generative cross-check was applied.",
+        "Only one source URL was evaluated.",
+    ]
+    if cache_hit:
+        risks.append("Source material may come from cache; inspect source_profile.content_sha256 for repeatability.")
+    if fallback_reason != "llm_disabled":
+        risks.append(f"LLM generation fallback reason: {fallback_reason}.")
+
+    return {
+        "answer": (
+            f"Evidence for '{question}' is limited to the cited excerpts from {target_url}. "
+            f"The strongest extractive support is: {executive_summary}"
+        ),
+        "executive_summary": executive_summary,
+        "confidence_score": confidence,
+        "key_claims": key_claims,
+        "risks": risks,
+        "llm_used": False,
+        "llm_model": None,
+        "fallback_reason": fallback_reason,
+        "source_profile": {
+            "final_url": target_url,
+            "content_sha256": stable_hash(markdown),
+            "markdown_chars": len(markdown),
+            "citation_count": len(citations),
+        },
+    }
+
+
+def extract_response_output_text(payload: dict[str, Any]) -> str:
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+
+    chunks: list[str] = []
+    for item in payload.get("output", []) if isinstance(payload.get("output"), list) else []:
+        content = item.get("content") if isinstance(item, dict) else None
+        if not isinstance(content, list):
+            continue
+        for content_item in content:
+            if not isinstance(content_item, dict):
+                continue
+            text = content_item.get("text")
+            if isinstance(text, str):
+                chunks.append(text)
+    return "\n".join(chunks).strip()
+
+
+def parse_llm_json(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    return json.loads(cleaned)
+
+
+async def call_proof_pack_llm(
+    *,
+    target_url: str,
+    question: str,
+    pack: str,
+    citations: list[dict[str, Any]],
+    markdown: str,
+) -> dict[str, Any]:
+    normalized_pack = normalize_proof_pack(pack)
+    model = LLM_FAST_MODEL if normalized_pack == "quick" else LLM_MODEL
+    evidence_payload = {
+        "target_url": target_url,
+        "question": question,
+        "pack": normalized_pack,
+        "citations": [
+            {"id": citation["id"], "url": citation["url"], "excerpt": citation["excerpt"]}
+            for citation in citations
+        ],
+        "source_excerpt": markdown[: proof_pack_llm_input_limit(normalized_pack)],
+    }
+    system_prompt = (
+        "You create concise evidence reports for agent builders. "
+        "Return only JSON matching the requested schema. "
+        "Every key_claim must cite one or more provided citation ids. "
+        "Do not invent citations or facts outside the evidence."
+    )
+    user_prompt = json.dumps(
+        {
+            "task": "Create an AxonGate Proof Pack from the cited evidence.",
+            "schema": PROOF_PACK_LLM_SCHEMA,
+            "evidence": evidence_payload,
+        },
+        ensure_ascii=True,
+    )
+    response_payload = {
+        "model": model,
+        "input": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    headers = {
+        "Authorization": f"Bearer {LLM_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=LLM_TIMEOUT_SECONDS) as client:
+        response = await client.post(f"{LLM_BASE_URL}/responses", headers=headers, json=response_payload)
+        response.raise_for_status()
+        output_text = extract_response_output_text(response.json())
+    if not output_text:
+        raise ValueError("OpenAI Responses API returned no output text")
+    data = parse_llm_json(output_text)
+    validate_json_schema(instance=data, schema=PROOF_PACK_LLM_SCHEMA)
+    data["llm_model"] = model
+    return data
+
+
+def sanitize_llm_proof_pack(
+    llm_data: dict[str, Any],
+    citations: list[dict[str, Any]],
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    allowed_ids = {citation["id"] for citation in citations}
+    supported_claims: list[dict[str, Any]] = []
+    for claim in llm_data.get("key_claims", []):
+        citation_ids = [
+            citation_id
+            for citation_id in claim.get("citation_ids", [])
+            if isinstance(citation_id, str) and citation_id in allowed_ids
+        ]
+        if not citation_ids:
+            continue
+        supported_claims.append(
+            {
+                "claim": clean_evidence_excerpt(str(claim.get("claim", "")), 260),
+                "citation_ids": citation_ids,
+                "confidence": clamp_confidence(claim.get("confidence"), 0.45),
+            }
+        )
+
+    if not supported_claims:
+        return fallback
+
+    risks = [clean_evidence_excerpt(str(risk), 260) for risk in llm_data.get("risks", []) if str(risk).strip()]
+    if len(supported_claims) < len(llm_data.get("key_claims", [])):
+        risks.append("Unsupported LLM claims were dropped because they did not cite extracted evidence IDs.")
+
+    return {
+        **fallback,
+        "answer": clean_evidence_excerpt(str(llm_data["answer"]), 1800),
+        "executive_summary": clean_evidence_excerpt(str(llm_data["executive_summary"]), 900),
+        "confidence_score": clamp_confidence(llm_data.get("confidence_score"), fallback["confidence_score"]),
+        "key_claims": supported_claims,
+        "risks": risks or fallback["risks"],
+        "llm_used": True,
+        "llm_model": str(llm_data.get("llm_model") or LLM_MODEL),
+        "fallback_reason": None,
+    }
+
+
+async def generate_proof_pack_content(
+    *,
+    target_url: str,
+    question: str,
+    pack: str,
+    markdown: str,
+    cache_hit: bool,
+) -> dict[str, Any]:
+    normalized_pack = normalize_proof_pack(pack)
+    citations = extract_proof_pack_evidence(markdown, target_url, normalized_pack)
+    fallback_reason = "llm_disabled"
+    fallback = deterministic_proof_pack(
+        target_url=target_url,
+        question=question,
+        pack=normalized_pack,
+        markdown=markdown,
+        citations=citations,
+        cache_hit=cache_hit,
+        fallback_reason=fallback_reason,
+    )
+
+    if LLM_ENABLED and LLM_API_KEY:
+        try:
+            llm_data = await call_proof_pack_llm(
+                target_url=target_url,
+                question=question,
+                pack=normalized_pack,
+                citations=citations,
+                markdown=markdown,
+            )
+            proof_content = sanitize_llm_proof_pack(llm_data, citations, fallback)
+            if proof_content.get("llm_used"):
+                inc_metric("proof_pack_llm_success_total")
+                return {**proof_content, "citations": citations}
+            fallback_reason = "llm_unsupported_claims"
+        except (httpx.HTTPError, JsonSchemaValidationError, json.JSONDecodeError, ValueError) as exc:
+            fallback_reason = exc.__class__.__name__
+        except Exception as exc:
+            fallback_reason = exc.__class__.__name__
+
+    inc_metric("proof_pack_llm_fallback_total")
+    fallback = deterministic_proof_pack(
+        target_url=target_url,
+        question=question,
+        pack=normalized_pack,
+        markdown=markdown,
+        citations=citations,
+        cache_hit=cache_hit,
+        fallback_reason=fallback_reason,
+    )
+    return {**fallback, "citations": citations}
+
+
+def ueg_receipt_payload(profitability: UEGReceipt) -> dict[str, Any]:
+    return {
+        "revenue_usdc": float(profitability.revenue_usdc),
+        "dynamic_gas_cost_usdc": float(profitability.dynamic_gas_cost_usdc),
+        "jina_api_cost_usdc": float(profitability.jina_api_cost_usdc),
+        "projected_profit_usdc": float(profitability.projected_profit_usdc),
+        "minimum_margin_usdc": float(MIN_PROFIT_MARGIN_USDC),
+        "base_fee_wei": profitability.base_fee_wei,
+        "gas_units": profitability.gas_units,
+        "supplier_attempts": profitability.supplier_attempts,
+        "eth_usdc_price": float(profitability.eth_usdc_price),
+        "eth_usdc_price_source": profitability.eth_usdc_price_source,
+        "eth_usdc_floor_applied": profitability.eth_usdc_floor_applied,
+    }
+
+
+async def build_proof_pack_quote(
+    target_url: str,
+    question: Optional[str] = None,
+    pack: Optional[str] = None,
+    source: str = "proof-pack",
+) -> dict[str, Any]:
+    """Return no-spend Proof Pack pricing and payment guidance for a target URL."""
+    normalized_target = await assert_public_target_url(target_url)
+    normalized_source = normalize_attribution_source(source)
+    normalized_pack = normalize_proof_pack(pack)
+    normalized_question = proof_pack_question(question)
+    internal_tier = proof_pack_internal_tier(normalized_pack)
+    cached_available = await get_cache_candidate_for_tier(normalized_target, internal_tier, False) is not None
+
+    packs: dict[str, dict[str, Any]] = {}
+    for pack_name, price in PROOF_PACK_PRICING_USDC.items():
+        pack_internal_tier = proof_pack_internal_tier(pack_name)
+        pack_cached_available = await get_cache_candidate_for_tier(normalized_target, pack_internal_tier, False) is not None
+        packs[pack_name] = {
+            "price_usdc": float(price),
+            "amount_units": str(usdc_units(price)),
+            "cache_policy": proof_pack_cache_policy(pack_name),
+            "cached_source_available": pack_cached_available,
+            "internal_context_tier": pack_internal_tier,
+            "payment_probe_url": proof_pack_payment_probe_url(pack_name, normalized_source),
+        }
+
+    return {
+        "status": "proof_pack_quote",
+        "supplier_spend": False,
+        "target_url": normalized_target,
+        "question": normalized_question,
+        "source": normalized_source,
+        "pack": normalized_pack,
+        "price_usdc": float(price_for_proof_pack(normalized_pack)),
+        "amount_units": str(usdc_units(price_for_proof_pack(normalized_pack))),
+        "cached_source_available": cached_available,
+        "packs": packs,
+        "next_steps": {
+            "probe_payment_terms": proof_pack_payment_probe_url(normalized_pack, normalized_source),
+            "paid_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}&source={normalized_source}",
+            "confirm_spend_usdc": str(price_for_proof_pack(normalized_pack)),
+            "buyer_command": proof_pack_buyer_command(
+                normalized_target,
+                normalized_question,
+                normalized_pack,
+                normalized_source,
+            ),
+            "proof_pack_page": public_url("/proof-pack"),
+        },
+    }
+
+
+def resolve_proof_pack_selection(
+    request: Request,
+    proof_request: ProofPackRequest,
+    x_axongate_pack: Optional[str],
+    *,
+    require_challenge_selector: bool,
+) -> str:
+    query_pack = request.query_params.get("pack")
+    body_pack = normalize_proof_pack(proof_request.pack)
+    challenge_pack = x_axongate_pack or query_pack
+    if require_challenge_selector and challenge_pack is None and body_pack != DEFAULT_PROOF_PACK:
+        raise PaymentValidationError(
+            "Set pack with ?pack= or X-AxonGate-Pack so the x402 payment challenge matches the requested Proof Pack."
+        )
+    normalized_pack = normalize_proof_pack(challenge_pack or body_pack)
+    if body_pack != normalized_pack:
+        raise PaymentValidationError("Proof Pack body pack must match ?pack= or X-AxonGate-Pack.")
+    return normalized_pack
+
+
 def build_quote_html(quote: dict[str, Any]) -> str:
     """Render a compact quote page that turns discovery into a paid test."""
     public = html.escape(PUBLIC_BASE_URL)
@@ -2833,6 +3807,116 @@ def build_quote_html(quote: dict[str, Any]) -> str:
 </html>"""
 
 
+def build_proof_pack_html() -> str:
+    """Render the human-facing Proof Pack product page."""
+    public = html.escape(PUBLIC_BASE_URL)
+    pro_url = html.escape(PROOF_PRO_PAYMENT_URL or f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard")
+    team_url = html.escape(PROOF_TEAM_PAYMENT_URL or f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=deep")
+    quote_url = html.escape(f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard")
+    request_json = html.escape(json.dumps(build_proof_pack_request_example(DEFAULT_PROOF_PACK), indent=2))
+    response_json = html.escape(json.dumps(build_proof_pack_response_example(DEFAULT_PROOF_PACK), indent=2))
+    pack_rows = "\n".join(
+        "<tr>"
+        f"<td><code>{html.escape(pack)}</code></td>"
+        f"<td>{html.escape(str(price))} USDC</td>"
+        f"<td>{html.escape(str(usdc_units(price)))}</td>"
+        f"<td>{html.escape(proof_pack_cache_policy(pack))}</td>"
+        "</tr>"
+        for pack, price in PROOF_PACK_PRICING_USDC.items()
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Proof Packs</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 1040px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.15rem, 4vw, 3.5rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 38px 0 12px; font-size: 1.3rem; }}
+    p, li, td {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .summary {{ max-width: 800px; font-size: 1.08rem; }}
+    .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
+    .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }}
+    .box {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ padding: 2px 5px; border-radius: 4px; }}
+    pre {{ overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AxonGate Proof Packs</h1>
+    <p class="summary">Paid, citation-backed evidence reports for agent builders. Send a public source URL and a question; AxonGate returns a compact answer, executive summary, key claims, citations, risks, source hash, payment metadata, and UEG receipt.</p>
+    <nav class="links" aria-label="Proof Pack links">
+      <a href="{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard">Quote API</a>
+      <a href="{public}/docs">Docs</a>
+      <a href="{public}/quickstart">Quickstart</a>
+      <a href="{public}/operator">Operator</a>
+      <a href="{public}/.well-known/x402">x402 Discovery</a>
+      <a href="{public}/discovery/resources">Resources</a>
+    </nav>
+    <div class="cta">
+      <a href="{quote_url}">Get API Quote</a>
+      <a href="{pro_url}">Proof Pro</a>
+      <a href="{team_url}">Proof Team</a>
+    </div>
+
+    <div class="grid">
+      <div class="box"><strong>Buyer</strong><br>Agent builders who need source-backed claims.</div>
+      <div class="box"><strong>Protocol</strong><br>x402 on Base USDC.</div>
+      <div class="box"><strong>Fallback</strong><br>Deterministic extractive pack if LLM generation is off or fails.</div>
+      <div class="box"><strong>Validation</strong><br>Unsupported LLM claims are dropped unless they cite extracted evidence IDs.</div>
+    </div>
+
+    <h2>Pricing</h2>
+    <table>
+      <thead><tr><th>Pack</th><th>Price</th><th>USDC Units</th><th>Policy</th></tr></thead>
+      <tbody>{pack_rows}</tbody>
+    </table>
+
+    <h2>Quote</h2>
+    <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;question=What%20does%20this%20source%20establish%3F&amp;pack=standard&amp;source=docs"</pre>
+
+    <h2>Paid Endpoint</h2>
+    <pre>POST {public}/v1/x402/proof-pack?pack=standard
+Header: PAYMENT-SIGNATURE: &lt;x402-payment-proof&gt;
+Header: X-AxonGate-Pack: standard</pre>
+
+    <h2>Request</h2>
+    <pre>{request_json}</pre>
+
+    <h2>Response Shape</h2>
+    <pre>{response_json}</pre>
+  </main>
+</body>
+</html>"""
+
+
 def build_llms_txt() -> str:
     """
     Return a compact agent-readable service brief.
@@ -2853,6 +3937,14 @@ def build_llms_txt() -> str:
         f"- {tier}: {price} USDC, {cache_policy_for_tier(tier)}"
         for tier, price in TIER_PRICING_USDC.items()
     )
+    proof_pack_lines = "\n".join(
+        f"- {pack}: {price} USDC, {proof_pack_cache_policy(pack)}"
+        for pack, price in PROOF_PACK_PRICING_USDC.items()
+    )
+    proof_pack_request_example = json.dumps(
+        build_proof_pack_request_example(DEFAULT_PROOF_PACK),
+        indent=2,
+    )
 
     return f"""# AxonGate
 
@@ -2866,6 +3958,9 @@ Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
 Quote API: {public_url("/v1/x402/quote")}
 Quote page: {public_url("/quote")}
+Proof Pack page: {public_url("/proof-pack")}
+Proof Pack quote API: {public_url("/v1/proof-pack/quote")}
+Proof Pack x402 endpoint: {public_url("/v1/x402/proof-pack")}
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
@@ -2920,6 +4015,29 @@ Successful response shape:
 POST {public_url("/v1/x402/retry")}
 Use only when AxonGate returns a retryable 503 with X-AxonGate-Retry-Credit after payment was accepted but upstream delivery failed.
 
+## Proof Packs
+
+GET {public_url("/proof-pack")}
+GET {public_url("/v1/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
+POST {public_url("/v1/x402/proof-pack")}?pack=standard
+Header: X-AxonGate-Pack: standard
+Body example:
+{proof_pack_request_example}
+
+Proof Pack prices:
+{proof_pack_lines}
+
+Successful Proof Pack response shape:
+- status: success
+- target_url, question, pack
+- answer and executive_summary
+- confidence_score
+- key_claims with citation_ids
+- citations with source excerpts
+- risks
+- source_profile with final_url and content_sha256
+- cache, payment, and ueg_receipt metadata
+
 ## Safety And Supply Guards
 
 AxonGate rejects private, loopback, multicast, and link-local target hosts; performs DNS and redirect preflight checks; enforces allowed target ports; caps supplier content size; rate-limits probes, unpaid requests, paid requests, retry credits, and target domains; and runs a dynamic Unit Economic Guardian before supplier work. Bad upstream supply should not be charged to AxonGate beyond the bounded retry credit policy.
@@ -2955,6 +4073,22 @@ def build_docs_html() -> str:
         f"<td>{html.escape(cache_policy_for_tier(tier))}</td>"
         "</tr>"
         for tier, price in TIER_PRICING_USDC.items()
+    )
+    proof_pack_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(pack)}</td>"
+        f"<td>{html.escape(str(price))} USDC</td>"
+        f"<td>{html.escape(proof_pack_cache_policy(pack))}</td>"
+        "</tr>"
+        for pack, price in PROOF_PACK_PRICING_USDC.items()
+    )
+    proof_request_json = html.escape(json.dumps(build_proof_pack_request_example(DEFAULT_PROOF_PACK), indent=2))
+    proof_curl_example = html.escape(
+        f"""curl -X POST {PUBLIC_BASE_URL}/v1/x402/proof-pack?pack=standard \\
+  -H "Content-Type: application/json" \\
+  -H "PAYMENT-SIGNATURE: <x402-payment-proof>" \\
+  -H "X-AxonGate-Pack: standard" \\
+  -d '{{"target_url":"https://example.com/source","question":"What does this source establish?","pack":"standard","force_refresh":false}}'"""
     )
 
     return f"""<!doctype html>
@@ -3036,6 +4170,7 @@ def build_docs_html() -> str:
       <a href="{public}/quickstart">Quickstart</a>
       <a href="{public}/paid-test">Paid test guide</a>
       <a href="{public}/quote">Quote</a>
+      <a href="{public}/proof-pack">Proof Packs</a>
       <a href="{public}/demo">Demo</a>
       <a href="{public}/openapi.json">OpenAPI JSON</a>
       <a href="{public}/swagger">Swagger UI</a>
@@ -3062,6 +4197,16 @@ def build_docs_html() -> str:
       <thead><tr><th>Tier</th><th>Price</th><th>Cache policy</th></tr></thead>
       <tbody>{tiers_rows}</tbody>
     </table>
+
+    <h2>Proof Packs</h2>
+    <p>Proof Packs are paid, citation-backed evidence reports for agent builders. Use the quote API before spending, then POST to the x402 endpoint with <code>?pack=</code> or <code>X-AxonGate-Pack</code> so the payment challenge matches the requested pack.</p>
+    <table>
+      <thead><tr><th>Pack</th><th>Price</th><th>Policy</th></tr></thead>
+      <tbody>{proof_pack_rows}</tbody>
+    </table>
+    <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
+    <pre>{proof_request_json}</pre>
+    <pre>{proof_curl_example}</pre>
 
     <h2>Standard x402 Flow</h2>
     <ol>
@@ -3140,6 +4285,9 @@ def build_operator_dashboard_html(
             card("Paid Attempts", count(metric("paid_attempts_total")), percent(challenge_rate)),
             card("Accepted Payments", count(metric("payments_accepted_total")), percent(accepted_rate)),
             card("Delivered", count(metric("delivery_success_total")), percent(delivered_rate)),
+            card("Proof Quotes", count(metric("proof_pack_quotes_total")), "No-spend report quotes"),
+            card("Proof Requests", count(metric("proof_pack_requests_total")), "Paid Proof Pack posts"),
+            card("Proof Delivered", count(metric("proof_pack_delivery_success_total")), "Citation reports delivered"),
             card("Cache Hits", count(metric("cache_hits_total")), f'{count(metric("cache_misses_total"))} misses'),
             card("Supplier Calls", count(metric("jina_requests_total")), f'{percent(supplier_rate)} success'),
         ]
@@ -3218,6 +4366,7 @@ def build_operator_dashboard_html(
             f"<tr><td>Quickstart</td><td>{count(metric('discovery_quickstart_hits_total'))}</td></tr>",
             f"<tr><td>Paid Test Guide</td><td>{count(metric('discovery_paid_test_hits_total'))}</td></tr>",
             f"<tr><td>Quote</td><td>{count(metric('discovery_quote_hits_total'))}</td></tr>",
+            f"<tr><td>Proof Packs</td><td>{count(metric('discovery_proof_pack_hits_total'))}</td></tr>",
             f"<tr><td>Demo</td><td>{count(metric('discovery_demo_hits_total'))}</td></tr>",
             f"<tr><td>Agent Cards</td><td>{count(metric('discovery_agent_card_hits_total'))}</td></tr>",
             f"<tr><td>Manifest</td><td>{count(metric('discovery_manifest_hits_total'))}</td></tr>",
@@ -3251,6 +4400,15 @@ def build_operator_dashboard_html(
         f"<td>{html.escape(cache_policy_for_tier(tier))}</td>"
         "</tr>"
         for tier, price in TIER_PRICING_USDC.items()
+    )
+    proof_pack_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(pack)}</td>"
+        f"<td>{html.escape(str(price))} USDC</td>"
+        f"<td>{html.escape(str(usdc_units(price)))}</td>"
+        f"<td>{html.escape(proof_pack_cache_policy(pack))}</td>"
+        "</tr>"
+        for pack, price in PROOF_PACK_PRICING_USDC.items()
     )
     alert_text = ", ".join(triggered_alerts) if triggered_alerts else "No active alerts"
 
@@ -3369,6 +4527,12 @@ def build_operator_dashboard_html(
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>USDC Units</th><th>Cache Policy</th></tr></thead>
       <tbody>{tier_rows}</tbody>
+    </table>
+
+    <h2>Proof Pack Pricing</h2>
+    <table>
+      <thead><tr><th>Pack</th><th>Price</th><th>USDC Units</th><th>Policy</th></tr></thead>
+      <tbody>{proof_pack_rows}</tbody>
     </table>
 
     <p class="notice"><strong>Alert state:</strong> <span class="{'warn' if triggered_alerts else 'ok'}">{html.escape(alert_text)}</span></p>
@@ -3514,6 +4678,7 @@ npm run paid:buyer -- \\
       <a href="{public}/demo">Demo</a>
       <a href="{public}/paid-test">Paid Test</a>
       <a href="{public}/quote">Quote</a>
+      <a href="{public}/proof-pack">Proof Packs</a>
       <a href="{public}/docs">Docs</a>
       <a href="{public}/operator">Operator</a>
       <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
@@ -3524,7 +4689,7 @@ npm run paid:buyer -- \\
       <div class="step"><strong>1. Fund burner wallet</strong>Use Base USDC. Starter costs <code>{starter_price} USDC</code>; fresh costs <code>{fresh_price} USDC</code>.</div>
       <div class="step"><strong>2. Run the buyer</strong>The script probes payment terms, signs x402, pays, and returns markdown.</div>
       <div class="step"><strong>3. Watch attribution</strong>Use <code>source=quickstart</code> so `/metrics` shows the conversion path.</div>
-      <div class="step"><strong>4. Add MCP</strong>Let an agent call <code>fetch_clean_context</code> with explicit spend confirmation.</div>
+      <div class="step"><strong>4. Sell proof</strong>Use <code>/proof-pack</code> when a buyer needs cited claims instead of raw markdown.</div>
     </div>
 
     <p class="callout"><strong>This can spend real USDC.</strong> Every paid path requires an explicit <code>confirm-spend</code> or <code>confirm_spend_usdc</code> value that must match the selected tier.</p>
@@ -3918,6 +5083,9 @@ def build_sitemap_xml() -> str:
         ("/paid-test", "0.9"),
         ("/quote", "0.9"),
         ("/v1/x402/quote", "0.8"),
+        ("/proof-pack", "0.95"),
+        ("/v1/proof-pack/quote", "0.85"),
+        ("/v1/x402/proof-pack", "0.85"),
         ("/demo", "0.9"),
         ("/llms.txt", "0.8"),
         ("/manifest.json", "0.8"),
@@ -3984,6 +5152,13 @@ async def paid_test_guide(request: Request):
     return build_paid_test_html()
 
 
+@app.get("/proof-pack", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate Proof Pack product page")
+async def proof_pack_page(request: Request):
+    """Serve the Proof Pack product page for human buyers and agent builders."""
+    inc_discovery_hit("discovery_proof_pack_hits_total", attribution_source_from_request(request))
+    return build_proof_pack_html()
+
+
 @app.get("/v1/x402/quote", tags=["discovery"], summary="Supplier-free x402 tier quote")
 async def quote_api(request: Request, target_url: str = "https://www.iana.org/domains/reserved"):
     """Return no-spend tier guidance and buyer commands for a public target."""
@@ -3992,6 +5167,27 @@ async def quote_api(request: Request, target_url: str = "https://www.iana.org/do
     try:
         await enforce_rate_limit("quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
         return await build_conversion_quote(target_url, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
+@app.get("/v1/proof-pack/quote", tags=["discovery"], summary="Supplier-free Proof Pack quote")
+async def proof_pack_quote_api(
+    request: Request,
+    target_url: str = "https://example.com",
+    question: Optional[str] = None,
+    pack: str = DEFAULT_PROOF_PACK,
+):
+    """Return no-spend Proof Pack pricing and buyer commands for a public target."""
+    source = attribution_source_from_request(request)
+    inc_metric("proof_pack_quotes_total")
+    inc_attribution("proof_pack_quotes", source)
+    inc_discovery_hit("discovery_proof_pack_hits_total", source)
+    try:
+        await enforce_rate_limit("proof_pack_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        return await build_proof_pack_quote(target_url, question, pack, source)
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -4056,6 +5252,9 @@ async def root(request: Request):
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quote_api": f"{PUBLIC_BASE_URL}/v1/x402/quote",
+        "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
+        "proof_pack_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
+        "proof_pack_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
         "robots": f"{PUBLIC_BASE_URL}/robots.txt",
@@ -4118,7 +5317,7 @@ async def discovery_resources(request: Request, type: Optional[str] = None, limi
     if type not in (None, "http"):
         items: list[dict[str, Any]] = []
     else:
-        items = [build_x402_resource()]
+        items = [build_x402_resource(), build_proof_pack_resource()]
 
     bounded_limit = max(1, min(limit, 100))
     start = max(offset, 0)
@@ -4207,6 +5406,7 @@ async def metrics_snapshot():
             "compute_per_ip": RATE_LIMIT_COMPUTE_PER_IP,
         },
         "pricing": {tier: float(price) for tier, price in TIER_PRICING_USDC.items()},
+        "proof_pack_pricing": {pack: float(price) for pack, price in PROOF_PACK_PRICING_USDC.items()},
     }
 
 
@@ -4381,6 +5581,180 @@ async def access_context_broker_x402(
             "eth_usdc_price_source": profitability.eth_usdc_price_source,
             "eth_usdc_floor_applied": profitability.eth_usdc_floor_applied,
         },
+    }
+
+
+@app.head("/v1/x402/proof-pack", tags=["x402"], summary="Probe Proof Pack x402 payment requirements")
+@app.get("/v1/x402/proof-pack", tags=["x402"], summary="Probe Proof Pack x402 payment requirements")
+@app.head("/from/{source}/v1/x402/proof-pack", include_in_schema=False)
+@app.get("/from/{source}/v1/x402/proof-pack", include_in_schema=False)
+async def proof_pack_x402_probe(
+    request: Request,
+    source: Optional[str] = None,
+    pack: Optional[str] = None,
+    x_axongate_pack: Optional[str] = Header(None, alias="X-AxonGate-Pack"),
+):
+    """Return a machine-readable x402 challenge for Proof Pack probes."""
+    inc_metric("requests_total")
+    inc_metric("payment_required_total")
+    inc_metric("payment_challenges_total")
+    inc_attribution("payment_challenges", attribution_source_from_request(request))
+    try:
+        await enforce_rate_limit("x402_probe_ip", client_rate_identifier(request), RATE_LIMIT_PROBE_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+
+    requested_pack = x_axongate_pack or pack or request.query_params.get("pack")
+    detail = "Payment Required. Use POST with PAYMENT-SIGNATURE and a JSON Proof Pack body."
+    raise HTTPException(
+        status_code=402,
+        detail=proof_pack_payment_required_detail(detail, requested_pack),
+        headers=proof_pack_payment_required_headers(detail, requested_pack),
+    )
+
+
+@app.post(
+    "/v1/x402/proof-pack",
+    tags=["x402"],
+    summary="Paid citation-backed Proof Pack",
+    responses={
+        200: {"description": "Proof Pack delivered"},
+        400: {"description": "Invalid target, pack, payment, or unit economics guard rejection"},
+        402: {"description": "x402 payment required"},
+        429: {"description": "Rate limit exceeded"},
+        503: {"description": "Temporary upstream or network outage; retry after 5 seconds"},
+    },
+)
+@app.post("/from/{source}/v1/x402/proof-pack", include_in_schema=False)
+async def proof_pack_x402(
+    request: Request,
+    proof_request: ProofPackRequest,
+    source: Optional[str] = None,
+    x_axongate_pack: Optional[str] = Header(None, alias="X-AxonGate-Pack"),
+):
+    """
+    Standard PayAI/x402 endpoint for Proof Packs.
+
+    The paid challenge amount is selected by ?pack= or X-AxonGate-Pack.
+    The JSON body must match that pack so clients do not pay for one report
+    level while requesting another.
+    """
+    inc_metric("requests_total")
+    inc_metric("proof_pack_requests_total")
+
+    if not hasattr(request.state, "payment_payload"):
+        source = attribution_source_from_request(request)
+        inc_metric("payment_required_total")
+        inc_metric("payment_challenges_total")
+        inc_attribution("payment_challenges", source)
+        try:
+            await enforce_rate_limit("x402_unpaid_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        except RateLimitExceeded as exc:
+            raise rate_limit_429(exc) from exc
+
+        detail = "Payment Required. Retry with PAYMENT-SIGNATURE for the selected Proof Pack requirement."
+        requested_pack = x_axongate_pack or request.query_params.get("pack") or proof_request.pack
+        raise HTTPException(
+            status_code=402,
+            detail=proof_pack_payment_required_detail(detail, requested_pack),
+            headers=proof_pack_payment_required_headers(detail, requested_pack),
+        )
+
+    payment_reference = payment_reference_from_request(request)
+    payment_identifier = payment_identifier_from_request(request)
+    source = attribution_source_from_request(request)
+    inc_metric("paid_attempts_total")
+    inc_attribution("paid_attempts", source)
+    inc_attribution("proof_pack_requests", source)
+    if payment_identifier:
+        inc_metric("payment_identifier_seen_total")
+
+    target_url: Optional[str] = None
+    pack: Optional[str] = None
+    try:
+        target_url = await assert_public_target_url(proof_request.target_url)
+        question = proof_pack_question(proof_request.question)
+        pack = resolve_proof_pack_selection(
+            request,
+            proof_request,
+            x_axongate_pack,
+            require_challenge_selector=True,
+        )
+        try:
+            await enforce_rate_limit("x402_paid_ip", client_rate_identifier(request), RATE_LIMIT_PAID_PER_IP)
+            await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
+            await enforce_rate_limit("payment_reference", payment_reference, RATE_LIMIT_PAID_PER_IP)
+        except RateLimitExceeded as exc:
+            raise rate_limit_429(exc) from exc
+
+        if await has_standard_payment_reference(payment_reference):
+            inc_metric("payment_replay_rejections_total")
+            inc_attribution("payment_replay_rejections", source)
+            raise HTTPException(
+                status_code=402,
+                detail="Payment proof has already been processed. Create a fresh x402 payment for a new Proof Pack.",
+            )
+
+        amount_usdc = price_for_proof_pack(pack)
+        internal_tier = proof_pack_internal_tier(pack)
+        force_refresh = bool(proof_request.force_refresh or pack == "deep")
+        inc_metric("payments_accepted_total")
+        inc_attribution("payments_accepted", source)
+        markdown, cache_hit, profitability = await deliver_paid_markdown(
+            target_url=target_url,
+            tier=internal_tier,
+            force_refresh=force_refresh,
+            amount_usdc=amount_usdc,
+        )
+        proof_content = await generate_proof_pack_content(
+            target_url=target_url,
+            question=question,
+            pack=pack,
+            markdown=markdown,
+            cache_hit=cache_hit,
+        )
+        await mark_standard_payment_reference(payment_reference)
+        inc_metric("payment_verified_total")
+        inc_metric("delivery_success_total")
+        inc_metric("proof_pack_delivery_success_total")
+        inc_attribution("delivery_success", source)
+        inc_attribution("proof_pack_delivery_success", source)
+    except NetworkUnavailableError as exc:
+        raise retry_later_503(exc) from exc
+    except PaymentValidationError as exc:
+        inc_metric("errors_total")
+        inc_metric("payment_validation_rejections_total")
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+    return {
+        "status": "success",
+        "target_url": target_url,
+        "question": question,
+        "pack": pack,
+        "answer": proof_content["answer"],
+        "executive_summary": proof_content["executive_summary"],
+        "confidence_score": proof_content["confidence_score"],
+        "key_claims": proof_content["key_claims"],
+        "citations": [
+            {key: value for key, value in citation.items() if key != "fingerprint"}
+            for citation in proof_content["citations"]
+        ],
+        "risks": proof_content["risks"],
+        "source_profile": proof_content["source_profile"],
+        "cache": {"hit": cache_hit},
+        "llm_used": proof_content["llm_used"],
+        "llm_model": proof_content["llm_model"],
+        "fallback_reason": proof_content["fallback_reason"],
+        "payment": {
+            "mode": "x402-facilitator",
+            "network": "eip155:8453",
+            "vault_address": load_vault_address(),
+            "token_address": BASE_USDC_ADDRESS,
+            "amount_usdc": float(price_for_proof_pack(pack)),
+            "payment_identifier": payment_identifier,
+            "source": source,
+        },
+        "ueg_receipt": ueg_receipt_payload(profitability),
     }
 
 
@@ -4781,12 +6155,55 @@ def custom_openapi() -> dict[str, Any]:
             }
         )
 
+    proof_post = schema.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post")
+    if isinstance(proof_post, dict):
+        proof_post["x-payment-info"] = {
+            **payment_info,
+            "endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+            "packHeader": "X-AxonGate-Pack",
+            "packQueryParam": "pack",
+            "proofPacks": payment_info.get("proofPacks", {}),
+        }
+        responses = proof_post.setdefault("responses", {})
+        payment_required = responses.setdefault("402", {"description": "x402 payment required"})
+        payment_required.setdefault("headers", {}).update(
+            {
+                "PAYMENT-REQUIRED": {
+                    "description": "Base64-encoded x402 PaymentRequired payload.",
+                    "schema": {"type": "string"},
+                },
+                "X-Payment-Required": {
+                    "description": "Compatibility alias for PAYMENT-REQUIRED.",
+                    "schema": {"type": "string"},
+                },
+                "X-AxonGate-Payment-Pack": {
+                    "description": "Resolved Proof Pack level for the challenge.",
+                    "schema": {"type": "string", "enum": list(PROOF_PACK_PRICING_USDC.keys())},
+                },
+                "X-AxonGate-Proof-Pack": {
+                    "description": "Human-facing Proof Pack product page.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Proof-Pack-Quote": {
+                    "description": "Supplier-free Proof Pack quote endpoint.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+            }
+        )
+
     access_request_schema = schema.get("components", {}).get("schemas", {}).get("AccessRequest")
     if isinstance(access_request_schema, dict):
         tier_property = access_request_schema.get("properties", {}).get("tier")
         if isinstance(tier_property, dict):
             tier_property["enum"] = list(TIER_PRICING_USDC.keys())
             tier_property["default"] = RECOMMENDED_TIER
+
+    proof_request_schema = schema.get("components", {}).get("schemas", {}).get("ProofPackRequest")
+    if isinstance(proof_request_schema, dict):
+        pack_property = proof_request_schema.get("properties", {}).get("pack")
+        if isinstance(pack_property, dict):
+            pack_property["enum"] = list(PROOF_PACK_PRICING_USDC.keys())
+            pack_property["default"] = DEFAULT_PROOF_PACK
 
     schema["x-payment-info"] = payment_info
     app.openapi_schema = schema

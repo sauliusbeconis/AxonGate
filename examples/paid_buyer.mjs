@@ -15,12 +15,20 @@ const prices = {
   fresh: "0.03",
   deep: "0.05",
 };
+const proofPackPrices = {
+  quick: "0.10",
+  standard: "0.25",
+  deep: "1.00",
+};
 
 const { values } = parseArgs({
   options: {
     "base-url": { type: "string" },
+    product: { type: "string" },
     "target-url": { type: "string" },
     tier: { type: "string" },
+    pack: { type: "string" },
+    question: { type: "string" },
     "force-refresh": { type: "boolean", default: false },
     "wallet-file": { type: "string" },
     "confirm-spend": { type: "string" },
@@ -33,10 +41,19 @@ const { values } = parseArgs({
   allowPositionals: false,
 });
 
+const product = (values.product || process.env.AXONGATE_PRODUCT || "clean-context").toLowerCase();
+if (!["clean-context", "proof-pack"].includes(product)) {
+  throw new Error('Unsupported product. Use "clean-context" or "proof-pack".');
+}
+
 const tier = (values.tier || process.env.AXONGATE_TIER || "starter").toLowerCase();
-const expectedSpend = prices[tier];
-if (!expectedSpend) {
+const pack = (values.pack || process.env.AXONGATE_PROOF_PACK || "standard").toLowerCase();
+const expectedSpend = product === "proof-pack" ? proofPackPrices[pack] : prices[tier];
+if (!expectedSpend && product === "clean-context") {
   throw new Error(`Unsupported tier "${tier}". Use one of: ${Object.keys(prices).join(", ")}.`);
+}
+if (!expectedSpend && product === "proof-pack") {
+  throw new Error(`Unsupported Proof Pack "${pack}". Use one of: ${Object.keys(proofPackPrices).join(", ")}.`);
 }
 
 const confirmSpend = values["confirm-spend"] || process.env.AXONGATE_CONFIRM_SPEND;
@@ -63,17 +80,26 @@ const forceRefresh = Boolean(values["force-refresh"] || process.env.AXONGATE_FOR
 const retryEndpoint = `${baseUrl}/v1/x402/retry`;
 const timeoutMs = Number(values.timeout || process.env.AXONGATE_CLIENT_TIMEOUT_MS || 45000);
 const source = normalizeSource(values.source || process.env.AXONGATE_SOURCE || "paid_buyer");
+const question = values.question || process.env.AXONGATE_PROOF_QUESTION || "What does this source establish?";
 const paymentId = normalizePaymentId(
   values["payment-id"] || process.env.AXONGATE_PAYMENT_ID || `axongate_${source}_${crypto.randomUUID().replaceAll("-", "")}`,
 );
-const query = new URLSearchParams({ tier, source });
-const endpoint = `${baseUrl}/v1/x402/access?${query.toString()}`;
+const query = product === "proof-pack" ? new URLSearchParams({ pack, source }) : new URLSearchParams({ tier, source });
+const endpointPath = product === "proof-pack" ? "/v1/x402/proof-pack" : "/v1/x402/access";
+const endpoint = `${baseUrl}${endpointPath}?${query.toString()}`;
 
-const payload = {
-  target_url: targetUrl,
-  tier,
-  force_refresh: forceRefresh,
-};
+const payload = product === "proof-pack"
+  ? {
+      target_url: targetUrl,
+      question,
+      pack,
+      force_refresh: forceRefresh,
+    }
+  : {
+      target_url: targetUrl,
+      tier,
+      force_refresh: forceRefresh,
+    };
 
 function decimalUsdcToUnits(value) {
   const [whole, fraction = ""] = value.split(".");
@@ -130,7 +156,12 @@ function summarizeBody(body) {
     status: body.json.status,
     target_url: body.json.target_url,
     tier: body.json.tier,
+    pack: body.json.pack,
     markdown_chars: typeof body.json.markdown === "string" ? body.json.markdown.length : 0,
+    answer_chars: typeof body.json.answer === "string" ? body.json.answer.length : 0,
+    citation_count: Array.isArray(body.json.citations) ? body.json.citations.length : 0,
+    confidence_score: body.json.confidence_score,
+    llm_used: body.json.llm_used,
     cache: body.json.cache,
     payment: body.json.payment,
     ueg_receipt: body.json.ueg_receipt,
@@ -158,6 +189,18 @@ function paymentSummary(paymentRequired) {
     extra: requirement.extra,
     extensions: Object.keys(paymentRequired.extensions || {}),
   };
+}
+
+function productHeaders() {
+  return product === "proof-pack"
+    ? {
+        "X-AxonGate-Pack": pack,
+        "X-AxonGate-Source": source,
+      }
+    : {
+        "X-AxonGate-Tier": tier,
+        "X-AxonGate-Source": source,
+      };
 }
 
 async function submitWithRetryCreditIfNeeded(response, body) {
@@ -211,9 +254,12 @@ const httpClient = new x402HTTPClient(client);
 
 console.log(JSON.stringify({
   buyer: account.address,
+  product,
   endpoint,
   target_url: targetUrl,
-  tier,
+  tier: product === "clean-context" ? tier : undefined,
+  pack: product === "proof-pack" ? pack : undefined,
+  question: product === "proof-pack" ? question : undefined,
   force_refresh: forceRefresh,
   source,
   payment_id: paymentId,
@@ -224,8 +270,7 @@ const challengeResponse = await fetchWithTimeout(endpoint, {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    "X-AxonGate-Tier": tier,
-    "X-AxonGate-Source": source,
+    ...productHeaders(),
   },
   body: JSON.stringify(payload),
 });
@@ -239,7 +284,10 @@ console.log("CHALLENGE");
 console.log(JSON.stringify({ status: challengeResponse.status, ...summary }, null, 2));
 
 const expectedUnits = decimalUsdcToUnits(expectedSpend);
-if (summary.amount !== expectedUnits || summary.extra?.tier !== tier) {
+if (product === "proof-pack" && (summary.amount !== expectedUnits || summary.extra?.pack !== pack)) {
+  throw new Error(`Challenge mismatch. Expected ${expectedUnits} for ${pack}, got ${summary.amount} for ${summary.extra?.pack}.`);
+}
+if (product === "clean-context" && (summary.amount !== expectedUnits || summary.extra?.tier !== tier)) {
   throw new Error(`Challenge mismatch. Expected ${expectedUnits} for ${tier}, got ${summary.amount} for ${summary.extra?.tier}.`);
 }
 
@@ -251,8 +299,7 @@ async function submitPaid(label) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-AxonGate-Tier": tier,
-      "X-AxonGate-Source": source,
+      ...productHeaders(),
       ...paymentHeaders,
     },
     body: JSON.stringify(payload),

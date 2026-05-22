@@ -17,6 +17,7 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 | `x402-list` | `https://api.axongate.one/from/x402-list/v1/x402/starter` | `https://api.axongate.one/docs?source=x402-list` | `https://api.axongate.one/paid-test?source=x402-list` |
 | `payanagent-starter` | `https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter` | `https://api.axongate.one/docs?source=payanagent-starter` | `https://api.axongate.one/paid-test?source=payanagent-starter` |
 | `payanagent` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent` | `https://api.axongate.one/docs?source=payanagent` | `https://api.axongate.one/paid-test?source=payanagent` |
+| `payanagent-proof` | `https://api.axongate.one/v1/x402/proof-pack?pack=standard&source=payanagent` | `https://api.axongate.one/proof-pack?source=payanagent` | `https://api.axongate.one/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=payanagent` |
 | `agora402` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=agora402` | `https://api.axongate.one/docs?source=agora402` | `https://api.axongate.one/paid-test?source=agora402` |
 | `agent-bazaar` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=agent-bazaar` | `https://api.axongate.one/docs?source=agent-bazaar` | `https://api.axongate.one/paid-test?source=agent-bazaar` |
 | `the402` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=the402` | `https://api.axongate.one/docs?source=the402` | `https://api.axongate.one/paid-test?source=the402` |
@@ -55,6 +56,21 @@ Custom-domain replacement service payload:
   "priceInCents": 3,
   "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent",
   "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"]
+}
+```
+
+Proof Pack service payload:
+
+```json
+{
+  "name": "AxonGate Proof Packs",
+  "description": "Paid citation-backed evidence reports for agent builders. Returns answer, executive summary, key claims, citations, risks, source hash, payment metadata, and UEG receipt.",
+  "serviceType": "api",
+  "category": "Data",
+  "pricingModel": "per_request",
+  "priceInCents": 25,
+  "endpoint": "https://api.axongate.one/v1/x402/proof-pack?pack=standard&source=payanagent",
+  "tags": ["x402", "base", "usdc", "proof-pack", "citations", "evidence", "agent-builders"]
 }
 ```
 
@@ -115,10 +131,10 @@ Suggested update payload:
   "website_url": "https://api.axongate.one/manifest.json?source=x402-list",
   "email": "<operator email>",
   "category": "Data",
-  "description": "AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.",
-  "endpoint_paths": ["/from/x402-list/v1/x402/starter"],
-  "endpoints": ["/from/x402-list/v1/x402/starter"],
-  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoint is a source-attribution alias that serves the same canonical x402 terms as /v1/x402/access. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier, official Bazaar discovery metadata, optional payment-identifier, source attribution, starter sample pricing, and cache-only pricing."
+  "description": "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation.",
+  "endpoint_paths": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
+  "endpoints": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
+  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, and supplier-free quote APIs."
 }
 ```
 

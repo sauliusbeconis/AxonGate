@@ -18,6 +18,7 @@ import httpx
 SUBMIT_URL = "https://x402-list.com/api/v1/submit"
 AXONGATE_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", "https://api.axongate.one").rstrip("/")
 X402_LIST_SOURCE_PATH = "/from/x402-list/v1/x402/starter"
+X402_LIST_PROOF_PACK_PATH = "/from/x402-list/v1/x402/proof-pack"
 
 
 def build_payload(email: str) -> dict:
@@ -28,23 +29,24 @@ def build_payload(email: str) -> dict:
         "email": email,
         "category": "Data",
         "description": (
-            "AxonGate is an x402-paid Clean Context Broker on Base. "
-            "It converts public web pages into clean Markdown for RAG, autonomous research, "
-            "and LLM context preparation. The starter tier gives agents a 0.012 USDC first "
-            "paid conversion path before live fresh extraction."
+            "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. "
+            "It converts public web pages into clean Markdown and citation-backed evidence reports "
+            "for RAG, autonomous research, and LLM context preparation. The starter tier gives "
+            "agents a 0.012 USDC first paid conversion path before live fresh extraction."
         ),
-        "endpoint_paths": [X402_LIST_SOURCE_PATH],
-        "endpoints": [X402_LIST_SOURCE_PATH],
+        "endpoint_paths": [X402_LIST_SOURCE_PATH, X402_LIST_PROOF_PACK_PATH],
+        "endpoints": [X402_LIST_SOURCE_PATH, X402_LIST_PROOF_PACK_PATH],
         "notes": (
             "Basename axongate.base.eth resolves to the AxonGate vault and advertises "
             "the manifest URL in its text records. The standard x402 endpoint supports "
-            "tiered pricing via ?tier= or X-AxonGate-Tier. The submitted path is a source "
-            "alias for attribution and serves starter x402 payment terms. "
-            "The endpoint supports official Bazaar discovery metadata, "
+            "tiered pricing via ?tier= or X-AxonGate-Tier, and Proof Packs support pack pricing "
+            "via ?pack= or X-AxonGate-Pack. The submitted paths are source aliases for attribution "
+            "and serve starter and standard Proof Pack x402 payment terms. "
+            "The endpoints support official Bazaar discovery metadata, "
             "optional payment-identifier, source attribution, a supplier-free quote API, "
-            "starter sample pricing, and cache-only pricing. "
+            "a supplier-free Proof Pack quote API, starter sample pricing, and cache-only pricing. "
             "Discovery metadata is available at /.well-known/x402, /.well-known/agent.json, "
-            "/v1/x402/quote, and /discovery/resources."
+            "/v1/x402/quote, /v1/proof-pack/quote, and /discovery/resources."
         ),
     }
 

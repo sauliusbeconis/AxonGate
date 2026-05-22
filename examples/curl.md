@@ -42,6 +42,16 @@ ready buyer command.
 curl "$AXONGATE_BASE_URL/v1/x402/quote?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&source=$AXONGATE_SOURCE"
 ```
 
+## Proof Pack Quote
+
+Proof Packs return citation-backed evidence reports instead of raw markdown.
+The quote endpoint validates the target, returns exact x402 amounts, and does
+not spend USDC or trigger supplier work.
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
+```
+
 ## Standard x402 Paid Request
 
 For a real Base USDC smoke test from a burner wallet, use the repo-native buyer:
@@ -90,6 +100,41 @@ Successful responses include:
   }
 }
 ```
+
+## Standard x402 Proof Pack
+
+For a real Proof Pack payment from the repo-native buyer:
+
+```bash
+npm run paid:buyer -- \
+  --product proof-pack \
+  --wallet-file "C:/path/to/buyer_wallet.json" \
+  --target-url "$TARGET_URL" \
+  --question "What does this source establish?" \
+  --pack standard \
+  --confirm-spend 0.25 \
+  --source docs
+```
+
+```bash
+export PAYMENT_SIGNATURE="<x402 payment proof from your wallet or facilitator>"
+
+curl -sS -X POST "$AXONGATE_BASE_URL/v1/x402/proof-pack?pack=standard" \
+  -H "Content-Type: application/json" \
+  -H "PAYMENT-SIGNATURE: $PAYMENT_SIGNATURE" \
+  -H "X-AxonGate-Pack: standard" \
+  -H "X-AxonGate-Source: $AXONGATE_SOURCE" \
+  -d "{
+    \"target_url\": \"$TARGET_URL\",
+    \"question\": \"What does this source establish?\",
+    \"pack\": \"standard\",
+    \"force_refresh\": false
+  }"
+```
+
+Successful Proof Pack responses include `answer`, `executive_summary`,
+`confidence_score`, `key_claims`, `citations`, `risks`, `source_profile`,
+`cache`, `payment`, and `ueg_receipt`.
 
 ## Starter And Cached Tiers
 
@@ -152,6 +197,7 @@ curl -sS -X POST "$AXONGATE_BASE_URL/v1/access" \
 ```bash
 curl -sS "$AXONGATE_BASE_URL/manifest.json"
 curl -sS "$AXONGATE_BASE_URL/quickstart"
+curl -sS "$AXONGATE_BASE_URL/proof-pack"
 curl -sS "$AXONGATE_BASE_URL/llms.txt"
 curl -sS "$AXONGATE_BASE_URL/.well-known/x402"
 curl -sS "$AXONGATE_BASE_URL/discovery/resources"

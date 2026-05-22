@@ -40,6 +40,7 @@ async def main() -> None:
             "/quickstart",
             "/paid-test",
             "/quote",
+            "/proof-pack",
             "/demo",
             "/robots.txt",
             "/sitemap.xml",
@@ -92,6 +93,87 @@ async def main() -> None:
         assert quote["tiers"]["starter"]["amount_units"] == "12000", "quote endpoint should expose starter amount"
         assert "buyer_command" in quote["next_steps"], "quote endpoint missing buyer command"
 
+        proof_quote = (
+            await client.get(
+                "/v1/proof-pack/quote?target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
+            )
+        ).json()
+        assert proof_quote["status"] == "proof_pack_quote", "Proof Pack quote endpoint returned wrong status"
+        assert proof_quote["supplier_spend"] is False, "Proof Pack quote should not trigger supplier spend"
+        assert proof_quote["amount_units"] == "100000", "quick Proof Pack should cost 0.10 USDC"
+        assert proof_quote["packs"]["standard"]["amount_units"] == "250000", "standard Proof Pack amount mismatch"
+        assert "buyer_command" in proof_quote["next_steps"], "Proof Pack quote missing buyer command"
+
+        proof_probe = await client.get("/v1/x402/proof-pack?pack=standard")
+        assert proof_probe.status_code == 402, f"Proof Pack probe returned {proof_probe.status_code}"
+        proof_payload = json.loads(base64.b64decode(proof_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
+        assert proof_payload["accepts"][0]["amount"] == "250000", "standard Proof Pack should cost 0.25 USDC"
+        assert proof_payload["accepts"][0]["extra"]["pack"] == "standard", "standard Proof Pack challenge mismatch"
+        assert "extensions" in proof_payload, "Proof Pack challenge missing official extensions"
+
+        quick_proof_probe = await client.get("/v1/x402/proof-pack?pack=quick")
+        quick_proof_payload = json.loads(
+            base64.b64decode(quick_proof_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8")
+        )
+        assert quick_proof_payload["accepts"][0]["amount"] == "100000", "quick Proof Pack should cost 0.10 USDC"
+
+        deep_proof_probe = await client.get("/v1/x402/proof-pack?pack=deep")
+        deep_proof_payload = json.loads(
+            base64.b64decode(deep_proof_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8")
+        )
+        assert deep_proof_payload["accepts"][0]["amount"] == "1000000", "deep Proof Pack should cost 1.00 USDC"
+
+        proof_source_alias = await client.get("/from/x402-list/v1/x402/proof-pack?pack=standard")
+        assert proof_source_alias.status_code == 402, "Proof Pack source alias should return a challenge"
+
+        unpaid_proof_post = await client.post(
+            "/v1/x402/proof-pack?pack=standard",
+            json={
+                "target_url": "https://example.com",
+                "question": "What does this source establish?",
+                "pack": "standard",
+                "force_refresh": False,
+            },
+        )
+        assert unpaid_proof_post.status_code == 402, f"unpaid Proof Pack POST returned {unpaid_proof_post.status_code}"
+        unpaid_proof_challenge = unpaid_proof_post.headers.get("PAYMENT-REQUIRED")
+        assert unpaid_proof_challenge, "unpaid Proof Pack POST missing payment challenge"
+        unpaid_proof_payload = json.loads(base64.b64decode(unpaid_proof_challenge).decode("utf-8"))
+        assert unpaid_proof_payload["accepts"][0]["amount"] == "250000", "unpaid Proof Pack POST amount mismatch"
+
+        citations = gateway.extract_proof_pack_evidence(
+            "# Source\n\nAxonGate Proof Packs return cited claims for agent builders.",
+            "https://example.com/source",
+            "standard",
+        )
+        assert citations[0]["id"] == "c1", "Proof Pack evidence IDs should be stable"
+        proof_fallback = await gateway.generate_proof_pack_content(
+            target_url="https://example.com/source",
+            question="What does this source establish?",
+            pack="standard",
+            markdown="# Source\n\nAxonGate Proof Packs return cited claims for agent builders.",
+            cache_hit=False,
+        )
+        assert proof_fallback["llm_used"] is False, "LLM-disabled Proof Pack should use deterministic fallback"
+        assert proof_fallback["source_profile"]["content_sha256"], "Proof Pack fallback missing source hash"
+        try:
+            gateway.validate_json_schema(instance={"answer": "missing fields"}, schema=gateway.PROOF_PACK_LLM_SCHEMA)
+            raise AssertionError("malformed Proof Pack LLM output should fail schema validation")
+        except gateway.JsonSchemaValidationError:
+            pass
+        sanitized = gateway.sanitize_llm_proof_pack(
+            {
+                "answer": "Unsupported claim",
+                "executive_summary": "Unsupported claim",
+                "confidence_score": 0.9,
+                "key_claims": [{"claim": "Not in evidence", "citation_ids": ["missing"], "confidence": 0.9}],
+                "risks": [],
+            },
+            citations,
+            proof_fallback,
+        )
+        assert sanitized["llm_used"] is False, "unsupported LLM claims should fall back or be dropped"
+
         unpaid_post = await client.post(
             "/v1/x402/access?tier=fresh",
             json={"target_url": "https://example.com", "tier": "fresh", "force_refresh": True},
@@ -109,12 +191,16 @@ async def main() -> None:
         assert "extensions" in x402_discovery, "public x402 discovery missing protocol extensions"
         assert "metadata" in x402_discovery, "public x402 discovery should keep non-protocol metadata"
         assert "cached" in x402_discovery["metadata"]["tiers"], "cached tier missing from public discovery"
+        assert "proofPacks" in x402_discovery["metadata"], "Proof Pack pricing missing from public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})
         assert schemas.get("AccessRequest", {}).get("examples"), "AccessRequest examples missing"
+        assert schemas.get("ProofPackRequest", {}).get("examples"), "ProofPackRequest examples missing"
         post_operation = openapi.get("paths", {}).get("/v1/x402/access", {}).get("post", {})
         assert post_operation.get("x-payment-info"), "OpenAPI payment extension missing from paid endpoint"
+        proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
+        assert proof_operation.get("x-payment-info"), "OpenAPI payment extension missing from Proof Pack endpoint"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
 
         metrics = (await client.get("/metrics")).json()
@@ -131,6 +217,7 @@ async def main() -> None:
         assert "attribution_redis_key" in metrics["metrics_backend"], "attribution Redis key missing from metrics"
         assert "attribution_events_redis_key" in metrics["metrics_backend"], "attribution event Redis key missing from metrics"
         assert "alerts" in metrics, "alerts block missing from metrics"
+        assert "proof_pack_pricing" in metrics, "Proof Pack pricing missing from metrics"
 
 
 if __name__ == "__main__":
