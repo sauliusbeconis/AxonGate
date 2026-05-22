@@ -41,6 +41,8 @@ async def main() -> None:
             "/paid-test",
             "/quote",
             "/proof-pack",
+            "/proof-pack/sample",
+            "/v1/proof-pack/sample",
             "/demo",
             "/robots.txt",
             "/sitemap.xml",
@@ -103,6 +105,18 @@ async def main() -> None:
         assert proof_quote["amount_units"] == "100000", "quick Proof Pack should cost 0.10 USDC"
         assert proof_quote["packs"]["standard"]["amount_units"] == "250000", "standard Proof Pack amount mismatch"
         assert "buyer_command" in proof_quote["next_steps"], "Proof Pack quote missing buyer command"
+        assert proof_quote["next_steps"]["proof_pack_sample_api"].endswith(
+            "/v1/proof-pack/sample"
+        ), "Proof Pack quote should point to sample JSON"
+
+        proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
+        assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
+        assert proof_sample["supplier_spend"] is False, "Proof Pack sample should not spend supplier budget"
+        assert proof_sample["payment"]["mode"] == "sample-no-payment", "Proof Pack sample should not require payment"
+        assert proof_sample["payment"]["live_pack_amount_units"] == "100000", "Proof Pack sample live quick amount mismatch"
+        assert proof_sample["cache"]["sample"] is True, "Proof Pack sample should identify embedded cache material"
+        assert proof_sample["llm_used"] is False, "Proof Pack sample must not call the LLM"
+        assert proof_sample["citations"], "Proof Pack sample missing citations"
 
         proof_probe = await client.get("/v1/x402/proof-pack?pack=standard")
         assert proof_probe.status_code == 402, f"Proof Pack probe returned {proof_probe.status_code}"
@@ -192,6 +206,7 @@ async def main() -> None:
         assert "metadata" in x402_discovery, "public x402 discovery should keep non-protocol metadata"
         assert "cached" in x402_discovery["metadata"]["tiers"], "cached tier missing from public discovery"
         assert "proofPacks" in x402_discovery["metadata"], "Proof Pack pricing missing from public discovery"
+        assert "proofPackSampleApi" in x402_discovery["metadata"], "Proof Pack sample missing from public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})

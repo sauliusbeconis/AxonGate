@@ -46,6 +46,7 @@
       "starter_sample_pricing",
       "proof_pack_evidence_reports",
       "citation_backed_reports",
+      "proof_pack_sample_preview",
       "llm_assisted_deterministic_fallback"
     ],
     "input_modes": [
@@ -144,6 +145,8 @@
     "quote": "https://api.axongate.one/quote",
     "quote_api": "https://api.axongate.one/v1/x402/quote",
     "proof_pack": "https://api.axongate.one/proof-pack",
+    "proof_pack_sample": "https://api.axongate.one/proof-pack/sample",
+    "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
     "proof_pack_quote_api": "https://api.axongate.one/v1/proof-pack/quote",
     "proof_pack_access": "https://api.axongate.one/v1/x402/proof-pack",
     "demo": "https://api.axongate.one/demo",
@@ -223,6 +226,8 @@
     "method": "POST",
     "path": "/v1/x402/proof-pack",
     "docs": "https://api.axongate.one/proof-pack",
+    "sample": "https://api.axongate.one/proof-pack/sample",
+    "sample_api": "https://api.axongate.one/v1/proof-pack/sample",
     "quote_api": "https://api.axongate.one/v1/proof-pack/quote",
     "payload_schema": {
       "target_url": "string (valid HTTP/HTTPS URL)",
@@ -285,6 +290,8 @@
       "openapi": "https://api.axongate.one/openapi.json",
       "quote": "https://api.axongate.one/v1/x402/quote",
       "proof_pack": "https://api.axongate.one/proof-pack",
+      "proof_pack_sample": "https://api.axongate.one/proof-pack/sample",
+      "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
       "proof_pack_quote": "https://api.axongate.one/v1/proof-pack/quote",
       "proof_pack_endpoint": "https://api.axongate.one/v1/x402/proof-pack",
       "sitemap": "https://api.axongate.one/sitemap.xml"

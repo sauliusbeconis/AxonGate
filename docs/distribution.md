@@ -25,6 +25,13 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 | `402agents` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=402agents` | `https://api.axongate.one/docs?source=402agents` | `https://api.axongate.one/paid-test?source=402agents` |
 | `github` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=github` | `https://api.axongate.one/docs?source=github` | `https://api.axongate.one/paid-test?source=github` |
 
+No-spend Proof Pack sample URLs for marketplace reviewers:
+
+```text
+https://api.axongate.one/proof-pack/sample?source=reviewer
+https://api.axongate.one/v1/proof-pack/sample?source=reviewer
+```
+
 ## Current Status
 
 | Target | Status | Action |

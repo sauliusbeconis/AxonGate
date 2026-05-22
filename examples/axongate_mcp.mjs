@@ -297,6 +297,35 @@ server.registerTool(
 );
 
 server.registerTool(
+  "get_proof_pack_sample",
+  {
+    title: "Get Proof Pack Sample",
+    description: "Fetch a no-spend AxonGate Proof Pack sample so an agent can inspect the citation-backed report shape before paying.",
+    inputSchema: {
+      source: z.string().max(48).default(sourceDefault),
+      max_answer_chars: z.number().int().min(300).max(8000).default(1800),
+      max_citation_excerpt_chars: z.number().int().min(80).max(1200).default(360),
+    },
+  },
+  async ({ source, max_answer_chars, max_citation_excerpt_chars }) => {
+    const normalizedSource = normalizeSource(source);
+    const endpoint = `${baseUrl()}/v1/proof-pack/sample?${new URLSearchParams({ source: normalizedSource })}`;
+    const response = await fetch(endpoint);
+    const body = await readJsonOrText(response);
+    const result = {
+      endpoint,
+      http_status: response.status,
+      report: summarizeProofPack(body, max_answer_chars, max_citation_excerpt_chars),
+      next_steps: body.json?.next_steps,
+    };
+    return {
+      isError: !response.ok,
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    };
+  },
+);
+
+server.registerTool(
   "probe_proof_pack_terms",
   {
     title: "Probe Proof Pack Payment Terms",

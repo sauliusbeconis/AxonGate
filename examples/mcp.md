@@ -2,12 +2,13 @@
 
 This server exposes AxonGate as MCP tools for agent clients.
 
-It has six tools:
+It has seven tools:
 
 - `quote_clean_context`: gets no-spend tier guidance and a ready buyer command.
 - `probe_payment_terms`: fetches the x402 challenge without spending USDC.
 - `fetch_clean_context`: pays AxonGate with x402 and returns clean Markdown.
 - `quote_proof_pack`: gets no-spend Proof Pack pricing and a ready buyer command.
+- `get_proof_pack_sample`: fetches a no-spend Proof Pack sample report.
 - `probe_proof_pack_terms`: fetches the Proof Pack x402 challenge without spending USDC.
 - `fetch_proof_pack`: pays AxonGate with x402 and returns a citation-backed evidence report.
 
@@ -78,6 +79,14 @@ Proof Pack quote:
   "target_url": "https://www.iana.org/domains/reserved",
   "question": "What does this source establish about reserved domains?",
   "pack": "quick",
+  "source": "mcp-proof"
+}
+```
+
+Proof Pack sample:
+
+```json
+{
   "source": "mcp-proof"
 }
 ```

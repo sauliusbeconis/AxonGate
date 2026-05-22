@@ -45,6 +45,12 @@ https://api.axongate.one/v1/x402/quote
 Proof Pack page:
 https://api.axongate.one/proof-pack
 
+Proof Pack sample page:
+https://api.axongate.one/proof-pack/sample
+
+Proof Pack sample API:
+https://api.axongate.one/v1/proof-pack/sample
+
 Proof Pack quote API:
 https://api.axongate.one/v1/proof-pack/quote
 
@@ -71,6 +77,8 @@ Endpoint paths:
 /quote
 /v1/x402/quote
 /proof-pack
+/proof-pack/sample
+/v1/proof-pack/sample
 /v1/proof-pack/quote
 /v1/x402/proof-pack
 ```

@@ -45,8 +45,13 @@ curl "$AXONGATE_BASE_URL/v1/x402/quote?target_url=https%3A%2F%2Fwww.iana.org%2Fd
 ## Proof Pack Quote
 
 Proof Packs return citation-backed evidence reports instead of raw markdown.
-The quote endpoint validates the target, returns exact x402 amounts, and does
-not spend USDC or trigger supplier work.
+Use the sample endpoint to inspect the response shape before paying. The quote
+endpoint validates the target, returns exact x402 amounts, and does not spend
+USDC or trigger supplier work.
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/proof-pack/sample?source=$AXONGATE_SOURCE"
+```
 
 ```bash
 curl "$AXONGATE_BASE_URL/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
