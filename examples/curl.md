@@ -41,8 +41,8 @@ npm install
 npm run paid:buyer -- \
   --wallet-file "C:/path/to/buyer_wallet.json" \
   --target-url "https://www.iana.org/domains/reserved" \
-  --tier cached \
-  --confirm-spend 0.015 \
+  --tier starter \
+  --confirm-spend 0.012 \
   --source docs \
   --replay
 ```
@@ -81,7 +81,15 @@ Successful responses include:
 }
 ```
 
-## Cached Tier
+## Starter And Cached Tiers
+
+The `starter` tier is the cheapest first-conversion path. It only serves the
+starter sample target or already cached content, so it does not trigger supplier
+work on a cache miss.
+
+```bash
+curl -i "$AXONGATE_BASE_URL/v1/x402/access?tier=starter"
+```
 
 The `cached` tier is cheaper and only succeeds when AxonGate already has a
 cached copy from a previous `basic` or `deep` request. It will not trigger Jina

@@ -26,7 +26,7 @@ Use a burner wallet JSON with `private_key` or `privateKey`.
       "env": {
         "AXONGATE_BASE_URL": "https://web-production-8136ee.up.railway.app",
         "AXONGATE_WALLET_FILE": "C:/path/to/burner_wallet.json",
-        "AXONGATE_CONFIRM_SPEND": "0.03"
+        "AXONGATE_CONFIRM_SPEND": "0.012"
       }
     }
   }
@@ -39,7 +39,7 @@ Probe first:
 
 ```json
 {
-  "tier": "fresh",
+  "tier": "starter",
   "source": "mcp"
 }
 ```
@@ -49,13 +49,17 @@ Paid fetch:
 ```json
 {
   "target_url": "https://www.iana.org/domains/reserved",
-  "tier": "fresh",
-  "force_refresh": true,
-  "confirm_spend_usdc": "0.03",
+  "tier": "starter",
+  "force_refresh": false,
+  "confirm_spend_usdc": "0.012",
   "source": "mcp",
   "max_markdown_chars": 12000
 }
 ```
+
+The `starter` tier is for first conversion on the sample target or existing
+cache. Use `fresh` with `confirm_spend_usdc: "0.03"` for live public web
+context.
 
 The paid tool refuses to spend unless `confirm_spend_usdc` or
 `AXONGATE_CONFIRM_SPEND` exactly matches the selected tier price.

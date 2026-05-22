@@ -9,6 +9,7 @@ import { x402Client, x402HTTPClient } from "@x402/fetch";
 loadEnv();
 
 const prices = {
+  starter: "0.012",
   cached: "0.015",
   basic: "0.02",
   fresh: "0.03",
@@ -32,7 +33,7 @@ const { values } = parseArgs({
   allowPositionals: false,
 });
 
-const tier = (values.tier || process.env.AXONGATE_TIER || "fresh").toLowerCase();
+const tier = (values.tier || process.env.AXONGATE_TIER || "starter").toLowerCase();
 const expectedSpend = prices[tier];
 if (!expectedSpend) {
   throw new Error(`Unsupported tier "${tier}". Use one of: ${Object.keys(prices).join(", ")}.`);

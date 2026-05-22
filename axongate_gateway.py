@@ -178,14 +178,17 @@ SOURCE_ALIAS_PATHS = (
     "github",
 )
 REQUIRED_USDC_AMOUNT = int(REQUIRED_USDC_FEE * (Decimal(10) ** USDC_DECIMALS))
+STARTER_TIER = "starter"
 CACHE_ONLY_TIER = "cached"
 TIER_PRICING_USDC = {
+    STARTER_TIER: Decimal(os.getenv("AXONGATE_STARTER_PRICE_USDC", "0.012")),
     CACHE_ONLY_TIER: Decimal(os.getenv("AXONGATE_CACHED_PRICE_USDC", "0.015")),
     "basic": Decimal(os.getenv("AXONGATE_BASIC_PRICE_USDC", "0.02")),
     "fresh": Decimal(os.getenv("AXONGATE_FRESH_PRICE_USDC", "0.03")),
     "deep": Decimal(os.getenv("AXONGATE_DEEP_PRICE_USDC", "0.05")),
 }
-CACHED_TIER_CACHE_SOURCES = (CACHE_ONLY_TIER, "basic", "deep")
+CACHE_ONLY_TIERS = {STARTER_TIER, CACHE_ONLY_TIER}
+CACHED_TIER_CACHE_SOURCES = (STARTER_TIER, CACHE_ONLY_TIER, "basic", "deep")
 RECOMMENDED_TIER = os.getenv("AXONGATE_RECOMMENDED_TIER", "fresh").strip().lower()
 if RECOMMENDED_TIER not in TIER_PRICING_USDC:
     RECOMMENDED_TIER = "fresh"
@@ -308,7 +311,7 @@ PAYMENT_PROOF_HEADERS = (
 
 class AccessRequest(BaseModel):
     target_url: str = Field(..., description="HTTP or HTTPS URL to convert into clean markdown")
-    tier: str = Field(RECOMMENDED_TIER, description="Pricing tier: cached, basic, fresh, or deep")
+    tier: str = Field(RECOMMENDED_TIER, description="Pricing tier: starter, cached, basic, fresh, or deep")
     force_refresh: bool = Field(False, description="Bypass cache when true")
 
     model_config = {
@@ -948,6 +951,10 @@ def normalize_tier(tier: Optional[str]) -> str:
     return normalized
 
 
+def is_cache_only_tier(tier: str) -> bool:
+    return normalize_tier(tier) in CACHE_ONLY_TIERS
+
+
 def usdc_units(amount: Decimal) -> int:
     return int(amount * (Decimal(10) ** USDC_DECIMALS))
 
@@ -967,6 +974,8 @@ def cache_ttl_for_tier(tier: str, force_refresh: bool = False) -> int:
 
 def cache_policy_for_tier(tier: str) -> str:
     normalized_tier = normalize_tier(tier)
+    if normalized_tier == STARTER_TIER:
+        return "starter sample or cache-only; no upstream fetch on miss"
     if normalized_tier == CACHE_ONLY_TIER:
         return "cache-only; no upstream fetch on miss"
     if normalized_tier == "fresh":
@@ -974,6 +983,39 @@ def cache_policy_for_tier(tier: str) -> str:
     if normalized_tier == "deep":
         return f"short cache, {cache_ttl_for_tier(normalized_tier)} seconds"
     return f"standard cache, {cache_ttl_for_tier(normalized_tier)} seconds"
+
+
+STARTER_SAMPLE_MARKDOWN = """# IANA-managed Reserved Domains
+
+This starter sample demonstrates AxonGate's paid delivery shape without spending
+supplier budget. The source page describes domains reserved for documentation
+and examples, including `example.com`, `example.net`, `example.org`, and the
+`invalid`, `localhost`, `test`, and `example` top-level domains.
+
+## Why Agents Use This
+
+- Validate x402 payment plumbing with a tiny paid call.
+- Confirm AxonGate returns clean Markdown in a stable JSON contract.
+- Verify source attribution and replay protection before production spend.
+
+For live, current web context, use the `fresh` tier with the target URL your
+agent actually needs to read.
+"""
+
+STARTER_SAMPLE_TARGETS = {
+    "https://www.iana.org/domains/reserved",
+    "https://www.iana.org/domains/reserved/",
+    "https://example.com",
+    "https://example.com/",
+}
+
+
+def starter_sample_markdown_for_target(target_url: str) -> Optional[str]:
+    normalized = target_url.strip().lower().rstrip("/")
+    normalized_targets = {item.rstrip("/") for item in STARTER_SAMPLE_TARGETS}
+    if normalized in normalized_targets:
+        return STARTER_SAMPLE_MARKDOWN
+    return None
 
 
 def build_access_input_schema() -> dict[str, Any]:
@@ -1037,7 +1079,7 @@ def build_access_response_example(tier: str = RECOMMENDED_TIER) -> dict[str, Any
         "target_url": "https://example.com/source",
         "tier": normalized_tier,
         "markdown": "# Example Domain\n\nExample clean markdown...",
-        "cache": {"hit": normalized_tier == CACHE_ONLY_TIER},
+        "cache": {"hit": is_cache_only_tier(normalized_tier)},
         "payment": {
             "mode": "x402-facilitator",
             "network": "eip155:8453",
@@ -2431,9 +2473,9 @@ async def get_clean_markdown(target_url: str, tier: str, force_refresh: bool = F
         return cached, True
 
     inc_metric("cache_misses_total")
-    if normalized_tier == CACHE_ONLY_TIER:
+    if is_cache_only_tier(normalized_tier):
         raise PaymentValidationError(
-            "Cached tier is only available when AxonGate already has a cached copy. Use basic, fresh, or deep first."
+            "Starter and cached tiers require the starter sample or an existing AxonGate cache entry. Use basic, fresh, or deep for a live fetch."
         )
 
     markdown = await fetch_clean_markdown(target_url)
@@ -2447,7 +2489,12 @@ async def get_cache_candidate_for_tier(target_url: str, tier: str, force_refresh
     if force_refresh or normalized_tier == "fresh":
         return None
 
-    if normalized_tier == CACHE_ONLY_TIER:
+    if normalized_tier == STARTER_TIER:
+        sample_markdown = starter_sample_markdown_for_target(target_url)
+        if sample_markdown is not None:
+            return sample_markdown
+
+    if is_cache_only_tier(normalized_tier):
         for source_tier in CACHED_TIER_CACHE_SOURCES:
             cached = await get_cached_markdown(target_url, source_tier)
             if cached is not None:
@@ -2468,8 +2515,8 @@ async def deliver_paid_markdown(
 ) -> tuple[str, bool, UEGReceipt]:
     """Check cache-aware economics, then deliver markdown without upstream work on cached misses."""
     normalized_tier = normalize_tier(tier)
-    if normalized_tier == CACHE_ONLY_TIER and force_refresh:
-        raise PaymentValidationError("Cached tier cannot force refresh. Use basic, fresh, or deep for a live fetch.")
+    if is_cache_only_tier(normalized_tier) and force_refresh:
+        raise PaymentValidationError("Starter and cached tiers cannot force refresh. Use basic, fresh, or deep for a live fetch.")
 
     cached = await get_cache_candidate_for_tier(target_url, normalized_tier, force_refresh)
     if cached is not None:
@@ -2481,9 +2528,9 @@ async def deliver_paid_markdown(
         return cached, True, profitability
 
     inc_metric("cache_misses_total")
-    if normalized_tier == CACHE_ONLY_TIER:
+    if is_cache_only_tier(normalized_tier):
         raise PaymentValidationError(
-            "Cached tier is only available when AxonGate already has a cached copy. Use basic, fresh, or deep first."
+            "Starter and cached tiers require the starter sample or an existing AxonGate cache entry. Use basic, fresh, or deep for a live fetch."
         )
 
     profitability = await calculate_profitability_for_price(amount_usdc, supplier_attempts_on_miss)
@@ -2796,7 +2843,7 @@ def build_docs_html() -> str:
     </div>
 
     <h2>Pricing</h2>
-    <p>The recommended tier for production agent calls is <code>{html.escape(RECOMMENDED_TIER)}</code>. Cached is available for low-cost reuse after AxonGate already has a copy; basic, fresh, and deep cover live supplier-backed workloads.</p>
+    <p>The recommended tier for production agent calls is <code>{html.escape(RECOMMENDED_TIER)}</code>. Starter is available for first paid conversion on the sample target or existing cache; cached, basic, fresh, and deep cover repeat reads and live supplier-backed workloads.</p>
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>Cache policy</th></tr></thead>
       <tbody>{tiers_rows}</tbody>
@@ -3114,6 +3161,7 @@ def build_quickstart_html() -> str:
     """Render the shortest path from discovery to a first paid AxonGate result."""
     public = html.escape(PUBLIC_BASE_URL)
     github = html.escape(GITHUB_REPO_URL)
+    starter_price = html.escape(str(TIER_PRICING_USDC[STARTER_TIER]))
     cached_price = html.escape(str(TIER_PRICING_USDC[CACHE_ONLY_TIER]))
     fresh_price = html.escape(str(TIER_PRICING_USDC["fresh"]))
     mcp_config = html.escape(
@@ -3126,7 +3174,7 @@ def build_quickstart_html() -> str:
                         "env": {
                             "AXONGATE_BASE_URL": PUBLIC_BASE_URL,
                             "AXONGATE_WALLET_FILE": "C:/path/to/burner_wallet.json",
-                            "AXONGATE_CONFIRM_SPEND": str(TIER_PRICING_USDC["fresh"]),
+                            "AXONGATE_CONFIRM_SPEND": str(TIER_PRICING_USDC[STARTER_TIER]),
                         },
                     }
                 }
@@ -3138,7 +3186,7 @@ def build_quickstart_html() -> str:
         """Tool: probe_payment_terms
 Input:
 {
-  "tier": "fresh",
+  "tier": "starter",
   "source": "quickstart-mcp"
 }"""
     )
@@ -3147,9 +3195,9 @@ Input:
 Input:
 {{
   "target_url": "https://www.iana.org/domains/reserved",
-  "tier": "fresh",
-  "force_refresh": true,
-  "confirm_spend_usdc": "{TIER_PRICING_USDC["fresh"]}",
+  "tier": "starter",
+  "force_refresh": false,
+  "confirm_spend_usdc": "{TIER_PRICING_USDC[STARTER_TIER]}",
   "source": "quickstart-mcp",
   "max_markdown_chars": 12000
 }}"""
@@ -3159,9 +3207,8 @@ Input:
 npm run paid:buyer -- \\
   --wallet-file "C:/path/to/burner_wallet.json" \\
   --target-url "https://www.iana.org/domains/reserved" \\
-  --tier fresh \\
-  --force-refresh \\
-  --confirm-spend {TIER_PRICING_USDC["fresh"]} \\
+  --tier starter \\
+  --confirm-spend {TIER_PRICING_USDC[STARTER_TIER]} \\
   --source quickstart"""
     )
     expected_output = html.escape(
@@ -3170,11 +3217,11 @@ npm run paid:buyer -- \\
   "http_status": 200,
   "status": "success",
   "target_url": "https://www.iana.org/domains/reserved",
-  "tier": "fresh",
+  "tier": "starter",
   "markdown_chars": 1000,
   "payment": {
     "mode": "x402-facilitator",
-    "amount_usdc": 0.03,
+    "amount_usdc": 0.012,
     "source": "quickstart"
   }
 }"""
@@ -3253,7 +3300,7 @@ npm run paid:buyer -- \\
     </nav>
 
     <div class="steps">
-      <div class="step"><strong>1. Fund burner wallet</strong>Use Base USDC. Fresh costs <code>{fresh_price} USDC</code>; cached costs <code>{cached_price} USDC</code>.</div>
+      <div class="step"><strong>1. Fund burner wallet</strong>Use Base USDC. Starter costs <code>{starter_price} USDC</code>; fresh costs <code>{fresh_price} USDC</code>.</div>
       <div class="step"><strong>2. Run the buyer</strong>The script probes payment terms, signs x402, pays, and returns markdown.</div>
       <div class="step"><strong>3. Watch attribution</strong>Use <code>source=quickstart</code> so `/metrics` shows the conversion path.</div>
       <div class="step"><strong>4. Add MCP</strong>Let an agent call <code>fetch_clean_context</code> with explicit spend confirmation.</div>
@@ -3261,7 +3308,7 @@ npm run paid:buyer -- \\
 
     <p class="callout"><strong>This can spend real USDC.</strong> Every paid path requires an explicit <code>confirm-spend</code> or <code>confirm_spend_usdc</code> value that must match the selected tier.</p>
 
-    <h2>Fast Terminal Path</h2>
+    <h2>Fast Starter Path</h2>
     <pre>{terminal_commands}</pre>
 
     <h2>Expected Shape</h2>
@@ -3280,6 +3327,7 @@ npm run paid:buyer -- \\
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>Best For</th></tr></thead>
       <tbody>
+        <tr><td><code>starter</code></td><td>{starter_price} USDC</td><td>First paid conversion using the starter sample or existing cache</td></tr>
         <tr><td><code>cached</code></td><td>{cached_price} USDC</td><td>Repeat reads when AxonGate already has a cached copy</td></tr>
         <tr><td><code>basic</code></td><td>{html.escape(str(TIER_PRICING_USDC["basic"]))} USDC</td><td>Cache-friendly production calls</td></tr>
         <tr><td><code>fresh</code></td><td>{fresh_price} USDC</td><td>Current public web context and first real tests</td></tr>
@@ -3300,16 +3348,16 @@ def build_paid_test_html() -> str:
 npm run paid:buyer -- \\
   --wallet-file "C:/path/to/buyer_wallet.json" \\
   --target-url "https://www.iana.org/domains/reserved" \\
-  --tier cached \\
-  --confirm-spend {TIER_PRICING_USDC[CACHE_ONLY_TIER]} \\
+  --tier starter \\
+  --confirm-spend {TIER_PRICING_USDC[STARTER_TIER]} \\
   --source manual-smoke \\
   --replay"""
     )
     env_command = html.escape(
         f"""set AXONGATE_WALLET_FILE=C:\\path\\to\\buyer_wallet.json
 set AXONGATE_TARGET_URL=https://www.iana.org/domains/reserved
-set AXONGATE_TIER=cached
-set AXONGATE_CONFIRM_SPEND={TIER_PRICING_USDC[CACHE_ONLY_TIER]}
+set AXONGATE_TIER=starter
+set AXONGATE_CONFIRM_SPEND={TIER_PRICING_USDC[STARTER_TIER]}
 set AXONGATE_SOURCE=manual-smoke
 npm run paid:buyer -- --replay"""
     )
@@ -3318,10 +3366,10 @@ npm run paid:buyer -- --replay"""
 {
   "http_status": 200,
   "status": "success",
-  "tier": "cached",
+  "tier": "starter",
   "cache": {"hit": true},
   "payment": {
-    "amount_usdc": 0.015,
+    "amount_usdc": 0.012,
     "source": "manual-smoke"
   },
   "ueg_receipt": {
@@ -3404,7 +3452,7 @@ REPLAY
       <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
     </nav>
 
-    <p class="callout"><strong>This spends real USDC.</strong> The cached tier currently authorizes <code>{html.escape(str(TIER_PRICING_USDC[CACHE_ONLY_TIER]))} USDC</code>. Use a burner wallet and keep the explicit <code>--confirm-spend</code> value in the command.</p>
+    <p class="callout"><strong>This spends real USDC.</strong> The starter tier currently authorizes <code>{html.escape(str(TIER_PRICING_USDC[STARTER_TIER]))} USDC</code>. Use a burner wallet and keep the explicit <code>--confirm-spend</code> value in the command.</p>
 
     <h2>Command</h2>
     <pre>{wallet_command}</pre>
@@ -3419,9 +3467,9 @@ REPLAY
     <table>
       <thead><tr><th>Signal</th><th>Expected</th></tr></thead>
       <tbody>
-        <tr><td>Challenge amount</td><td><code>{html.escape(str(usdc_units(TIER_PRICING_USDC[CACHE_ONLY_TIER])))}</code> for cached tier</td></tr>
+        <tr><td>Challenge amount</td><td><code>{html.escape(str(usdc_units(TIER_PRICING_USDC[STARTER_TIER])))}</code> for starter tier</td></tr>
         <tr><td>Paid response</td><td><code>200</code>, markdown present, payment response transaction present</td></tr>
-        <tr><td>Cache behavior</td><td><code>cache.hit=true</code> and <code>supplier_attempts=0</code> for this seeded target</td></tr>
+        <tr><td>Starter behavior</td><td><code>cache.hit=true</code> and <code>supplier_attempts=0</code> for this sample target</td></tr>
         <tr><td>Replay behavior</td><td>Second submission returns <code>402</code></td></tr>
         <tr><td>Attribution</td><td><code>/metrics</code> shows the selected source under paid, accepted, delivered, and replay rejection stages</td></tr>
       </tbody>
@@ -4272,14 +4320,14 @@ async def access_context_broker(
             raise rate_limit_429(exc) from exc
 
         price = price_for_tier(tier)
-        if tier == CACHE_ONLY_TIER and access_request.force_refresh:
-            raise PaymentValidationError("Cached tier cannot force refresh. Use basic, fresh, or deep for a live fetch.")
-        if tier == CACHE_ONLY_TIER:
+        if is_cache_only_tier(tier) and access_request.force_refresh:
+            raise PaymentValidationError("Starter and cached tiers cannot force refresh. Use basic, fresh, or deep for a live fetch.")
+        if is_cache_only_tier(tier):
             cached_markdown = await get_cache_candidate_for_tier(target_url, tier, False)
             if cached_markdown is None:
                 inc_metric("cache_misses_total")
                 raise PaymentValidationError(
-                    "Cached tier is only available when AxonGate already has a cached copy. Use basic, fresh, or deep first."
+                    "Starter and cached tiers require the starter sample or an existing AxonGate cache entry. Use basic, fresh, or deep for a live fetch."
                 )
         payment = await verify_x402_payment(x_axongate_payment_hash, price)
         inc_metric("payments_accepted_total")

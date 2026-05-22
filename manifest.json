@@ -41,7 +41,8 @@
       "custom_domain_ready",
       "x402_bazaar_discovery",
       "x402_payment_identifier",
-      "cache_only_pricing"
+      "cache_only_pricing",
+      "starter_sample_pricing"
     ],
     "input_modes": [
       "url"
@@ -86,6 +87,11 @@
       "static_fallback_default": false
     },
     "tiers": {
+      "starter": {
+        "price_usdc": 0.012,
+        "cache_policy": "starter sample or cache-only",
+        "recommended_for": "first paid conversion on the sample target or existing cache"
+      },
       "cached": {
         "price_usdc": 0.015,
         "cache_policy": "cache-only",
@@ -145,7 +151,7 @@
     "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
     "payload_schema": {
       "target_url": "string (valid HTTP/HTTPS URL)",
-      "tier": "optional string (cached, basic, fresh, or deep)",
+      "tier": "optional string (starter, cached, basic, fresh, or deep)",
       "force_refresh": "optional boolean"
     },
     "required_headers": [
@@ -162,6 +168,11 @@
       "ueg_receipt": "object"
     },
     "request_examples": [
+      {
+        "target_url": "https://www.iana.org/domains/reserved",
+        "tier": "starter",
+        "force_refresh": false
+      },
       {
         "target_url": "https://example.com/source",
         "tier": "cached",

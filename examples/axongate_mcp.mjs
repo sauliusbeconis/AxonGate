@@ -12,6 +12,7 @@ loadEnv();
 
 const DEFAULT_BASE_URL = "https://web-production-8136ee.up.railway.app";
 const prices = {
+  starter: "0.012",
   cached: "0.015",
   basic: "0.02",
   fresh: "0.03",
@@ -147,7 +148,7 @@ server.registerTool(
     title: "Probe AxonGate Payment Terms",
     description: "Fetch AxonGate's x402 payment requirement without spending USDC.",
     inputSchema: {
-      tier: z.enum(tierNames).default("fresh"),
+      tier: z.enum(tierNames).default("starter"),
       source: z.string().max(48).default(sourceDefault),
     },
   },

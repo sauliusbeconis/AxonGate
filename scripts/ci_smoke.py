@@ -65,6 +65,18 @@ async def main() -> None:
         assert source_alias_probe.status_code == 402, f"source alias probe returned {source_alias_probe.status_code}"
         assert source_alias_probe.headers.get("PAYMENT-REQUIRED"), "source alias probe missing payment terms"
 
+        starter_probe = await client.get("/v1/x402/access?tier=starter")
+        assert starter_probe.status_code == 402, f"starter probe returned {starter_probe.status_code}"
+        starter_payload = json.loads(base64.b64decode(starter_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
+        assert starter_payload["accepts"][0]["amount"] == "12000", "starter tier should cost 0.012 USDC"
+        assert starter_payload["accepts"][0]["extra"]["tier"] == "starter", "starter challenge tier mismatch"
+        starter_markdown = await gateway.get_cache_candidate_for_tier(
+            "https://www.iana.org/domains/reserved",
+            "starter",
+            False,
+        )
+        assert starter_markdown and "Reserved Domains" in starter_markdown, "starter sample markdown missing"
+
         unpaid_post = await client.post(
             "/v1/x402/access?tier=fresh",
             json={"target_url": "https://example.com", "tier": "fresh", "force_refresh": True},

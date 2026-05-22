@@ -76,7 +76,7 @@ Suggested update payload:
   "category": "Data",
   "description": "AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.",
   "endpoints": ["/from/x402-list/v1/x402/access"],
-  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoint is a source-attribution alias that serves the same canonical x402 terms as /v1/x402/access. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier, official Bazaar discovery metadata, optional payment-identifier, source attribution, and cache-only pricing."
+  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoint is a source-attribution alias that serves the same canonical x402 terms as /v1/x402/access. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier, official Bazaar discovery metadata, optional payment-identifier, source attribution, starter sample pricing, and cache-only pricing."
 }
 ```
 
