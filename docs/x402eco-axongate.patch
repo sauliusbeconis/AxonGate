@@ -18,11 +18,11 @@ index 0000000..245b80b
 @@ -0,0 +1,8 @@
 +{
 +  "name": "AxonGate",
-+  "description": "x402-paid clean Markdown context extraction for RAG and autonomous agents.",
-+  "url": "https://api.axongate.one/docs?source=x402-eco",
++  "description": "x402-paid clean Markdown extraction and citation-backed Proof Packs for RAG and autonomous agents.",
++  "url": "https://api.axongate.one/proof-pack?source=x402-eco",
 +  "category": "services-endpoints",
 +  "logo": "/logos/axongate.svg",
-+  "tags": ["x402", "base", "usdc", "web-to-markdown", "rag"]
++  "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "proof-pack", "citations"]
 +}
 diff --git a/public/logos/axongate.svg b/public/logos/axongate.svg
 new file mode 100644

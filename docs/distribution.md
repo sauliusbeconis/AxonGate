@@ -29,8 +29,8 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 
 | Target | Status | Action |
 | --- | --- | --- |
-| x402 List | Update submitted, pending review | AxonGate is present as slug `axongate`. Custom-domain starter source-alias update submitted on 2026-05-22; submission ID `86803de6-73b5-48cb-b7b4-0dd62f4d5702`; probe found 1 endpoint and 0 errors. |
-| PayanAgent | Custom-domain replacements live | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Custom-domain fresh service ID `js7ccna62pvxbnte7t18g797wx876gbw`; custom-domain starter service ID `js74m86sxk7rbasa56cnq6w1xh876912`. Legacy Railway service records remain active because PayanAgent exposes create/list/invoke but not service update/delete. |
+| x402 List | Review-window cooldown | AxonGate is present as slug `axongate`. Custom-domain starter source-alias update submitted on 2026-05-22; submission ID `86803de6-73b5-48cb-b7b4-0dd62f4d5702`; Proof Pack resubmission on 2026-05-22 returned HTTP 429 because the last submission is still within the 7-day review window. |
+| PayanAgent | Custom-domain replacements live; Proof Pack added | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Custom-domain fresh service ID `js7ccna62pvxbnte7t18g797wx876gbw`; custom-domain starter service ID `js74m86sxk7rbasa56cnq6w1xh876912`; Proof Pack service ID `js7f9xfyvxqk0kyfea54h36hfx876jp3`. Legacy Railway service records remain active because PayanAgent exposes create/list/invoke but not service update/delete. |
 | Agora402 | Ready, gated | Requires a one-time listing fee: starter 1 USDC, pro 5 USDC, featured 25 USDC. Use the prepared payload below after paying the chosen listing tier. |
 | Agent Bazaar | Ready, manual | Submission form requires sign-in/review. Use the prepared fields below. |
 | the402 | Ready, manual | Provider onboarding requires a site account. Use the prepared fields below. |
@@ -230,11 +230,11 @@ Suggested ecosystem entry:
 ```json
 {
   "name": "AxonGate",
-  "description": "x402-paid clean Markdown context extraction for RAG and autonomous agents.",
-  "url": "https://api.axongate.one/docs?source=x402-eco",
+  "description": "x402-paid clean Markdown extraction and citation-backed Proof Packs for RAG and autonomous agents.",
+  "url": "https://api.axongate.one/proof-pack?source=x402-eco",
   "category": "services-endpoints",
   "logo": "/logos/axongate.svg",
-  "tags": ["x402", "base", "usdc", "web-to-markdown", "rag"]
+  "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "proof-pack", "citations"]
 }
 ```
 

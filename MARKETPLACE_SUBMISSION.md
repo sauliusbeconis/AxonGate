@@ -179,6 +179,9 @@ Provider ID:
 Service ID:
 `js7ccna62pvxbnte7t18g797wx876gbw`
 
+Proof Pack Service ID:
+`js7f9xfyvxqk0kyfea54h36hfx876jp3`
+
 Starter Service ID:
 `js74m86sxk7rbasa56cnq6w1xh876912`
 

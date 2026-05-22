@@ -22,6 +22,7 @@
       "paid_test": "https://api.axongate.one/paid-test?source=payanagent",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
       "service_id": "js7ccna62pvxbnte7t18g797wx876gbw",
+      "proof_pack_service_id": "js7f9xfyvxqk0kyfea54h36hfx876jp3",
       "legacy_service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn"
     },
     "agora402": {
@@ -56,10 +57,10 @@
     }
   },
   "x402_list": {
-    "status": "custom_domain_update_submitted_pending",
+    "status": "proof_pack_update_blocked_review_window",
     "slug": "axongate",
     "last_update_attempt": "2026-05-22",
-    "last_update_result": "HTTP 201: pending review; probe found 1 endpoint and 0 errors",
+    "last_update_result": "HTTP 429: previous submission is still within the 7-day review window",
     "submission_id": "86803de6-73b5-48cb-b7b4-0dd62f4d5702",
     "probe_result": {
       "endpoints_found": 1,
@@ -78,11 +79,12 @@
     }
   },
   "payanagent": {
-    "status": "custom_domain_replacement_live",
+    "status": "custom_domain_replacement_live_proof_pack_added",
     "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
     "service_id": "js7ccna62pvxbnte7t18g797wx876gbw",
+    "proof_pack_service_id": "js7f9xfyvxqk0kyfea54h36hfx876jp3",
     "legacy_service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn",
-    "last_update_result": "HTTP 201: replacement service created because PATCH/PUT/DELETE service endpoints return 405",
+    "last_update_result": "HTTP 201: Proof Pack service created; replacement Clean Context service remains live",
     "service_payload": {
       "name": "AxonGate Clean Context Broker",
       "description": "Paid Web-to-Markdown context extraction for autonomous agents. Returns clean markdown plus payment and unit-economics metadata from the custom AxonGate domain.",
@@ -157,11 +159,11 @@
     "push_result": "Direct push denied to sauliusbeconis; create a fork or add GitHub CLI/token auth to open the PR",
     "entry": {
       "name": "AxonGate",
-      "description": "x402-paid clean Markdown context extraction for RAG and autonomous agents.",
-      "url": "https://api.axongate.one/docs?source=x402-eco",
+      "description": "x402-paid clean Markdown extraction and citation-backed Proof Packs for RAG and autonomous agents.",
+      "url": "https://api.axongate.one/proof-pack?source=x402-eco",
       "category": "services-endpoints",
       "logo": "/logos/axongate.svg",
-      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag"]
+      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "proof-pack", "citations"]
     }
   }
 }
