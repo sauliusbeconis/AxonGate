@@ -39,6 +39,7 @@ async def main() -> None:
             "/operator",
             "/quickstart",
             "/paid-test",
+            "/quote",
             "/demo",
             "/robots.txt",
             "/sitemap.xml",
@@ -65,6 +66,13 @@ async def main() -> None:
         assert source_alias_probe.status_code == 402, f"source alias probe returned {source_alias_probe.status_code}"
         assert source_alias_probe.headers.get("PAYMENT-REQUIRED"), "source alias probe missing payment terms"
 
+        source_starter_probe = await client.get("/from/x402-list/v1/x402/starter")
+        assert source_starter_probe.status_code == 402, f"source starter probe returned {source_starter_probe.status_code}"
+        source_starter_payload = json.loads(
+            base64.b64decode(source_starter_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8")
+        )
+        assert source_starter_payload["accepts"][0]["amount"] == "12000", "source starter path should cost 0.012 USDC"
+
         starter_probe = await client.get("/v1/x402/access?tier=starter")
         assert starter_probe.status_code == 402, f"starter probe returned {starter_probe.status_code}"
         starter_payload = json.loads(base64.b64decode(starter_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
@@ -76,6 +84,13 @@ async def main() -> None:
             False,
         )
         assert starter_markdown and "Reserved Domains" in starter_markdown, "starter sample markdown missing"
+
+        quote = (await client.get("/v1/x402/quote?target_url=https://www.iana.org/domains/reserved&source=ci")).json()
+        assert quote["status"] == "quote", "quote endpoint returned wrong status"
+        assert quote["supplier_spend"] is False, "quote endpoint should not trigger supplier spend"
+        assert quote["recommended_tier"] == "starter", "sample target should recommend starter"
+        assert quote["tiers"]["starter"]["amount_units"] == "12000", "quote endpoint should expose starter amount"
+        assert "buyer_command" in quote["next_steps"], "quote endpoint missing buyer command"
 
         unpaid_post = await client.post(
             "/v1/x402/access?tier=fresh",

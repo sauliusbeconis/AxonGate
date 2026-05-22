@@ -39,6 +39,9 @@ https://web-production-8136ee.up.railway.app/operator
 Paid smoke test guide:
 https://web-production-8136ee.up.railway.app/paid-test
 
+Free quote API:
+https://web-production-8136ee.up.railway.app/v1/x402/quote
+
 Standard x402 endpoint:
 https://web-production-8136ee.up.railway.app/v1/x402/access
 
@@ -56,6 +59,8 @@ Endpoint paths:
 /discovery/resources
 /operator
 /paid-test
+/quote
+/v1/x402/quote
 ```
 
 ## Pricing
@@ -89,6 +94,7 @@ Recommended directory source names:
 ```text
 x402-list
 payanagent
+payanagent-starter
 agora402
 agent-bazaar
 the402
@@ -142,6 +148,9 @@ Provider ID:
 Service ID:
 `js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`
 
+Starter Service ID:
+`js71gygf2a31v1wx6m2fxn8b1s876hnr`
+
 Service name:
 AxonGate Clean Context Broker
 
@@ -156,6 +165,15 @@ Price:
 
 Endpoint:
 https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent
+
+Starter service name:
+AxonGate Starter Clean Context
+
+Starter price:
+2 cents in PayanAgent display metadata; actual x402 starter terms are 0.012 USDC.
+
+Starter endpoint:
+https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter
 
 ## x402 List Fields
 
@@ -177,13 +195,13 @@ AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pa
 Endpoint paths:
 
 ```text
-/v1/x402/access
+/from/x402-list/v1/x402/starter
 /.well-known/x402
 /discovery/resources
 ```
 
 Notes:
-Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, official Bazaar discovery metadata, optional payment-identifier, a starter sample tier for first paid conversion, and cache-only low-cost tiers.
+Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, official Bazaar discovery metadata, optional payment-identifier, a supplier-free quote API, a starter sample tier for first paid conversion, and cache-only low-cost tiers. The 2026-05-22 update attempt was blocked because the x402-list submit API now rejects railway.app origins; switch to a custom domain before re-submitting.
 
 ## 402agents Fields
 

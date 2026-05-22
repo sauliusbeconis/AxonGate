@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote as url_quote, urljoin, urlparse
 
 import httpx
 import uvicorn
@@ -269,6 +269,7 @@ metrics: dict[str, int] = {
     "discovery_operator_hits_total": 0,
     "discovery_quickstart_hits_total": 0,
     "discovery_paid_test_hits_total": 0,
+    "discovery_quote_hits_total": 0,
     "discovery_demo_hits_total": 0,
     "discovery_robots_hits_total": 0,
     "discovery_sitemap_hits_total": 0,
@@ -1065,8 +1066,9 @@ def build_access_output_schema() -> dict[str, Any]:
 
 def build_access_request_example(tier: str = RECOMMENDED_TIER) -> dict[str, Any]:
     normalized_tier = normalize_tier(tier)
+    target_url = "https://www.iana.org/domains/reserved" if normalized_tier == STARTER_TIER else "https://example.com/source"
     return {
-        "target_url": "https://example.com/source",
+        "target_url": target_url,
         "tier": normalized_tier,
         "force_refresh": normalized_tier == "fresh",
     }
@@ -1074,9 +1076,10 @@ def build_access_request_example(tier: str = RECOMMENDED_TIER) -> dict[str, Any]
 
 def build_access_response_example(tier: str = RECOMMENDED_TIER) -> dict[str, Any]:
     normalized_tier = normalize_tier(tier)
+    target_url = "https://www.iana.org/domains/reserved" if normalized_tier == STARTER_TIER else "https://example.com/source"
     return {
         "status": "success",
-        "target_url": "https://example.com/source",
+        "target_url": target_url,
         "tier": normalized_tier,
         "markdown": "# Example Domain\n\nExample clean markdown...",
         "cache": {"hit": is_cache_only_tier(normalized_tier)},
@@ -1103,18 +1106,19 @@ def enrich_bazaar_method(extension_payload: dict[str, Any], method: str = "POST"
     return extension_payload
 
 
-def build_x402_extensions(method: str = "POST") -> dict[str, Any]:
+def build_x402_extensions(method: str = "POST", tier: str = RECOMMENDED_TIER) -> dict[str, Any]:
     extensions: dict[str, Any] = {}
+    normalized_tier = normalize_tier(tier)
 
     if declare_discovery_extension is not None and OutputConfig is not None:
         extensions.update(
             enrich_bazaar_method(
                 declare_discovery_extension(
-                    input=build_access_request_example(RECOMMENDED_TIER),
+                    input=build_access_request_example(normalized_tier),
                     input_schema=build_access_input_schema(),
                     body_type="json",
                     output=OutputConfig(
-                        example=build_access_response_example(RECOMMENDED_TIER),
+                        example=build_access_response_example(normalized_tier),
                         schema=build_access_output_schema(),
                     ),
                 ),
@@ -1179,6 +1183,8 @@ def build_x402_resource() -> dict[str, Any]:
             "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
             "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
+            "quote": f"{PUBLIC_BASE_URL}/quote",
+            "quoteApi": f"{PUBLIC_BASE_URL}/v1/x402/quote",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1224,6 +1230,7 @@ def build_payment_required_payload(error: str, tier: Optional[str] = None) -> di
     Only official x402 extensions are included. Informal metadata belongs in
     manifest, llms.txt, docs, and discovery resources.
     """
+    normalized_tier = normalize_tier(tier or RECOMMENDED_TIER)
     payload = {
         "x402Version": 2,
         "error": error,
@@ -1232,9 +1239,9 @@ def build_payment_required_payload(error: str, tier: Optional[str] = None) -> di
             "description": "AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
             "mimeType": "application/json",
         },
-        "accepts": build_x402_accepts(tier or RECOMMENDED_TIER),
+        "accepts": build_x402_accepts(normalized_tier),
     }
-    extensions = build_x402_extensions("POST")
+    extensions = build_x402_extensions("POST", normalized_tier)
     if extensions:
         payload["extensions"] = extensions
     return payload
@@ -1255,6 +1262,8 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
+        "quote": f"{PUBLIC_BASE_URL}/quote",
+        "quoteApi": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1301,12 +1310,14 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Docs": f"{PUBLIC_BASE_URL}/docs",
         "X-AxonGate-Quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "X-AxonGate-Paid-Test": f"{PUBLIC_BASE_URL}/paid-test",
+        "X-AxonGate-Quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "X-AxonGate-Demo": f"{PUBLIC_BASE_URL}/demo",
         "X-AxonGate-Buyer-Example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
         "Link": (
             f'<{PUBLIC_BASE_URL}/docs>; rel="help", '
             f'<{PUBLIC_BASE_URL}/quickstart>; rel="quickstart", '
             f'<{PUBLIC_BASE_URL}/paid-test>; rel="payment-test", '
+            f'<{PUBLIC_BASE_URL}/v1/x402/quote>; rel="quote", '
             f'<{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs>; rel="example"'
         ),
     }
@@ -1338,16 +1349,13 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
         "request": {
             "method": "POST",
             "url": f"{PUBLIC_BASE_URL}/v1/x402/access",
-            "body": {
-                "target_url": "https://example.com/source",
-                "tier": normalized_tier,
-                "force_refresh": normalized_tier == "fresh",
-            },
+            "body": build_access_request_example(normalized_tier),
         },
         "links": {
             "docs": f"{PUBLIC_BASE_URL}/docs",
             "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paid_test": f"{PUBLIC_BASE_URL}/paid-test",
+            "quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
             "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
@@ -2623,6 +2631,199 @@ def public_url(path: str) -> str:
     return f"{PUBLIC_BASE_URL}{path}"
 
 
+def quote_payment_probe_url(tier: str, source: str) -> str:
+    normalized_tier = normalize_tier(tier)
+    normalized_source = normalize_attribution_source(source)
+    return f"{PUBLIC_BASE_URL}/v1/x402/access?tier={normalized_tier}&source={normalized_source}"
+
+
+def quote_buyer_command(target_url: str, tier: str, source: str) -> str:
+    normalized_tier = normalize_tier(tier)
+    normalized_source = normalize_attribution_source(source)
+    force_flag = " --force-refresh" if normalized_tier == "fresh" else ""
+    return (
+        "npm run paid:buyer -- "
+        '--wallet-file "C:/path/to/buyer_wallet.json" '
+        f'--target-url "{target_url}" '
+        f"--tier {normalized_tier}{force_flag} "
+        f"--confirm-spend {TIER_PRICING_USDC[normalized_tier]} "
+        f"--source {normalized_source}"
+    )
+
+
+async def build_conversion_quote(target_url: str, source: str = "quote") -> dict[str, Any]:
+    """Return supplier-free pricing and next-step guidance for a target URL."""
+    normalized_target = await assert_public_target_url(target_url)
+    normalized_source = normalize_attribution_source(source)
+    starter_available = await get_cache_candidate_for_tier(normalized_target, STARTER_TIER, False) is not None
+    cached_available = await get_cache_candidate_for_tier(normalized_target, CACHE_ONLY_TIER, False) is not None
+    recommended_tier = STARTER_TIER if starter_available else "fresh"
+
+    tiers: dict[str, dict[str, Any]] = {}
+    for tier, price in TIER_PRICING_USDC.items():
+        cache_only = is_cache_only_tier(tier)
+        if tier == STARTER_TIER:
+            available_now = starter_available
+        elif tier == CACHE_ONLY_TIER:
+            available_now = cached_available
+        else:
+            available_now = True
+        tiers[tier] = {
+            "price_usdc": float(price),
+            "amount_units": str(usdc_units(price)),
+            "cache_policy": cache_policy_for_tier(tier),
+            "available_now": available_now,
+            "requires_supplier_on_miss": not cache_only,
+            "force_refresh_supported": not cache_only,
+            "payment_probe_url": quote_payment_probe_url(tier, normalized_source),
+        }
+
+    recommended_price = TIER_PRICING_USDC[recommended_tier]
+    return {
+        "status": "quote",
+        "supplier_spend": False,
+        "target_url": normalized_target,
+        "source": normalized_source,
+        "recommended_tier": recommended_tier,
+        "recommended_reason": (
+            "starter is available for this sample or cached target"
+            if recommended_tier == STARTER_TIER
+            else "use fresh for live public web context because starter/cache is not available for this target"
+        ),
+        "starter_available": starter_available,
+        "cached_available": cached_available,
+        "tiers": tiers,
+        "next_steps": {
+            "probe_payment_terms": quote_payment_probe_url(recommended_tier, normalized_source),
+            "paid_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access?tier={recommended_tier}&source={normalized_source}",
+            "confirm_spend_usdc": str(recommended_price),
+            "buyer_command": quote_buyer_command(normalized_target, recommended_tier, normalized_source),
+            "mcp_tool": "fetch_clean_context",
+            "quickstart": public_url("/quickstart"),
+            "paid_test": public_url("/paid-test"),
+        },
+    }
+
+
+def build_quote_html(quote: dict[str, Any]) -> str:
+    """Render a compact quote page that turns discovery into a paid test."""
+    public = html.escape(PUBLIC_BASE_URL)
+    target = html.escape(str(quote["target_url"]))
+    recommended_tier = html.escape(str(quote["recommended_tier"]))
+    recommended_reason = html.escape(str(quote["recommended_reason"]))
+    starter_state = "available" if quote["starter_available"] else "not available"
+    cached_state = "available" if quote["cached_available"] else "not available"
+    api_url = html.escape(
+        f'{PUBLIC_BASE_URL}/v1/x402/quote?target_url={url_quote(str(quote["target_url"]), safe="")}&source=quote'
+    )
+    tiers_rows = "\n".join(
+        "<tr>"
+        f"<td><code>{html.escape(tier)}</code></td>"
+        f"<td>{html.escape(str(info['price_usdc']))} USDC</td>"
+        f"<td>{html.escape(info['amount_units'])}</td>"
+        f"<td>{'yes' if info['available_now'] else 'no'}</td>"
+        f"<td>{html.escape(info['cache_policy'])}</td>"
+        "</tr>"
+        for tier, info in quote["tiers"].items()
+    )
+    buyer_command = html.escape(quote["next_steps"]["buyer_command"])
+    probe_url = html.escape(quote["next_steps"]["probe_payment_terms"])
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Quote</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #101318;
+      --panel: #181d24;
+      --text: #f5f7fb;
+      --muted: #b8c2cf;
+      --line: #303844;
+      --accent: #78d6b6;
+      --code: #0b0f14;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: 2.4rem; line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 34px 0 12px; font-size: 1.25rem; }}
+    p, td {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    form {{ display: flex; gap: 10px; margin: 24px 0; flex-wrap: wrap; }}
+    input {{
+      flex: 1 1 420px;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 11px 12px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }}
+    button {{
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 11px 14px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+    }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }}
+    .box {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ padding: 2px 5px; border-radius: 4px; }}
+    pre {{ overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
+    .links a {{ display: inline-block; margin: 0 14px 10px 0; }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AxonGate Quote</h1>
+    <p>Preview the right paid path before spending. This validates the URL, checks starter/cache availability, and returns exact x402 amounts without supplier work.</p>
+    <nav class="links" aria-label="Quote links">
+      <a href="{public}/quickstart">Quickstart</a>
+      <a href="{public}/paid-test">Paid Test</a>
+      <a href="{public}/docs">Docs</a>
+      <a href="{public}/operator">Operator</a>
+    </nav>
+    <form method="get" action="/quote">
+      <input name="target_url" value="{target}" aria-label="Target URL">
+      <button type="submit">Quote</button>
+    </form>
+    <div class="grid">
+      <div class="box"><strong>Recommended</strong><br><code>{recommended_tier}</code><br>{recommended_reason}</div>
+      <div class="box"><strong>Starter</strong><br>{starter_state}</div>
+      <div class="box"><strong>Cached</strong><br>{cached_state}</div>
+      <div class="box"><strong>JSON API</strong><br><a href="{api_url}">Open quote</a></div>
+    </div>
+    <h2>Payment Probe</h2>
+    <pre>{probe_url}</pre>
+    <h2>Buyer Command</h2>
+    <pre>{buyer_command}</pre>
+    <h2>Tiers</h2>
+    <table>
+      <thead><tr><th>Tier</th><th>Price</th><th>USDC Units</th><th>Available Now</th><th>Policy</th></tr></thead>
+      <tbody>{tiers_rows}</tbody>
+    </table>
+  </main>
+</body>
+</html>"""
+
+
 def build_llms_txt() -> str:
     """
     Return a compact agent-readable service brief.
@@ -2654,6 +2855,8 @@ Human docs: {public_url("/docs")}
 Operator dashboard: {public_url("/operator")}
 Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
+Quote API: {public_url("/v1/x402/quote")}
+Quote page: {public_url("/quote")}
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
@@ -2692,6 +2895,7 @@ Body example:
 Tiers:
 {tier_lines}
 Recommended tier for uncached public web context: {RECOMMENDED_TIER}
+Use GET /v1/x402/quote?target_url=<url> before payment to receive supplier-free tier guidance and a ready buyer command.
 
 Successful response shape:
 - status: success
@@ -2822,6 +3026,7 @@ def build_docs_html() -> str:
       <a href="{public}/operator">Operator dashboard</a>
       <a href="{public}/quickstart">Quickstart</a>
       <a href="{public}/paid-test">Paid test guide</a>
+      <a href="{public}/quote">Quote</a>
       <a href="{public}/demo">Demo</a>
       <a href="{public}/openapi.json">OpenAPI JSON</a>
       <a href="{public}/swagger">Swagger UI</a>
@@ -2851,11 +3056,16 @@ def build_docs_html() -> str:
 
     <h2>Standard x402 Flow</h2>
     <ol>
+      <li>Use <code>/v1/x402/quote?target_url=...</code> to choose the cheapest safe tier before spending.</li>
       <li>Probe <code>/v1/x402/access</code> or read <code>/.well-known/x402</code> to discover payment requirements.</li>
       <li>Create an x402 payment proof for the selected tier and Base USDC amount.</li>
       <li>POST a JSON body with <code>target_url</code>, optional <code>tier</code>, and optional <code>force_refresh</code>.</li>
       <li>Send the proof in <code>PAYMENT-SIGNATURE</code>. AxonGate verifies payment, margin, target safety, and then fetches clean markdown.</li>
     </ol>
+
+    <h2>Free Quote</h2>
+    <p>The quote endpoint validates a public target URL, checks whether the starter sample or cache is immediately available, returns exact x402 amounts for every tier, and emits a ready buyer command. It does not trigger supplier work or spend USDC.</p>
+    <pre>curl "{public}/v1/x402/quote?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;source=docs"</pre>
 
     <h2>Request Body</h2>
     <pre>{request_json}</pre>
@@ -2998,6 +3208,7 @@ def build_operator_dashboard_html(
             f"<tr><td>Operator</td><td>{count(metric('discovery_operator_hits_total'))}</td></tr>",
             f"<tr><td>Quickstart</td><td>{count(metric('discovery_quickstart_hits_total'))}</td></tr>",
             f"<tr><td>Paid Test Guide</td><td>{count(metric('discovery_paid_test_hits_total'))}</td></tr>",
+            f"<tr><td>Quote</td><td>{count(metric('discovery_quote_hits_total'))}</td></tr>",
             f"<tr><td>Demo</td><td>{count(metric('discovery_demo_hits_total'))}</td></tr>",
             f"<tr><td>Agent Cards</td><td>{count(metric('discovery_agent_card_hits_total'))}</td></tr>",
             f"<tr><td>Manifest</td><td>{count(metric('discovery_manifest_hits_total'))}</td></tr>",
@@ -3293,6 +3504,7 @@ npm run paid:buyer -- \\
     <nav class="links" aria-label="Quickstart links">
       <a href="{public}/demo">Demo</a>
       <a href="{public}/paid-test">Paid Test</a>
+      <a href="{public}/quote">Quote</a>
       <a href="{public}/docs">Docs</a>
       <a href="{public}/operator">Operator</a>
       <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
@@ -3577,6 +3789,7 @@ def build_demo_html() -> str:
       <div class="pill"><strong>Asset</strong>USDC on Base</div>
       <div class="pill"><strong>Docs</strong><a href="{public}/docs">Open docs</a></div>
       <div class="pill"><strong>Quickstart</strong><a href="{public}/quickstart">First paid call</a></div>
+      <div class="pill"><strong>Quote</strong><a href="{public}/quote">Preview spend</a></div>
       <div class="pill"><strong>Paid test</strong><a href="{public}/paid-test">Run smoke</a></div>
       <div class="pill"><strong>Operator</strong><a href="{public}/operator">Open dashboard</a></div>
     </div>
@@ -3694,6 +3907,8 @@ def build_sitemap_xml() -> str:
         ("/operator", "0.9"),
         ("/quickstart", "0.95"),
         ("/paid-test", "0.9"),
+        ("/quote", "0.9"),
+        ("/v1/x402/quote", "0.8"),
         ("/demo", "0.9"),
         ("/llms.txt", "0.8"),
         ("/manifest.json", "0.8"),
@@ -3760,6 +3975,35 @@ async def paid_test_guide(request: Request):
     return build_paid_test_html()
 
 
+@app.get("/v1/x402/quote", tags=["discovery"], summary="Supplier-free x402 tier quote")
+async def quote_api(request: Request, target_url: str = "https://www.iana.org/domains/reserved"):
+    """Return no-spend tier guidance and buyer commands for a public target."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_quote_hits_total", source)
+    try:
+        await enforce_rate_limit("quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        return await build_conversion_quote(target_url, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
+@app.get("/quote", response_class=HTMLResponse, tags=["discovery"], summary="Human-readable AxonGate quote")
+async def quote_page(request: Request, target_url: str = "https://www.iana.org/domains/reserved"):
+    """Serve a no-spend quote page that points buyers to the right paid tier."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_quote_hits_total", source)
+    try:
+        await enforce_rate_limit("quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        quote = await build_conversion_quote(target_url, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    return build_quote_html(quote)
+
+
 @app.get("/demo", response_class=HTMLResponse, tags=["discovery"], summary="Interactive AxonGate buyer demo")
 async def demo(request: Request):
     """Serve a safe buyer console that preserves the x402 payment boundary."""
@@ -3801,6 +4045,8 @@ async def root(request: Request):
         "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
+        "quote": f"{PUBLIC_BASE_URL}/quote",
+        "quote_api": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
         "robots": f"{PUBLIC_BASE_URL}/robots.txt",
@@ -3959,6 +4205,8 @@ async def metrics_snapshot():
 @app.get("/v1/x402/access", tags=["x402"], summary="Probe x402 payment requirements")
 @app.head("/from/{source}/v1/x402/access", include_in_schema=False)
 @app.get("/from/{source}/v1/x402/access", include_in_schema=False)
+@app.head("/from/{source}/v1/x402/starter", include_in_schema=False)
+@app.get("/from/{source}/v1/x402/starter", include_in_schema=False)
 async def access_context_broker_x402_probe(request: Request, source: Optional[str] = None):
     """
     Return a machine-readable x402 challenge for directory probes.
@@ -3977,7 +4225,12 @@ async def access_context_broker_x402_probe(request: Request, source: Optional[st
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
 
-    requested_tier = request.query_params.get("tier") or request.headers.get("X-AxonGate-Tier")
+    source_starter_path = request.url.path.endswith("/v1/x402/starter")
+    requested_tier = (
+        STARTER_TIER
+        if source_starter_path
+        else request.query_params.get("tier") or request.headers.get("X-AxonGate-Tier")
+    )
     detail = "Payment Required. Use POST with PAYMENT-SIGNATURE and a JSON target_url body."
     raise HTTPException(
         status_code=402,
@@ -4495,6 +4748,10 @@ def custom_openapi() -> dict[str, Any]:
                 },
                 "X-AxonGate-Quickstart": {
                     "description": "Shortest path for a first paid AxonGate result and MCP setup.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Quote": {
+                    "description": "Supplier-free tier quote endpoint for choosing the right paid path.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Buyer-Example": {

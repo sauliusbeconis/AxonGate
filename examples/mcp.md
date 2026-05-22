@@ -2,8 +2,9 @@
 
 This server exposes AxonGate as MCP tools for agent clients.
 
-It has two tools:
+It has three tools:
 
+- `quote_clean_context`: gets no-spend tier guidance and a ready buyer command.
 - `probe_payment_terms`: fetches the x402 challenge without spending USDC.
 - `fetch_clean_context`: pays AxonGate with x402 and returns clean Markdown.
 
@@ -34,6 +35,15 @@ Use a burner wallet JSON with `private_key` or `privateKey`.
 ```
 
 ## First Calls
+
+Quote first:
+
+```json
+{
+  "target_url": "https://www.iana.org/domains/reserved",
+  "source": "mcp"
+}
+```
 
 Probe first:
 

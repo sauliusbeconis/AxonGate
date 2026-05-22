@@ -14,7 +14,8 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 
 | Source | Paid endpoint | Docs URL | Paid test URL |
 | --- | --- | --- | --- |
-| `x402-list` | `https://web-production-8136ee.up.railway.app/from/x402-list/v1/x402/access` | `https://web-production-8136ee.up.railway.app/docs?source=x402-list` | `https://web-production-8136ee.up.railway.app/paid-test?source=x402-list` |
+| `x402-list` | `https://web-production-8136ee.up.railway.app/from/x402-list/v1/x402/starter` | `https://web-production-8136ee.up.railway.app/docs?source=x402-list` | `https://web-production-8136ee.up.railway.app/paid-test?source=x402-list` |
+| `payanagent-starter` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter` | `https://web-production-8136ee.up.railway.app/docs?source=payanagent-starter` | `https://web-production-8136ee.up.railway.app/paid-test?source=payanagent-starter` |
 | `payanagent` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent` | `https://web-production-8136ee.up.railway.app/docs?source=payanagent` | `https://web-production-8136ee.up.railway.app/paid-test?source=payanagent` |
 | `agora402` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agora402` | `https://web-production-8136ee.up.railway.app/docs?source=agora402` | `https://web-production-8136ee.up.railway.app/paid-test?source=agora402` |
 | `agent-bazaar` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agent-bazaar` | `https://web-production-8136ee.up.railway.app/docs?source=agent-bazaar` | `https://web-production-8136ee.up.railway.app/paid-test?source=agent-bazaar` |
@@ -27,8 +28,8 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 
 | Target | Status | Action |
 | --- | --- | --- |
-| x402 List | Listed, online | AxonGate is present as slug `axongate`. Existing listing currently uses the canonical URL. Source-alias update was attempted on 2026-05-04, but x402-list rate-limited repeat submissions during the 7-day review window. Re-submit `/from/x402-list/v1/x402/access` after the window opens. |
-| PayanAgent | Submitted | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`, service ID `js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`. API key is stored only in local ignored `.env`. |
+| x402 List | Listed, online; update blocked | AxonGate is present as slug `axongate`. Starter source-alias update was attempted on 2026-05-22, but the current submit API rejects `railway.app` origins and requires a custom domain. |
+| PayanAgent | Submitted, starter added | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Fresh service ID `js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`; starter service ID `js71gygf2a31v1wx6m2fxn8b1s876hnr`. API key is stored only in local ignored `.env`. |
 | Agora402 | Ready, gated | Requires a one-time listing fee: starter 1 USDC, pro 5 USDC, featured 25 USDC. Use the prepared payload below after paying the chosen listing tier. |
 | Agent Bazaar | Ready, manual | Submission form requires sign-in/review. Use the prepared fields below. |
 | the402 | Ready, manual | Provider onboarding requires a site account. Use the prepared fields below. |
@@ -57,6 +58,21 @@ Submitted service payload:
 }
 ```
 
+Starter service payload:
+
+```json
+{
+  "name": "AxonGate Starter Clean Context",
+  "description": "Lowest-friction paid Web-to-Markdown smoke test for autonomous agents. Actual x402 starter terms are 0.012 USDC and serve the sample target or existing cache with no supplier spend; use AxonGate fresh for live extraction.",
+  "serviceType": "api",
+  "category": "Data",
+  "pricingModel": "per_request",
+  "priceInCents": 2,
+  "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter",
+  "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker", "starter"]
+}
+```
+
 ## x402 List
 
 AxonGate is listed and online:
@@ -75,12 +91,13 @@ Suggested update payload:
   "email": "<operator email>",
   "category": "Data",
   "description": "AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.",
-  "endpoints": ["/from/x402-list/v1/x402/access"],
+  "endpoint_paths": ["/from/x402-list/v1/x402/starter"],
+  "endpoints": ["/from/x402-list/v1/x402/starter"],
   "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoint is a source-attribution alias that serves the same canonical x402 terms as /v1/x402/access. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier, official Bazaar discovery metadata, optional payment-identifier, source attribution, starter sample pricing, and cache-only pricing."
 }
 ```
 
-Submit with `scripts/submit_x402_list.py` when a contact email is available:
+Submit with `scripts/submit_x402_list.py` after a custom domain replaces the Railway origin:
 
 ```bash
 python scripts/submit_x402_list.py --email "operator@example.com" --submit

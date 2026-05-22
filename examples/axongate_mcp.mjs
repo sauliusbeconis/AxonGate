@@ -143,6 +143,33 @@ const server = new McpServer({
 });
 
 server.registerTool(
+  "quote_clean_context",
+  {
+    title: "Quote AxonGate Clean Context",
+    description: "Get no-spend tier guidance, exact x402 amounts, and a buyer command for a public URL.",
+    inputSchema: {
+      target_url: z.string().url().default("https://www.iana.org/domains/reserved"),
+      source: z.string().max(48).default(sourceDefault),
+    },
+  },
+  async ({ target_url, source }) => {
+    const normalizedSource = normalizeSource(source);
+    const endpoint = `${baseUrl()}/v1/x402/quote?${new URLSearchParams({ target_url, source: normalizedSource })}`;
+    const response = await fetch(endpoint);
+    const body = await readJsonOrText(response);
+    const result = {
+      endpoint,
+      http_status: response.status,
+      quote: body.json || body.text.slice(0, 1200),
+    };
+    return {
+      isError: !response.ok,
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    };
+  },
+);
+
+server.registerTool(
   "probe_payment_terms",
   {
     title: "Probe AxonGate Payment Terms",

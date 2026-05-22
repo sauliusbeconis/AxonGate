@@ -33,6 +33,7 @@
       "operator_dashboard",
       "buyer_quickstart",
       "paid_smoke_test_guide",
+      "supplier_free_quote_api",
       "mcp_server_example",
       "interactive_demo",
       "crawler_sitemap",
@@ -123,6 +124,8 @@
     "operator": "https://web-production-8136ee.up.railway.app/operator",
     "quickstart": "https://web-production-8136ee.up.railway.app/quickstart",
     "paid_test": "https://web-production-8136ee.up.railway.app/paid-test",
+    "quote": "https://web-production-8136ee.up.railway.app/quote",
+    "quote_api": "https://web-production-8136ee.up.railway.app/v1/x402/quote",
     "demo": "https://web-production-8136ee.up.railway.app/demo",
     "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
     "robots": "https://web-production-8136ee.up.railway.app/robots.txt",
@@ -215,6 +218,7 @@
       "demo": "https://web-production-8136ee.up.railway.app/demo",
       "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
       "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
+      "quote": "https://web-production-8136ee.up.railway.app/v1/x402/quote",
       "sitemap": "https://web-production-8136ee.up.railway.app/sitemap.xml"
     },
     "tags": [
