@@ -3,7 +3,7 @@
 Canonical base URL:
 
 ```text
-https://web-production-8136ee.up.railway.app
+https://api.axongate.one
 ```
 
 ## Source-Tagged URLs
@@ -14,21 +14,21 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 
 | Source | Paid endpoint | Docs URL | Paid test URL |
 | --- | --- | --- | --- |
-| `x402-list` | `https://web-production-8136ee.up.railway.app/from/x402-list/v1/x402/starter` | `https://web-production-8136ee.up.railway.app/docs?source=x402-list` | `https://web-production-8136ee.up.railway.app/paid-test?source=x402-list` |
-| `payanagent-starter` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter` | `https://web-production-8136ee.up.railway.app/docs?source=payanagent-starter` | `https://web-production-8136ee.up.railway.app/paid-test?source=payanagent-starter` |
-| `payanagent` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent` | `https://web-production-8136ee.up.railway.app/docs?source=payanagent` | `https://web-production-8136ee.up.railway.app/paid-test?source=payanagent` |
-| `agora402` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agora402` | `https://web-production-8136ee.up.railway.app/docs?source=agora402` | `https://web-production-8136ee.up.railway.app/paid-test?source=agora402` |
-| `agent-bazaar` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agent-bazaar` | `https://web-production-8136ee.up.railway.app/docs?source=agent-bazaar` | `https://web-production-8136ee.up.railway.app/paid-test?source=agent-bazaar` |
-| `the402` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=the402` | `https://web-production-8136ee.up.railway.app/docs?source=the402` | `https://web-production-8136ee.up.railway.app/paid-test?source=the402` |
-| `x402-eco` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=x402-eco` | `https://web-production-8136ee.up.railway.app/docs?source=x402-eco` | `https://web-production-8136ee.up.railway.app/paid-test?source=x402-eco` |
-| `402agents` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=402agents` | `https://web-production-8136ee.up.railway.app/docs?source=402agents` | `https://web-production-8136ee.up.railway.app/paid-test?source=402agents` |
-| `github` | `https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=github` | `https://web-production-8136ee.up.railway.app/docs?source=github` | `https://web-production-8136ee.up.railway.app/paid-test?source=github` |
+| `x402-list` | `https://api.axongate.one/from/x402-list/v1/x402/starter` | `https://api.axongate.one/docs?source=x402-list` | `https://api.axongate.one/paid-test?source=x402-list` |
+| `payanagent-starter` | `https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter` | `https://api.axongate.one/docs?source=payanagent-starter` | `https://api.axongate.one/paid-test?source=payanagent-starter` |
+| `payanagent` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent` | `https://api.axongate.one/docs?source=payanagent` | `https://api.axongate.one/paid-test?source=payanagent` |
+| `agora402` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=agora402` | `https://api.axongate.one/docs?source=agora402` | `https://api.axongate.one/paid-test?source=agora402` |
+| `agent-bazaar` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=agent-bazaar` | `https://api.axongate.one/docs?source=agent-bazaar` | `https://api.axongate.one/paid-test?source=agent-bazaar` |
+| `the402` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=the402` | `https://api.axongate.one/docs?source=the402` | `https://api.axongate.one/paid-test?source=the402` |
+| `x402-eco` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=x402-eco` | `https://api.axongate.one/docs?source=x402-eco` | `https://api.axongate.one/paid-test?source=x402-eco` |
+| `402agents` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=402agents` | `https://api.axongate.one/docs?source=402agents` | `https://api.axongate.one/paid-test?source=402agents` |
+| `github` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=github` | `https://api.axongate.one/docs?source=github` | `https://api.axongate.one/paid-test?source=github` |
 
 ## Current Status
 
 | Target | Status | Action |
 | --- | --- | --- |
-| x402 List | Listed, online; update blocked | AxonGate is present as slug `axongate`. Starter source-alias update was attempted on 2026-05-22, but the current submit API rejects `railway.app` origins and requires a custom domain. |
+| x402 List | Listed, online; custom-domain update ready | AxonGate is present as slug `axongate`. `api.axongate.one` is connected and the starter source-alias update can now be re-submitted. |
 | PayanAgent | Submitted, starter added | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Fresh service ID `js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`; starter service ID `js71gygf2a31v1wx6m2fxn8b1s876hnr`. API key is stored only in local ignored `.env`. |
 | Agora402 | Ready, gated | Requires a one-time listing fee: starter 1 USDC, pro 5 USDC, featured 25 USDC. Use the prepared payload below after paying the chosen listing tier. |
 | Agent Bazaar | Ready, manual | Submission form requires sign-in/review. Use the prepared fields below. |
@@ -53,7 +53,7 @@ Submitted service payload:
   "category": "Data",
   "pricingModel": "per_request",
   "priceInCents": 3,
-  "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent",
+  "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent",
   "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"]
 }
 ```
@@ -68,7 +68,7 @@ Starter service payload:
   "category": "Data",
   "pricingModel": "per_request",
   "priceInCents": 2,
-  "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter",
+  "endpoint": "https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter",
   "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker", "starter"]
 }
 ```
@@ -85,9 +85,9 @@ Suggested update payload:
 
 ```json
 {
-  "url": "https://web-production-8136ee.up.railway.app",
+  "url": "https://api.axongate.one",
   "service_name": "AxonGate",
-  "website_url": "https://web-production-8136ee.up.railway.app/manifest.json?source=x402-list",
+  "website_url": "https://api.axongate.one/manifest.json?source=x402-list",
   "email": "<operator email>",
   "category": "Data",
   "description": "AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.",
@@ -97,7 +97,7 @@ Suggested update payload:
 }
 ```
 
-Submit with `scripts/submit_x402_list.py` after a custom domain replaces the Railway origin:
+Submit with `scripts/submit_x402_list.py` after the custom-domain deployment is live:
 
 ```bash
 python scripts/submit_x402_list.py --email "operator@example.com" --submit
@@ -122,7 +122,7 @@ Prepared native listing payload:
   "name": "AxonGate",
   "description": "x402-paid Clean Context Broker for public Web-to-Markdown extraction.",
   "category": "web-scraping",
-  "endpoint_url": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agora402",
+  "endpoint_url": "https://api.axongate.one/v1/x402/access?tier=fresh&source=agora402",
   "chain": "base",
   "wallet_base": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
   "price_usdc": 0.03,
@@ -158,7 +158,7 @@ Type: API Endpoint
 Category: Web Scraping
 Description: AxonGate converts public web pages into clean, token-efficient Markdown for autonomous agents, RAG pipelines, and LLM context preparation. It is x402-native on Base with USDC pay-per-use pricing and machine-readable discovery endpoints.
 Price per Call: 0.03
-x402 Endpoint URL: https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agent-bazaar
+x402 Endpoint URL: https://api.axongate.one/v1/x402/access?tier=fresh&source=agent-bazaar
 ```
 
 ## the402
@@ -176,9 +176,9 @@ Provider: AxonGate
 Service: Clean Context Broker
 Category: Data APIs
 Price: 0.03 USDC per request
-Endpoint: https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=the402
-Docs: https://web-production-8136ee.up.railway.app/docs?source=the402
-Paid test: https://web-production-8136ee.up.railway.app/paid-test?source=the402
+Endpoint: https://api.axongate.one/v1/x402/access?tier=fresh&source=the402
+Docs: https://api.axongate.one/docs?source=the402
+Paid test: https://api.axongate.one/paid-test?source=the402
 Wallet: 0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7
 ```
 
@@ -190,7 +190,7 @@ Suggested ecosystem entry:
 {
   "name": "AxonGate",
   "description": "x402-paid Clean Context Broker that converts public pages into clean markdown for RAG and autonomous agents.",
-  "url": "https://web-production-8136ee.up.railway.app/docs?source=x402-eco",
+  "url": "https://api.axongate.one/docs?source=x402-eco",
   "category": "services-endpoints",
   "logo": "/logos/axongate.png",
   "tags": ["x402", "base", "usdc", "web-to-markdown", "rag"]
@@ -202,8 +202,8 @@ Suggested ecosystem entry:
 After each listing goes live:
 
 ```bash
-curl -s "https://web-production-8136ee.up.railway.app/metrics" | jq '.attribution'
-curl -s "https://web-production-8136ee.up.railway.app/operator"
+curl -s "https://api.axongate.one/metrics" | jq '.attribution'
+curl -s "https://api.axongate.one/operator"
 ```
 
 Look for each source under `payment_challenges`, `paid_attempts`,

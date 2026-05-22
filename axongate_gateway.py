@@ -82,7 +82,7 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-DEFAULT_PUBLIC_BASE_URL = "https://web-production-8136ee.up.railway.app"
+DEFAULT_PUBLIC_BASE_URL = "https://api.axongate.one"
 PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", DEFAULT_PUBLIC_BASE_URL).rstrip("/")
 GITHUB_REPO_URL = os.getenv("AXONGATE_GITHUB_REPO_URL", "https://github.com/sauliusbeconis/AxonGate").rstrip("/")
 BASE_MAINNET_RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
@@ -1697,7 +1697,7 @@ def reject_target_preflight(detail: str) -> None:
 async def request_target_preflight(client: httpx.AsyncClient, url: str, method: str) -> httpx.Response:
     headers = {
         "Accept": "text/html, text/plain, application/xhtml+xml, application/json;q=0.5, */*;q=0.1",
-        "User-Agent": "AxonGate-Preflight/1.0 (+https://web-production-8136ee.up.railway.app/manifest.json)",
+        "User-Agent": "AxonGate-Preflight/1.0 (+https://api.axongate.one/manifest.json)",
     }
     if method == "GET":
         headers["Range"] = "bytes=0-2047"

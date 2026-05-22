@@ -116,29 +116,29 @@
     }
   },
   "endpoints": {
-    "access": "https://web-production-8136ee.up.railway.app/v1/x402/access",
-    "retry": "https://web-production-8136ee.up.railway.app/v1/x402/retry",
-    "legacy_access": "https://web-production-8136ee.up.railway.app/v1/access",
-    "health": "https://web-production-8136ee.up.railway.app/health",
-    "docs": "https://web-production-8136ee.up.railway.app/docs",
-    "operator": "https://web-production-8136ee.up.railway.app/operator",
-    "quickstart": "https://web-production-8136ee.up.railway.app/quickstart",
-    "paid_test": "https://web-production-8136ee.up.railway.app/paid-test",
-    "quote": "https://web-production-8136ee.up.railway.app/quote",
-    "quote_api": "https://web-production-8136ee.up.railway.app/v1/x402/quote",
-    "demo": "https://web-production-8136ee.up.railway.app/demo",
-    "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
-    "robots": "https://web-production-8136ee.up.railway.app/robots.txt",
-    "sitemap": "https://web-production-8136ee.up.railway.app/sitemap.xml",
-    "manifest": "https://web-production-8136ee.up.railway.app/manifest.json",
-    "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
-    "swagger": "https://web-production-8136ee.up.railway.app/swagger",
-    "agent_card": "https://web-production-8136ee.up.railway.app/.well-known/agent.json",
-    "agent_card_alias": "https://web-production-8136ee.up.railway.app/.well-known/agent-card.json",
-    "x402": "https://web-production-8136ee.up.railway.app/.well-known/x402",
-    "x402_json": "https://web-production-8136ee.up.railway.app/.well-known/x402.json",
-    "discovery": "https://web-production-8136ee.up.railway.app/discovery/resources",
-    "metrics": "https://web-production-8136ee.up.railway.app/metrics"
+    "access": "https://api.axongate.one/v1/x402/access",
+    "retry": "https://api.axongate.one/v1/x402/retry",
+    "legacy_access": "https://api.axongate.one/v1/access",
+    "health": "https://api.axongate.one/health",
+    "docs": "https://api.axongate.one/docs",
+    "operator": "https://api.axongate.one/operator",
+    "quickstart": "https://api.axongate.one/quickstart",
+    "paid_test": "https://api.axongate.one/paid-test",
+    "quote": "https://api.axongate.one/quote",
+    "quote_api": "https://api.axongate.one/v1/x402/quote",
+    "demo": "https://api.axongate.one/demo",
+    "llms_txt": "https://api.axongate.one/llms.txt",
+    "robots": "https://api.axongate.one/robots.txt",
+    "sitemap": "https://api.axongate.one/sitemap.xml",
+    "manifest": "https://api.axongate.one/manifest.json",
+    "openapi": "https://api.axongate.one/openapi.json",
+    "swagger": "https://api.axongate.one/swagger",
+    "agent_card": "https://api.axongate.one/.well-known/agent.json",
+    "agent_card_alias": "https://api.axongate.one/.well-known/agent-card.json",
+    "x402": "https://api.axongate.one/.well-known/x402",
+    "x402_json": "https://api.axongate.one/.well-known/x402.json",
+    "discovery": "https://api.axongate.one/discovery/resources",
+    "metrics": "https://api.axongate.one/metrics"
   },
   "examples": {
     "python_client": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/python_client.py",
@@ -150,8 +150,8 @@
   "openapi_contract": {
     "method": "POST",
     "path": "/v1/x402/access",
-    "docs": "https://web-production-8136ee.up.railway.app/docs",
-    "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
+    "docs": "https://api.axongate.one/docs",
+    "openapi": "https://api.axongate.one/openapi.json",
     "payload_schema": {
       "target_url": "string (valid HTTP/HTTPS URL)",
       "tier": "optional string (starter, cached, basic, fresh, or deep)",
@@ -202,24 +202,24 @@
   "discovery": {
     "payai": {
       "facilitator": "https://facilitator.payai.network",
-      "resource": "https://web-production-8136ee.up.railway.app/v1/x402/access",
+      "resource": "https://api.axongate.one/v1/x402/access",
       "resource_type": "http",
       "x402_version": 2,
-      "market_listing": "https://web-production-8136ee.up.railway.app/discovery/resources",
+      "market_listing": "https://api.axongate.one/discovery/resources",
       "payment_required_header": "PAYMENT-REQUIRED",
       "extensions": [
         "bazaar",
         "payment-identifier"
       ],
-      "docs": "https://web-production-8136ee.up.railway.app/docs",
-      "operator": "https://web-production-8136ee.up.railway.app/operator",
-      "quickstart": "https://web-production-8136ee.up.railway.app/quickstart",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test",
-      "demo": "https://web-production-8136ee.up.railway.app/demo",
-      "llms_txt": "https://web-production-8136ee.up.railway.app/llms.txt",
-      "openapi": "https://web-production-8136ee.up.railway.app/openapi.json",
-      "quote": "https://web-production-8136ee.up.railway.app/v1/x402/quote",
-      "sitemap": "https://web-production-8136ee.up.railway.app/sitemap.xml"
+      "docs": "https://api.axongate.one/docs",
+      "operator": "https://api.axongate.one/operator",
+      "quickstart": "https://api.axongate.one/quickstart",
+      "paid_test": "https://api.axongate.one/paid-test",
+      "demo": "https://api.axongate.one/demo",
+      "llms_txt": "https://api.axongate.one/llms.txt",
+      "openapi": "https://api.axongate.one/openapi.json",
+      "quote": "https://api.axongate.one/v1/x402/quote",
+      "sitemap": "https://api.axongate.one/sitemap.xml"
     },
     "tags": [
       "x402",
@@ -235,7 +235,7 @@
       "LLM workflows that need token-efficient source material"
     ],
     "telemetry": {
-      "conversion_funnel": "https://web-production-8136ee.up.railway.app/metrics",
+      "conversion_funnel": "https://api.axongate.one/metrics",
       "tracked_stages": [
         "discovery_hits",
         "payment_challenges",

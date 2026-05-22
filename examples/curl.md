@@ -5,7 +5,7 @@ generate a payment proof. Use your x402 wallet or facilitator client to create
 the `PAYMENT-SIGNATURE` value, then pass it as an environment variable.
 
 ```bash
-export AXONGATE_BASE_URL="https://web-production-8136ee.up.railway.app"
+export AXONGATE_BASE_URL="https://api.axongate.one"
 export TARGET_URL="https://example.com"
 export AXONGATE_SOURCE="docs"
 ```

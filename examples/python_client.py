@@ -25,7 +25,7 @@ from typing import Any
 import httpx
 
 
-DEFAULT_BASE_URL = "https://web-production-8136ee.up.railway.app"
+DEFAULT_BASE_URL = "https://api.axongate.one"
 
 
 def parse_args() -> argparse.Namespace:

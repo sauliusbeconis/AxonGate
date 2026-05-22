@@ -57,7 +57,7 @@ if (!rawPrivateKey) {
 
 const privateKey = rawPrivateKey.startsWith("0x") ? rawPrivateKey : `0x${rawPrivateKey}`;
 const account = privateKeyToAccount(privateKey);
-const baseUrl = (values["base-url"] || process.env.AXONGATE_BASE_URL || "https://web-production-8136ee.up.railway.app").replace(/\/$/, "");
+const baseUrl = (values["base-url"] || process.env.AXONGATE_BASE_URL || "https://api.axongate.one").replace(/\/$/, "");
 const targetUrl = values["target-url"] || process.env.AXONGATE_TARGET_URL || "https://example.com";
 const forceRefresh = Boolean(values["force-refresh"] || process.env.AXONGATE_FORCE_REFRESH === "true");
 const retryEndpoint = `${baseUrl}/v1/x402/retry`;

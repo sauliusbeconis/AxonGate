@@ -25,7 +25,7 @@ Use a burner wallet JSON with `private_key` or `privateKey`.
       "command": "node",
       "args": ["C:/path/to/AxonGate-Vault/examples/axongate_mcp.mjs"],
       "env": {
-        "AXONGATE_BASE_URL": "https://web-production-8136ee.up.railway.app",
+        "AXONGATE_BASE_URL": "https://api.axongate.one",
         "AXONGATE_WALLET_FILE": "C:/path/to/burner_wallet.json",
         "AXONGATE_CONFIRM_SPEND": "0.012"
       }

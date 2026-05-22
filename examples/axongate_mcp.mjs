@@ -10,7 +10,7 @@ import { x402Client, x402HTTPClient } from "@x402/fetch";
 
 loadEnv();
 
-const DEFAULT_BASE_URL = "https://web-production-8136ee.up.railway.app";
+const DEFAULT_BASE_URL = "https://api.axongate.one";
 const prices = {
   starter: "0.012",
   cached: "0.015",

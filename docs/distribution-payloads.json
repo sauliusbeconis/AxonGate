@@ -1,65 +1,65 @@
 {
-  "base_url": "https://web-production-8136ee.up.railway.app",
+  "base_url": "https://api.axongate.one",
   "sources": {
     "x402-list": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/from/x402-list/v1/x402/starter",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=x402-list",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=x402-list"
+      "endpoint": "https://api.axongate.one/from/x402-list/v1/x402/starter",
+      "docs": "https://api.axongate.one/docs?source=x402-list",
+      "paid_test": "https://api.axongate.one/paid-test?source=x402-list"
     },
     "payanagent-starter": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=payanagent-starter",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=payanagent-starter",
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter",
+      "docs": "https://api.axongate.one/docs?source=payanagent-starter",
+      "paid_test": "https://api.axongate.one/paid-test?source=payanagent-starter",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
       "service_id": "js71gygf2a31v1wx6m2fxn8b1s876hnr"
     },
     "payanagent": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=payanagent",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=payanagent",
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent",
+      "docs": "https://api.axongate.one/docs?source=payanagent",
+      "paid_test": "https://api.axongate.one/paid-test?source=payanagent",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
       "service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn"
     },
     "agora402": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agora402",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=agora402",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=agora402"
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=agora402",
+      "docs": "https://api.axongate.one/docs?source=agora402",
+      "paid_test": "https://api.axongate.one/paid-test?source=agora402"
     },
     "agent-bazaar": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agent-bazaar",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=agent-bazaar",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=agent-bazaar"
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=agent-bazaar",
+      "docs": "https://api.axongate.one/docs?source=agent-bazaar",
+      "paid_test": "https://api.axongate.one/paid-test?source=agent-bazaar"
     },
     "the402": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=the402",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=the402",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=the402"
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=the402",
+      "docs": "https://api.axongate.one/docs?source=the402",
+      "paid_test": "https://api.axongate.one/paid-test?source=the402"
     },
     "x402-eco": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=x402-eco",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=x402-eco",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=x402-eco"
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=x402-eco",
+      "docs": "https://api.axongate.one/docs?source=x402-eco",
+      "paid_test": "https://api.axongate.one/paid-test?source=x402-eco"
     },
     "402agents": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=402agents",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=402agents",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=402agents"
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=402agents",
+      "docs": "https://api.axongate.one/docs?source=402agents",
+      "paid_test": "https://api.axongate.one/paid-test?source=402agents"
     },
     "github": {
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=github",
-      "docs": "https://web-production-8136ee.up.railway.app/docs?source=github",
-      "paid_test": "https://web-production-8136ee.up.railway.app/paid-test?source=github"
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=github",
+      "docs": "https://api.axongate.one/docs?source=github",
+      "paid_test": "https://api.axongate.one/paid-test?source=github"
     }
   },
   "x402_list": {
-    "status": "listed_online_update_blocked_custom_domain_required",
+    "status": "listed_online_custom_domain_update_ready",
     "slug": "axongate",
     "last_update_attempt": "2026-05-22",
-    "last_update_result": "HTTP 400: railway.app origins are rejected by the current submit API; custom domain required",
+    "last_update_result": "Custom domain connected; ready to re-submit starter source-alias update",
     "update_payload": {
-      "url": "https://web-production-8136ee.up.railway.app",
+      "url": "https://api.axongate.one",
       "service_name": "AxonGate",
-      "website_url": "https://web-production-8136ee.up.railway.app/manifest.json?source=x402-list",
+      "website_url": "https://api.axongate.one/manifest.json?source=x402-list",
       "email": "<operator email>",
       "category": "Data",
       "description": "AxonGate is an x402-paid Clean Context Broker on Base. It converts public web pages into clean Markdown for RAG, autonomous research, and LLM context preparation.",
@@ -79,7 +79,7 @@
       "category": "Data",
       "pricingModel": "per_request",
       "priceInCents": 3,
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent",
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent",
       "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"]
     }
   },
@@ -94,7 +94,7 @@
       "category": "Data",
       "pricingModel": "per_request",
       "priceInCents": 2,
-      "endpoint": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter",
+      "endpoint": "https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter",
       "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker", "starter"]
     }
   },
@@ -110,7 +110,7 @@
       "name": "AxonGate",
       "description": "x402-paid Clean Context Broker for public Web-to-Markdown extraction.",
       "category": "web-scraping",
-      "endpoint_url": "https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agora402",
+      "endpoint_url": "https://api.axongate.one/v1/x402/access?tier=fresh&source=agora402",
       "chain": "base",
       "wallet_base": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
       "price_usdc": 0.03,

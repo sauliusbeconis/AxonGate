@@ -1,9 +1,8 @@
 """Submit AxonGate to x402-list.com for manual review.
 
 This script intentionally requires both --email and --submit. Run without
---submit to print the payload only. x402-list currently rejects railway.app
-origins, so set AXONGATE_PUBLIC_BASE_URL to a custom HTTPS domain before a
-real submission.
+--submit to print the payload only. It defaults to the custom HTTPS domain,
+and AXONGATE_PUBLIC_BASE_URL can override that origin for future moves.
 """
 
 from __future__ import annotations
@@ -17,7 +16,7 @@ import httpx
 
 
 SUBMIT_URL = "https://x402-list.com/api/v1/submit"
-AXONGATE_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", "https://web-production-8136ee.up.railway.app").rstrip("/")
+AXONGATE_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", "https://api.axongate.one").rstrip("/")
 X402_LIST_SOURCE_PATH = "/from/x402-list/v1/x402/starter"
 
 

@@ -19,37 +19,37 @@ x402-paid Web-to-Markdown context extraction for RAG and autonomous research age
 ## Live URLs
 
 Manifest:
-https://web-production-8136ee.up.railway.app/manifest.json
+https://api.axongate.one/manifest.json
 
 Agent card:
-https://web-production-8136ee.up.railway.app/.well-known/agent.json
+https://api.axongate.one/.well-known/agent.json
 
 x402 requirements:
-https://web-production-8136ee.up.railway.app/.well-known/x402
+https://api.axongate.one/.well-known/x402
 
 PayAI-style discovery:
-https://web-production-8136ee.up.railway.app/discovery/resources
+https://api.axongate.one/discovery/resources
 
 Source-tagged paid endpoint:
-https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=SOURCE_NAME
+https://api.axongate.one/v1/x402/access?tier=fresh&source=SOURCE_NAME
 
 Operator dashboard:
-https://web-production-8136ee.up.railway.app/operator
+https://api.axongate.one/operator
 
 Paid smoke test guide:
-https://web-production-8136ee.up.railway.app/paid-test
+https://api.axongate.one/paid-test
 
 Free quote API:
-https://web-production-8136ee.up.railway.app/v1/x402/quote
+https://api.axongate.one/v1/x402/quote
 
 Standard x402 endpoint:
-https://web-production-8136ee.up.railway.app/v1/x402/access
+https://api.axongate.one/v1/x402/access
 
 Legacy tx-hash endpoint:
-https://web-production-8136ee.up.railway.app/v1/access
+https://api.axongate.one/v1/access
 
 Base URL:
-https://web-production-8136ee.up.railway.app
+https://api.axongate.one
 
 Endpoint paths:
 
@@ -105,7 +105,7 @@ github
 Example source-tagged endpoint:
 
 ```text
-https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent
+https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent
 ```
 
 ## Buyer Payload
@@ -138,7 +138,7 @@ Price per Call:
 0.012 starter, 0.015 cached, 0.02 basic, 0.03 fresh, 0.05 deep
 
 x402 Endpoint URL:
-https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=agent-bazaar
+https://api.axongate.one/v1/x402/access?tier=fresh&source=agent-bazaar
 
 ## PayanAgent Fields
 
@@ -164,7 +164,7 @@ Price:
 3 cents
 
 Endpoint:
-https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=payanagent
+https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent
 
 Starter service name:
 AxonGate Starter Clean Context
@@ -173,7 +173,7 @@ Starter price:
 2 cents in PayanAgent display metadata; actual x402 starter terms are 0.012 USDC.
 
 Starter endpoint:
-https://web-production-8136ee.up.railway.app/v1/x402/access?tier=starter&source=payanagent-starter
+https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter
 
 ## x402 List Fields
 
@@ -181,10 +181,10 @@ Service name:
 AxonGate
 
 Service base URL:
-https://web-production-8136ee.up.railway.app
+https://api.axongate.one
 
 Website URL:
-https://web-production-8136ee.up.railway.app/manifest.json
+https://api.axongate.one/manifest.json
 
 Category:
 Data
@@ -201,7 +201,7 @@ Endpoint paths:
 ```
 
 Notes:
-Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, official Bazaar discovery metadata, optional payment-identifier, a supplier-free quote API, a starter sample tier for first paid conversion, and cache-only low-cost tiers. The 2026-05-22 update attempt was blocked because the x402-list submit API now rejects railway.app origins; switch to a custom domain before re-submitting.
+Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, official Bazaar discovery metadata, optional payment-identifier, a supplier-free quote API, a starter sample tier for first paid conversion, and cache-only low-cost tiers. The custom domain is now connected at api.axongate.one, so use the custom-domain URLs for re-submission.
 
 ## 402agents Fields
 
@@ -215,7 +215,7 @@ Description:
 AxonGate is a Base x402-native Clean Context Broker that returns clean Markdown from public URLs for agentic research and RAG workflows.
 
 Agent / manifest URL:
-https://web-production-8136ee.up.railway.app/manifest.json
+https://api.axongate.one/manifest.json
 
 x402 endpoint:
-https://web-production-8136ee.up.railway.app/v1/x402/access?tier=fresh&source=402agents
+https://api.axongate.one/v1/x402/access?tier=fresh&source=402agents
