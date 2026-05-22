@@ -4567,6 +4567,7 @@ def build_quickstart_html() -> str:
                             "AXONGATE_BASE_URL": PUBLIC_BASE_URL,
                             "AXONGATE_WALLET_FILE": "C:/path/to/burner_wallet.json",
                             "AXONGATE_CONFIRM_SPEND": str(TIER_PRICING_USDC[STARTER_TIER]),
+                            "AXONGATE_PROOF_CONFIRM_SPEND": str(PROOF_PACK_PRICING_USDC["quick"]),
                         },
                     }
                 }
@@ -4592,6 +4593,20 @@ Input:
   "confirm_spend_usdc": "{TIER_PRICING_USDC[STARTER_TIER]}",
   "source": "quickstart-mcp",
   "max_markdown_chars": 12000
+}}"""
+    )
+    mcp_proof_paid = html.escape(
+        f"""Tool: fetch_proof_pack
+Input:
+{{
+  "target_url": "https://www.iana.org/domains/reserved",
+  "question": "What does this source establish about reserved domains?",
+  "pack": "quick",
+  "force_refresh": false,
+  "confirm_spend_usdc": "{PROOF_PACK_PRICING_USDC["quick"]}",
+  "source": "quickstart-mcp-proof",
+  "max_answer_chars": 1800,
+  "max_citation_excerpt_chars": 360
 }}"""
     )
     terminal_commands = html.escape(
@@ -4681,7 +4696,7 @@ npm run paid:buyer -- \\
 <body>
   <main>
     <h1>AxonGate Quickstart</h1>
-    <p>Turn a public URL into clean RAG-ready markdown with one paid x402 call. Use the terminal buyer for a direct smoke test, or attach the MCP server so an agent can call AxonGate as a tool.</p>
+    <p>Turn a public URL into clean RAG-ready markdown or a citation-backed Proof Pack with one paid x402 call. Use the terminal buyer for a direct smoke test, or attach the MCP server so an agent can call AxonGate as a tool.</p>
     <nav class="links" aria-label="Quickstart links">
       <a href="{public}/demo">Demo</a>
       <a href="{public}/paid-test">Paid Test</a>
@@ -4709,13 +4724,15 @@ npm run paid:buyer -- \\
     <pre>{expected_output}</pre>
 
     <h2>MCP Agent Path</h2>
-    <p>Add the server to an MCP-capable client, then call the probe tool first. The paid tool refuses to run unless the confirmed spend matches the selected tier price.</p>
+    <p>Add the server to an MCP-capable client, then call the probe tool first. Paid tools refuse to run unless the confirmed spend matches the selected tier or pack price.</p>
     <h3>Client Config</h3>
     <pre>{mcp_config}</pre>
     <h3>Probe Tool</h3>
     <pre>{mcp_probe}</pre>
     <h3>Paid Tool</h3>
     <pre>{mcp_paid}</pre>
+    <h3>Proof Pack Tool</h3>
+    <pre>{mcp_proof_paid}</pre>
 
     <h2>Pricing</h2>
     <table>
