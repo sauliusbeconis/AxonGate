@@ -52,10 +52,15 @@
     }
   },
   "x402_list": {
-    "status": "listed_online_custom_domain_update_ready",
+    "status": "custom_domain_update_submitted_pending",
     "slug": "axongate",
     "last_update_attempt": "2026-05-22",
-    "last_update_result": "Custom domain connected; ready to re-submit starter source-alias update",
+    "last_update_result": "HTTP 201: pending review; probe found 1 endpoint and 0 errors",
+    "submission_id": "86803de6-73b5-48cb-b7b4-0dd62f4d5702",
+    "probe_result": {
+      "endpoints_found": 1,
+      "errors": []
+    },
     "update_payload": {
       "url": "https://api.axongate.one",
       "service_name": "AxonGate",

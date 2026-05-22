@@ -28,7 +28,7 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 
 | Target | Status | Action |
 | --- | --- | --- |
-| x402 List | Listed, online; custom-domain update ready | AxonGate is present as slug `axongate`. `api.axongate.one` is connected and the starter source-alias update can now be re-submitted. |
+| x402 List | Update submitted, pending review | AxonGate is present as slug `axongate`. Custom-domain starter source-alias update submitted on 2026-05-22; submission ID `86803de6-73b5-48cb-b7b4-0dd62f4d5702`; probe found 1 endpoint and 0 errors. |
 | PayanAgent | Submitted, starter added | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Fresh service ID `js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`; starter service ID `js71gygf2a31v1wx6m2fxn8b1s876hnr`. API key is stored only in local ignored `.env`. |
 | Agora402 | Ready, gated | Requires a one-time listing fee: starter 1 USDC, pro 5 USDC, featured 25 USDC. Use the prepared payload below after paying the chosen listing tier. |
 | Agent Bazaar | Ready, manual | Submission form requires sign-in/review. Use the prepared fields below. |
@@ -75,10 +75,21 @@ Starter service payload:
 
 ## x402 List
 
-AxonGate is listed and online:
+AxonGate is listed and online. The custom-domain starter source-alias update was submitted on 2026-05-22 and is pending review:
 
 ```bash
 curl -s "https://x402-list.com/api/v1/services" | jq '.data[] | select(.slug == "axongate")'
+```
+
+```json
+{
+  "submission_id": "86803de6-73b5-48cb-b7b4-0dd62f4d5702",
+  "status": "pending",
+  "probe_result": {
+    "endpoints_found": 1,
+    "errors": []
+  }
+}
 ```
 
 Suggested update payload:
@@ -97,7 +108,7 @@ Suggested update payload:
 }
 ```
 
-Submit with `scripts/submit_x402_list.py` after the custom-domain deployment is live:
+Re-submit if the listing needs another metadata refresh:
 
 ```bash
 python scripts/submit_x402_list.py --email "operator@example.com" --submit
