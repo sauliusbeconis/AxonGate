@@ -162,6 +162,8 @@ function summarizeBody(body) {
     citation_count: Array.isArray(body.json.citations) ? body.json.citations.length : 0,
     confidence_score: body.json.confidence_score,
     llm_used: body.json.llm_used,
+    llm_model: body.json.llm_model,
+    fallback_reason: body.json.fallback_reason,
     cache: body.json.cache,
     payment: body.json.payment,
     ueg_receipt: body.json.ueg_receipt,

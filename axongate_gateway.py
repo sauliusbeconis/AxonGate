@@ -3482,10 +3482,16 @@ async def call_proof_pack_llm(
     )
     response_payload = {
         "model": model,
-        "input": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "instructions": system_prompt,
+        "input": user_prompt,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "proof_pack",
+                "schema": PROOF_PACK_LLM_SCHEMA,
+                "strict": False,
+            }
+        },
     }
     headers = {
         "Authorization": f"Bearer {LLM_API_KEY}",
@@ -3583,8 +3589,10 @@ async def generate_proof_pack_content(
             fallback_reason = "llm_unsupported_claims"
         except (httpx.HTTPError, JsonSchemaValidationError, json.JSONDecodeError, ValueError) as exc:
             fallback_reason = exc.__class__.__name__
+            print(f"[PROOF_PACK_LLM] Falling back after {fallback_reason}: {str(exc)[:240]}")
         except Exception as exc:
             fallback_reason = exc.__class__.__name__
+            print(f"[PROOF_PACK_LLM] Falling back after {fallback_reason}: {str(exc)[:240]}")
 
     inc_metric("proof_pack_llm_fallback_total")
     fallback = deterministic_proof_pack(
