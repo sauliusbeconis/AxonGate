@@ -1557,6 +1557,12 @@ def configure_standard_x402_middleware() -> None:
             for source in SOURCE_ALIAS_PATHS
         }
     )
+    routes.update(
+        {
+            f"POST /from/{source}/v1/x402/starter": route_config
+            for source in SOURCE_ALIAS_PATHS
+        }
+    )
 
     app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
 
@@ -2321,8 +2327,11 @@ async def check_profitability() -> bool:
 def x402_dynamic_price(context: HTTPRequestContext):
     """Return tier-aware x402 price for PayAI middleware."""
     tier = None
-    if context and context.adapter:
-        tier = context.adapter.get_query_param("tier") or context.adapter.get_header("x-axongate-tier")
+    if context:
+        if context.path.endswith("/v1/x402/starter"):
+            tier = STARTER_TIER
+        elif context.adapter:
+            tier = context.adapter.get_query_param("tier") or context.adapter.get_header("x-axongate-tier")
 
     normalized_tier = normalize_tier(tier)
     price = price_for_tier(normalized_tier)
@@ -4252,6 +4261,7 @@ async def access_context_broker_x402_probe(request: Request, source: Optional[st
     },
 )
 @app.post("/from/{source}/v1/x402/access", include_in_schema=False)
+@app.post("/from/{source}/v1/x402/starter", include_in_schema=False)
 async def access_context_broker_x402(
     request: Request,
     access_request: AccessRequest,
@@ -4267,6 +4277,7 @@ async def access_context_broker_x402(
     """
     inc_metric("requests_total")
     inc_metric("x402_access_requests_total")
+    source_starter_path = request.url.path.endswith("/v1/x402/starter")
 
     if not hasattr(request.state, "payment_payload"):
         source = attribution_source_from_request(request)
@@ -4279,7 +4290,11 @@ async def access_context_broker_x402(
             raise rate_limit_429(exc) from exc
 
         detail = "Payment Required. Retry with PAYMENT-SIGNATURE for the selected x402 requirement."
-        requested_tier = x_axongate_tier or request.query_params.get("tier") or access_request.tier
+        requested_tier = (
+            STARTER_TIER
+            if source_starter_path
+            else x_axongate_tier or request.query_params.get("tier") or access_request.tier
+        )
         raise HTTPException(
             status_code=402,
             detail=payment_required_detail(detail, requested_tier),
@@ -4297,7 +4312,12 @@ async def access_context_broker_x402(
     tier: Optional[str] = None
     try:
         target_url = await assert_public_target_url(access_request.target_url)
-        tier = normalize_tier(x_axongate_tier or request.query_params.get("tier") or access_request.tier)
+        requested_tier = (
+            STARTER_TIER
+            if source_starter_path
+            else x_axongate_tier or request.query_params.get("tier") or access_request.tier
+        )
+        tier = normalize_tier(requested_tier)
         try:
             await enforce_rate_limit("x402_paid_ip", client_rate_identifier(request), RATE_LIMIT_PAID_PER_IP)
             await enforce_rate_limit("target_domain", target_domain_identifier(target_url), RATE_LIMIT_TARGET_DOMAIN)
