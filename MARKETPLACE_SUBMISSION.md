@@ -146,10 +146,13 @@ Provider ID:
 `j579abv0vkymwrxw480hy19xhx85t28n`
 
 Service ID:
-`js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`
+`js7ccna62pvxbnte7t18g797wx876gbw`
 
 Starter Service ID:
-`js71gygf2a31v1wx6m2fxn8b1s876hnr`
+`js74m86sxk7rbasa56cnq6w1xh876912`
+
+Legacy Railway service IDs still visible because PayanAgent service PATCH/PUT/DELETE return 405:
+`js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`, `js71gygf2a31v1wx6m2fxn8b1s876hnr`
 
 Service name:
 AxonGate Clean Context Broker

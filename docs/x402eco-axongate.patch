@@ -1,0 +1,45 @@
+﻿From 8d8ab3a83c57d4ecc11ce07b9a76f25f9e5db495 Mon Sep 17 00:00:00 2001
+From: sauliusbeconis <saulius.beconis@gmail.com>
+Date: Fri, 22 May 2026 16:36:18 +0300
+Subject: [PATCH] ecosystem: add AxonGate
+
+---
+ data/ecosystem/services-endpoints/axongate.json |  8 ++++++++
+ public/logos/axongate.svg                       | 10 ++++++++++
+ 2 files changed, 18 insertions(+)
+ create mode 100644 data/ecosystem/services-endpoints/axongate.json
+ create mode 100644 public/logos/axongate.svg
+
+diff --git a/data/ecosystem/services-endpoints/axongate.json b/data/ecosystem/services-endpoints/axongate.json
+new file mode 100644
+index 0000000..245b80b
+--- /dev/null
++++ b/data/ecosystem/services-endpoints/axongate.json
+@@ -0,0 +1,8 @@
++{
++  "name": "AxonGate",
++  "description": "x402-paid clean Markdown context extraction for RAG and autonomous agents.",
++  "url": "https://api.axongate.one/docs?source=x402-eco",
++  "category": "services-endpoints",
++  "logo": "/logos/axongate.svg",
++  "tags": ["x402", "base", "usdc", "web-to-markdown", "rag"]
++}
+diff --git a/public/logos/axongate.svg b/public/logos/axongate.svg
+new file mode 100644
+index 0000000..fa04b91
+--- /dev/null
++++ b/public/logos/axongate.svg
+@@ -0,0 +1,10 @@
++<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
++  <title id="title">AxonGate</title>
++  <desc id="desc">AxonGate logo mark</desc>
++  <rect width="128" height="128" rx="24" fill="#101214"/>
++  <path d="M24 66c12-24 28-36 48-36 16 0 27 7 34 20" fill="none" stroke="#9DFF3A" stroke-width="8" stroke-linecap="round"/>
++  <path d="M104 62c-12 24-28 36-48 36-16 0-27-7-34-20" fill="none" stroke="#F4F7F1" stroke-width="8" stroke-linecap="round"/>
++  <circle cx="64" cy="64" r="14" fill="#9DFF3A"/>
++  <circle cx="64" cy="64" r="5" fill="#101214"/>
++  <path d="M31 36h18M79 92h18" stroke="#F4F7F1" stroke-width="7" stroke-linecap="round"/>
++</svg>
+-- 
+2.54.0.windows.1
+

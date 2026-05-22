@@ -29,11 +29,11 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 | Target | Status | Action |
 | --- | --- | --- |
 | x402 List | Update submitted, pending review | AxonGate is present as slug `axongate`. Custom-domain starter source-alias update submitted on 2026-05-22; submission ID `86803de6-73b5-48cb-b7b4-0dd62f4d5702`; probe found 1 endpoint and 0 errors. |
-| PayanAgent | Submitted, starter added | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Fresh service ID `js7ab33wbqbk5rp7rq8tvfk9yx85vbqn`; starter service ID `js71gygf2a31v1wx6m2fxn8b1s876hnr`. API key is stored only in local ignored `.env`. |
+| PayanAgent | Custom-domain replacements live | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Custom-domain fresh service ID `js7ccna62pvxbnte7t18g797wx876gbw`; custom-domain starter service ID `js74m86sxk7rbasa56cnq6w1xh876912`. Legacy Railway service records remain active because PayanAgent exposes create/list/invoke but not service update/delete. |
 | Agora402 | Ready, gated | Requires a one-time listing fee: starter 1 USDC, pro 5 USDC, featured 25 USDC. Use the prepared payload below after paying the chosen listing tier. |
 | Agent Bazaar | Ready, manual | Submission form requires sign-in/review. Use the prepared fields below. |
 | the402 | Ready, manual | Provider onboarding requires a site account. Use the prepared fields below. |
-| x402.eco | Ready, PR needed | Submit a GitHub PR adding AxonGate under the services/endpoints ecosystem data. |
+| x402.eco | PR branch prepared | Local branch `ecosystem-add-axongate` in `x402eco/website` clone, commit `8d8ab3a`. Direct push was denied to `sauliusbeconis`; create a fork or add GitHub CLI/token auth to open the PR. |
 
 ## PayanAgent
 
@@ -43,7 +43,7 @@ Public service registry check:
 curl -s "https://payanagent.com/api/v1/services" | jq '.services[] | select(.name | contains("AxonGate"))'
 ```
 
-Submitted service payload:
+Custom-domain replacement service payload:
 
 ```json
 {
@@ -58,7 +58,7 @@ Submitted service payload:
 }
 ```
 
-Starter service payload:
+Custom-domain starter replacement service payload:
 
 ```json
 {
@@ -71,6 +71,20 @@ Starter service payload:
   "endpoint": "https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter",
   "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker", "starter"]
 }
+```
+
+Replacement service IDs:
+
+```text
+Fresh: js7ccna62pvxbnte7t18g797wx876gbw
+Starter: js74m86sxk7rbasa56cnq6w1xh876912
+```
+
+Legacy service IDs still visible in the public registry because service update/delete endpoints currently return `405`:
+
+```text
+Fresh legacy: js7ab33wbqbk5rp7rq8tvfk9yx85vbqn
+Starter legacy: js71gygf2a31v1wx6m2fxn8b1s876hnr
 ```
 
 ## x402 List
@@ -200,12 +214,29 @@ Suggested ecosystem entry:
 ```json
 {
   "name": "AxonGate",
-  "description": "x402-paid Clean Context Broker that converts public pages into clean markdown for RAG and autonomous agents.",
+  "description": "x402-paid clean Markdown context extraction for RAG and autonomous agents.",
   "url": "https://api.axongate.one/docs?source=x402-eco",
   "category": "services-endpoints",
-  "logo": "/logos/axongate.png",
+  "logo": "/logos/axongate.svg",
   "tags": ["x402", "base", "usdc", "web-to-markdown", "rag"]
 }
+```
+
+Prepared PR branch:
+
+```text
+Repo: https://github.com/x402eco/website
+Branch: ecosystem-add-axongate
+Commit: 8d8ab3a ecosystem: add AxonGate
+Files:
+- data/ecosystem/services-endpoints/axongate.json
+- public/logos/axongate.svg
+```
+
+Backup patch saved in this repo:
+
+```text
+docs/x402eco-axongate.patch
 ```
 
 ## Follow-Up Checks

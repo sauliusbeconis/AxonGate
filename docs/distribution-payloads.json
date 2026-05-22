@@ -11,14 +11,16 @@
       "docs": "https://api.axongate.one/docs?source=payanagent-starter",
       "paid_test": "https://api.axongate.one/paid-test?source=payanagent-starter",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
-      "service_id": "js71gygf2a31v1wx6m2fxn8b1s876hnr"
+      "service_id": "js74m86sxk7rbasa56cnq6w1xh876912",
+      "legacy_service_id": "js71gygf2a31v1wx6m2fxn8b1s876hnr"
     },
     "payanagent": {
       "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent",
       "docs": "https://api.axongate.one/docs?source=payanagent",
       "paid_test": "https://api.axongate.one/paid-test?source=payanagent",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
-      "service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn"
+      "service_id": "js7ccna62pvxbnte7t18g797wx876gbw",
+      "legacy_service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn"
     },
     "agora402": {
       "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=agora402",
@@ -74,33 +76,37 @@
     }
   },
   "payanagent": {
-    "status": "submitted",
+    "status": "custom_domain_replacement_live",
     "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
-    "service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn",
+    "service_id": "js7ccna62pvxbnte7t18g797wx876gbw",
+    "legacy_service_id": "js7ab33wbqbk5rp7rq8tvfk9yx85vbqn",
+    "last_update_result": "HTTP 201: replacement service created because PATCH/PUT/DELETE service endpoints return 405",
     "service_payload": {
       "name": "AxonGate Clean Context Broker",
-      "description": "Paid Web-to-Markdown context extraction for autonomous agents. Returns clean markdown plus payment and unit-economics metadata.",
+      "description": "Paid Web-to-Markdown context extraction for autonomous agents. Returns clean markdown plus payment and unit-economics metadata from the custom AxonGate domain.",
       "serviceType": "api",
       "category": "Data",
       "pricingModel": "per_request",
       "priceInCents": 3,
       "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent",
-      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"]
+      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker", "custom-domain"]
     }
   },
   "payanagent_starter": {
-    "status": "submitted",
+    "status": "custom_domain_replacement_live",
     "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
-    "service_id": "js71gygf2a31v1wx6m2fxn8b1s876hnr",
+    "service_id": "js74m86sxk7rbasa56cnq6w1xh876912",
+    "legacy_service_id": "js71gygf2a31v1wx6m2fxn8b1s876hnr",
+    "last_update_result": "HTTP 201: replacement service created because PATCH/PUT/DELETE service endpoints return 405",
     "service_payload": {
       "name": "AxonGate Starter Clean Context",
-      "description": "Lowest-friction paid Web-to-Markdown smoke test for autonomous agents. Actual x402 starter terms are 0.012 USDC and serve the sample target or existing cache with no supplier spend; use AxonGate fresh for live extraction.",
+      "description": "Lowest-friction paid Web-to-Markdown smoke test for autonomous agents on the custom AxonGate domain. Actual x402 starter terms are 0.012 USDC and serve the sample target or existing cache with no supplier spend; use AxonGate fresh for live extraction.",
       "serviceType": "api",
       "category": "Data",
       "pricingModel": "per_request",
       "priceInCents": 2,
       "endpoint": "https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter",
-      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker", "starter"]
+      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker", "starter", "custom-domain"]
     }
   },
   "agora402": {
@@ -129,6 +135,21 @@
       "rate_limit_rpm": 120,
       "capabilities": ["web_scraping", "html_to_markdown", "rag_context_generation"],
       "tags": ["x402", "base", "usdc", "web-to-markdown", "context-broker"]
+    }
+  },
+  "x402_eco": {
+    "status": "pr_branch_prepared_push_blocked",
+    "repo": "https://github.com/x402eco/website",
+    "branch": "ecosystem-add-axongate",
+    "commit": "8d8ab3a",
+    "push_result": "Direct push denied to sauliusbeconis; create a fork or add GitHub CLI/token auth to open the PR",
+    "entry": {
+      "name": "AxonGate",
+      "description": "x402-paid clean Markdown context extraction for RAG and autonomous agents.",
+      "url": "https://api.axongate.one/docs?source=x402-eco",
+      "category": "services-endpoints",
+      "logo": "/logos/axongate.svg",
+      "tags": ["x402", "base", "usdc", "web-to-markdown", "rag"]
     }
   }
 }
