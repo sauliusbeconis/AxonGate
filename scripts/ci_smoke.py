@@ -53,6 +53,23 @@ async def main() -> None:
             response = await client.get(path)
             assert response.status_code == 200, f"{path} returned {response.status_code}"
 
+        secure_sample = await client.get(
+            "/proof-pack/sample",
+            headers={"host": "api.axongate.one", "x-forwarded-proto": "https"},
+        )
+        assert secure_sample.headers.get("strict-transport-security"), "HTTPS sample missing HSTS header"
+        assert secure_sample.headers.get("x-content-type-options") == "nosniff", "security headers missing"
+
+        public_http_sample = await client.get(
+            "/proof-pack/sample",
+            headers={"host": "api.axongate.one", "x-forwarded-proto": "http"},
+            follow_redirects=False,
+        )
+        assert public_http_sample.status_code == 308, "public HTTP sample should redirect to HTTPS"
+        assert public_http_sample.headers.get("location") == (
+            "https://api.axongate.one/proof-pack/sample"
+        ), "public HTTP sample redirect location mismatch"
+
         probe = await client.get("/v1/x402/access")
         assert probe.status_code == 402, f"x402 probe returned {probe.status_code}"
         assert probe.headers.get("PAYMENT-REQUIRED"), "x402 probe missing PAYMENT-REQUIRED"

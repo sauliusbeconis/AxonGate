@@ -21,7 +21,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, PlainTextResponse, Response
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from jsonschema import ValidationError as JsonSchemaValidationError
 from jsonschema import validate as validate_json_schema
 from pydantic import BaseModel, Field
@@ -86,6 +86,9 @@ app = FastAPI(
 
 DEFAULT_PUBLIC_BASE_URL = "https://api.axongate.one"
 PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", DEFAULT_PUBLIC_BASE_URL).rstrip("/")
+PUBLIC_BASE_PARSED = urlparse(PUBLIC_BASE_URL)
+PUBLIC_BASE_SCHEME = PUBLIC_BASE_PARSED.scheme.lower()
+PUBLIC_BASE_HOST = (PUBLIC_BASE_PARSED.hostname or "").lower()
 GITHUB_REPO_URL = os.getenv("AXONGATE_GITHUB_REPO_URL", "https://github.com/sauliusbeconis/AxonGate").rstrip("/")
 BASE_MAINNET_RPC_URL = os.getenv("BASE_RPC_URL", "https://mainnet.base.org")
 BASE_RPC_TIMEOUT_SECONDS = float(os.getenv("BASE_RPC_TIMEOUT_SECONDS", "5"))
@@ -135,6 +138,13 @@ JINA_API_KEY = os.getenv("JINA_API_KEY")
 JINA_READER_BASE_URL = os.getenv("JINA_READER_BASE_URL", "https://r.jina.ai")
 JINA_TIMEOUT_SECONDS = float(os.getenv("JINA_TIMEOUT_SECONDS", "20"))
 PREFLIGHT_ENABLED = os.getenv("AXONGATE_PREFLIGHT_ENABLED", "true").lower() not in {"0", "false", "no"}
+FORCE_HTTPS_ENABLED = os.getenv("AXONGATE_FORCE_HTTPS", "true").lower() not in {"0", "false", "no"}
+SECURITY_HEADERS_ENABLED = os.getenv("AXONGATE_SECURITY_HEADERS_ENABLED", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
+HSTS_MAX_AGE_SECONDS = int(os.getenv("AXONGATE_HSTS_MAX_AGE_SECONDS", "31536000"))
 PREFLIGHT_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_PREFLIGHT_TIMEOUT_SECONDS", "5"))
 PREFLIGHT_MAX_REDIRECTS = int(os.getenv("AXONGATE_PREFLIGHT_MAX_REDIRECTS", "3"))
 PREFLIGHT_MAX_CONTENT_BYTES = int(os.getenv("AXONGATE_PREFLIGHT_MAX_CONTENT_BYTES", "5242880"))
@@ -2834,9 +2844,62 @@ def x402_dynamic_price(context: HTTPRequestContext):
 configure_standard_x402_middleware()
 
 
+def first_header_value(value: Optional[str]) -> str:
+    return (value or "").split(",", 1)[0].strip()
+
+
+def request_effective_proto(request: Request) -> str:
+    forwarded = request.headers.get("forwarded", "")
+    proto_match = re.search(r'proto="?([^;,"]+)"?', forwarded, flags=re.IGNORECASE)
+    if proto_match:
+        return proto_match.group(1).lower()
+    forwarded_proto = first_header_value(request.headers.get("x-forwarded-proto"))
+    return (forwarded_proto or request.url.scheme).lower()
+
+
+def request_effective_host(request: Request) -> str:
+    forwarded_host = first_header_value(request.headers.get("x-forwarded-host"))
+    host = forwarded_host or request.headers.get("host") or request.url.netloc
+    return host.rsplit("@", 1)[-1].split(":", 1)[0].lower()
+
+
+def should_redirect_to_https(request: Request) -> bool:
+    if not (FORCE_HTTPS_ENABLED and PUBLIC_BASE_SCHEME == "https" and PUBLIC_BASE_HOST):
+        return False
+    return request_effective_proto(request) == "http" and request_effective_host(request) == PUBLIC_BASE_HOST
+
+
+def https_redirect_url(request: Request) -> str:
+    host = (
+        first_header_value(request.headers.get("x-forwarded-host"))
+        or request.headers.get("host")
+        or request.url.netloc
+    )
+    query = f"?{request.url.query}" if request.url.query else ""
+    return f"https://{host}{request.url.path}{query}"
+
+
+def add_security_headers(response: Response, request: Request) -> None:
+    if not SECURITY_HEADERS_ENABLED:
+        return
+    if PUBLIC_BASE_SCHEME == "https" and request_effective_proto(request) == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security",
+            f"max-age={HSTS_MAX_AGE_SECONDS}; includeSubDomains",
+        )
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+
+
 @app.middleware("http")
-async def enrich_402_buyer_guidance(request: Request, call_next):
-    response = await call_next(request)
+async def enforce_security_and_enrich_402_guidance(request: Request, call_next):
+    if should_redirect_to_https(request):
+        response = RedirectResponse(https_redirect_url(request), status_code=308)
+    else:
+        response = await call_next(request)
+    add_security_headers(response, request)
     has_payment_terms = response.headers.get("PAYMENT-REQUIRED") or response.headers.get("X-Payment-Required")
     if response.status_code == 402 and has_payment_terms:
         for name, value in buyer_guidance_headers().items():
