@@ -47,6 +47,7 @@
       "proof_pack_evidence_reports",
       "citation_backed_reports",
       "proof_pack_sample_preview",
+      "proof_pack_lead_capture",
       "llm_assisted_deterministic_fallback"
     ],
     "input_modes": [
@@ -149,6 +150,8 @@
     "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
     "proof_pack_quote": "https://api.axongate.one/proof-pack/quote",
     "proof_pack_quote_api": "https://api.axongate.one/v1/proof-pack/quote",
+    "proof_pack_request": "https://api.axongate.one/proof-pack/request",
+    "proof_pack_leads_api": "https://api.axongate.one/v1/proof-pack/leads",
     "proof_pack_access": "https://api.axongate.one/v1/x402/proof-pack",
     "demo": "https://api.axongate.one/demo",
     "llms_txt": "https://api.axongate.one/llms.txt",
@@ -231,6 +234,8 @@
     "sample_api": "https://api.axongate.one/v1/proof-pack/sample",
     "quote": "https://api.axongate.one/proof-pack/quote",
     "quote_api": "https://api.axongate.one/v1/proof-pack/quote",
+    "request": "https://api.axongate.one/proof-pack/request",
+    "lead_api": "https://api.axongate.one/v1/proof-pack/leads",
     "payload_schema": {
       "target_url": "string (valid HTTP/HTTPS URL)",
       "question": "optional string",
@@ -296,6 +301,8 @@
       "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
       "proof_pack_quote": "https://api.axongate.one/proof-pack/quote",
       "proof_pack_quote_api": "https://api.axongate.one/v1/proof-pack/quote",
+      "proof_pack_request": "https://api.axongate.one/proof-pack/request",
+      "proof_pack_leads_api": "https://api.axongate.one/v1/proof-pack/leads",
       "proof_pack_endpoint": "https://api.axongate.one/v1/x402/proof-pack",
       "sitemap": "https://api.axongate.one/sitemap.xml"
     },
@@ -327,6 +334,7 @@
         "payment_replay_rejections",
         "retry_credit_issued",
         "proof_pack_quotes",
+        "proof_pack_leads",
         "proof_pack_requests",
         "proof_pack_delivery_success",
         "ueg_rejections",

@@ -31,6 +31,7 @@ No-spend Proof Pack sample URLs for marketplace reviewers:
 https://api.axongate.one/proof-pack/sample?source=reviewer
 https://api.axongate.one/v1/proof-pack/sample?source=reviewer
 https://api.axongate.one/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=reviewer
+https://api.axongate.one/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick&source=reviewer
 ```
 
 ## Current Status
@@ -142,7 +143,7 @@ Suggested update payload:
   "description": "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation.",
   "endpoint_paths": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
   "endpoints": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
-  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, and supplier-free quote APIs."
+  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, supplier-free quote APIs, and Proof Pack request capture."
 }
 ```
 

@@ -63,6 +63,29 @@ curl "$AXONGATE_BASE_URL/v1/proof-pack/sample?source=$AXONGATE_SOURCE"
 curl "$AXONGATE_BASE_URL/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
 ```
 
+## Proof Pack Request Capture
+
+Use this when a buyer wants a report but is not ready to run x402 payment yet.
+It stores intent only; it does not spend USDC, call suppliers, or run the LLM.
+
+```bash
+curl "$AXONGATE_BASE_URL/proof-pack/request?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=quick&source=$AXONGATE_SOURCE"
+```
+
+```bash
+curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/leads" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"contact\": \"builder@example.com\",
+    \"target_url\": \"https://example.com\",
+    \"question\": \"Which claims can my agent cite?\",
+    \"pack\": \"quick\",
+    \"use_case\": \"RAG evaluation\",
+    \"budget_usdc\": \"10/month\",
+    \"source\": \"$AXONGATE_SOURCE\"
+  }"
+```
+
 ## Standard x402 Paid Request
 
 For a real Base USDC smoke test from a burner wallet, use the repo-native buyer:

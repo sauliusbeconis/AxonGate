@@ -11,6 +11,7 @@ import base64
 import json
 import sys
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 
@@ -43,6 +44,7 @@ async def main() -> None:
             "/proof-pack",
             "/proof-pack/sample",
             "/proof-pack/quote",
+            "/proof-pack/request",
             "/v1/proof-pack/sample",
             "/demo",
             "/robots.txt",
@@ -137,6 +139,43 @@ async def main() -> None:
         assert "Proof Pack Quote" in proof_quote_page.text, "Proof Pack quote page missing heading"
         assert "100000" in proof_quote_page.text, "Proof Pack quote page missing quick amount"
         assert "Probe Payment Terms" in proof_quote_page.text, "Proof Pack quote page missing paid next step"
+        assert "Request This Report" in proof_quote_page.text, "Proof Pack quote page missing request CTA"
+        assert "POST /v1/x402/proof-pack" in proof_quote_page.text, "Proof Pack quote page missing short endpoint"
+        assert "Full Paid Endpoint" in proof_quote_page.text, "Proof Pack quote page should keep full URL in a scroll-safe block"
+
+        proof_request_page = await client.get(
+            "/proof-pack/request?target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
+        )
+        assert proof_request_page.status_code == 200, "Proof Pack request page should render"
+        assert "Proof Pack Request" in proof_request_page.text, "Proof Pack request page missing heading"
+        assert "POST /v1/x402/proof-pack" in proof_request_page.text, "Proof Pack request page missing short endpoint"
+
+        lead_payload = {
+            "contact": "codex-test@example.invalid",
+            "target_url": "https://www.iana.org/domains/reserved",
+            "question": "Which claims can my agent cite?",
+            "pack": "quick",
+            "use_case": "CI smoke test",
+            "budget_usdc": "10/month",
+            "source": "ci",
+            "notes": "No-spend lead capture check.",
+        }
+        proof_lead = await client.post("/v1/proof-pack/leads", json=lead_payload)
+        assert proof_lead.status_code == 200, f"Proof Pack lead API returned {proof_lead.status_code}"
+        proof_lead_json = proof_lead.json()
+        assert proof_lead_json["status"] == "received", "Proof Pack lead API returned wrong status"
+        assert proof_lead_json["amount_units"] == "100000", "Proof Pack lead should preserve quick price"
+        assert proof_lead_json["contact_received"] is True, "Proof Pack lead should acknowledge contact privately"
+        assert "contact" not in proof_lead_json, "Proof Pack lead response must not echo contact"
+        assert "proof-pack/request" in proof_lead_json["next_steps"]["request_page"], "Lead response missing request page"
+
+        form_lead = await client.post(
+            "/proof-pack/request",
+            content=urlencode(lead_payload),
+            headers={"content-type": "application/x-www-form-urlencoded"},
+        )
+        assert form_lead.status_code == 200, f"Proof Pack request form returned {form_lead.status_code}"
+        assert "Request received" in form_lead.text, "Proof Pack request form should acknowledge submit"
 
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
@@ -237,11 +276,14 @@ async def main() -> None:
         assert "proofPacks" in x402_discovery["metadata"], "Proof Pack pricing missing from public discovery"
         assert "proofPackSampleApi" in x402_discovery["metadata"], "Proof Pack sample missing from public discovery"
         assert "proofPackQuote" in x402_discovery["metadata"], "Proof Pack quote page missing from public discovery"
+        assert "proofPackRequest" in x402_discovery["metadata"], "Proof Pack request page missing from public discovery"
+        assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})
         assert schemas.get("AccessRequest", {}).get("examples"), "AccessRequest examples missing"
         assert schemas.get("ProofPackRequest", {}).get("examples"), "ProofPackRequest examples missing"
+        assert schemas.get("ProofPackLeadRequest", {}).get("examples"), "ProofPackLeadRequest examples missing"
         post_operation = openapi.get("paths", {}).get("/v1/x402/access", {}).get("post", {})
         assert post_operation.get("x-payment-info"), "OpenAPI payment extension missing from paid endpoint"
         proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
@@ -263,6 +305,9 @@ async def main() -> None:
         assert "attribution_events_redis_key" in metrics["metrics_backend"], "attribution event Redis key missing from metrics"
         assert "alerts" in metrics, "alerts block missing from metrics"
         assert "proof_pack_pricing" in metrics, "Proof Pack pricing missing from metrics"
+        assert metrics["metrics"].get("proof_pack_leads_total", 0) >= 2, "Proof Pack leads should be counted"
+        assert metrics["conversion_funnel"].get("proof_pack_leads", 0) >= 2, "Proof Pack leads missing from funnel"
+        assert "proof_pack_leads" in metrics, "Proof Pack lead storage snapshot missing from metrics"
 
 
 if __name__ == "__main__":
