@@ -2,11 +2,13 @@
   "base_url": "https://api.axongate.one",
   "proof_pack_sample": "https://api.axongate.one/proof-pack/sample",
   "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
+  "proof_pack_quote": "https://api.axongate.one/proof-pack/quote",
   "sources": {
     "x402-list": {
       "endpoint": "https://api.axongate.one/from/x402-list/v1/x402/starter",
       "proof_pack_endpoint": "https://api.axongate.one/from/x402-list/v1/x402/proof-pack?pack=standard",
       "proof_pack_sample": "https://api.axongate.one/v1/proof-pack/sample?source=x402-list",
+      "proof_pack_quote": "https://api.axongate.one/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=x402-list",
       "docs": "https://api.axongate.one/docs?source=x402-list",
       "paid_test": "https://api.axongate.one/paid-test?source=x402-list"
     },
@@ -22,6 +24,7 @@
       "endpoint": "https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent",
       "proof_pack_endpoint": "https://api.axongate.one/v1/x402/proof-pack?pack=standard&source=payanagent",
       "proof_pack_sample": "https://api.axongate.one/v1/proof-pack/sample?source=payanagent",
+      "proof_pack_quote": "https://api.axongate.one/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=payanagent",
       "docs": "https://api.axongate.one/docs?source=payanagent",
       "paid_test": "https://api.axongate.one/paid-test?source=payanagent",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",

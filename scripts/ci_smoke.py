@@ -42,6 +42,7 @@ async def main() -> None:
             "/quote",
             "/proof-pack",
             "/proof-pack/sample",
+            "/proof-pack/quote",
             "/v1/proof-pack/sample",
             "/demo",
             "/robots.txt",
@@ -125,6 +126,17 @@ async def main() -> None:
         assert proof_quote["next_steps"]["proof_pack_sample_api"].endswith(
             "/v1/proof-pack/sample"
         ), "Proof Pack quote should point to sample JSON"
+        assert proof_quote["next_steps"]["proof_pack_quote_page"].endswith(
+            "/proof-pack/quote"
+        ), "Proof Pack quote should point to the human quote page"
+
+        proof_quote_page = await client.get(
+            "/proof-pack/quote?target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
+        )
+        assert proof_quote_page.status_code == 200, "Proof Pack quote page should render"
+        assert "Proof Pack Quote" in proof_quote_page.text, "Proof Pack quote page missing heading"
+        assert "100000" in proof_quote_page.text, "Proof Pack quote page missing quick amount"
+        assert "Probe Payment Terms" in proof_quote_page.text, "Proof Pack quote page missing paid next step"
 
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
@@ -224,6 +236,7 @@ async def main() -> None:
         assert "cached" in x402_discovery["metadata"]["tiers"], "cached tier missing from public discovery"
         assert "proofPacks" in x402_discovery["metadata"], "Proof Pack pricing missing from public discovery"
         assert "proofPackSampleApi" in x402_discovery["metadata"], "Proof Pack sample missing from public discovery"
+        assert "proofPackQuote" in x402_discovery["metadata"], "Proof Pack quote page missing from public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})

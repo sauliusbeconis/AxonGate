@@ -30,6 +30,7 @@ No-spend Proof Pack sample URLs for marketplace reviewers:
 ```text
 https://api.axongate.one/proof-pack/sample?source=reviewer
 https://api.axongate.one/v1/proof-pack/sample?source=reviewer
+https://api.axongate.one/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=reviewer
 ```
 
 ## Current Status

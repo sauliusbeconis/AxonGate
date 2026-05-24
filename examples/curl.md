@@ -49,6 +49,12 @@ Use the sample endpoint to inspect the response shape before paying. The quote
 endpoint validates the target, returns exact x402 amounts, and does not spend
 USDC or trigger supplier work.
 
+Human quote page:
+
+```bash
+curl "$AXONGATE_BASE_URL/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
+```
+
 ```bash
 curl "$AXONGATE_BASE_URL/v1/proof-pack/sample?source=$AXONGATE_SOURCE"
 ```
