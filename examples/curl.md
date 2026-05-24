@@ -86,6 +86,15 @@ curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/leads" \
   }"
 ```
 
+Private operator lead inbox:
+
+```bash
+export AXONGATE_OPERATOR_TOKEN="<operator token>"
+
+curl -sS "$AXONGATE_BASE_URL/v1/operator/leads?limit=25" \
+  -H "X-AxonGate-Operator-Token: $AXONGATE_OPERATOR_TOKEN"
+```
+
 ## Standard x402 Paid Request
 
 For a real Base USDC smoke test from a burner wallet, use the repo-native buyer:

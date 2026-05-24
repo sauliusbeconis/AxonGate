@@ -34,6 +34,16 @@ https://api.axongate.one/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&p
 https://api.axongate.one/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick&source=reviewer
 ```
 
+Private lead inbox for operators:
+
+```bash
+curl -H "X-AxonGate-Operator-Token: <token>" "https://api.axongate.one/v1/operator/leads?limit=25"
+```
+
+Set `AXONGATE_OPERATOR_TOKEN` to enable raw contact access and
+`AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL` to notify an external inbox or workflow
+whenever a request is captured.
+
 ## Current Status
 
 | Target | Status | Action |

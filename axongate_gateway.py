@@ -128,6 +128,10 @@ ALERT_WEBHOOK_URL = os.getenv("AXONGATE_ALERT_WEBHOOK_URL")
 ALERT_WEBHOOK_TOKEN = os.getenv("AXONGATE_ALERT_WEBHOOK_TOKEN")
 ALERT_MIN_INTERVAL_SECONDS = int(os.getenv("AXONGATE_ALERT_MIN_INTERVAL_SECONDS", "300"))
 ALERT_WEBHOOK_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_ALERT_WEBHOOK_TIMEOUT_SECONDS", "5"))
+OPERATOR_TOKEN = (os.getenv("AXONGATE_OPERATOR_TOKEN") or os.getenv("AXONGATE_ALERT_WEBHOOK_TOKEN") or "").strip()
+PROOF_PACK_LEAD_WEBHOOK_URL = os.getenv("AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL", "").strip()
+PROOF_PACK_LEAD_WEBHOOK_TOKEN = os.getenv("AXONGATE_PROOF_PACK_LEAD_WEBHOOK_TOKEN", "").strip()
+PROOF_PACK_LEAD_WEBHOOK_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_PROOF_PACK_LEAD_WEBHOOK_TIMEOUT_SECONDS", "5"))
 ALERT_MIN_SAMPLE_SIZE = int(os.getenv("AXONGATE_ALERT_MIN_SAMPLE_SIZE", "20"))
 ALERT_RETRYABLE_OUTAGE_RATE = float(os.getenv("AXONGATE_ALERT_RETRYABLE_OUTAGE_RATE", "0.15"))
 ALERT_UEG_REJECTION_RATE = float(os.getenv("AXONGATE_ALERT_UEG_REJECTION_RATE", "0.20"))
@@ -308,6 +312,7 @@ metrics: dict[str, int] = {
     "discovery_llms_hits_total": 0,
     "discovery_docs_hits_total": 0,
     "discovery_operator_hits_total": 0,
+    "discovery_operator_leads_hits_total": 0,
     "discovery_quickstart_hits_total": 0,
     "discovery_paid_test_hits_total": 0,
     "discovery_quote_hits_total": 0,
@@ -346,11 +351,14 @@ metrics: dict[str, int] = {
     "proof_pack_quotes_total": 0,
     "proof_pack_leads_total": 0,
     "proof_pack_lead_errors_total": 0,
+    "proof_pack_lead_notifications_total": 0,
+    "proof_pack_lead_notification_errors_total": 0,
     "proof_pack_requests_total": 0,
     "proof_pack_llm_success_total": 0,
     "proof_pack_llm_fallback_total": 0,
     "proof_pack_delivery_success_total": 0,
     "errors_total": 0,
+    "operator_auth_failures_total": 0,
 }
 CDP_TRANSACTION_METHOD_NAMES = ("get_transaction", "get_evm_transaction", "get_transaction_receipt")
 PAYMENT_PROOF_HEADERS = (
@@ -4013,6 +4021,162 @@ async def proof_pack_leads_public_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+def operator_token_candidates(request: Request) -> list[str]:
+    """Read operator token candidates from safe headers and browser fallback query params."""
+    candidates: list[str] = []
+    authorization = request.headers.get("authorization", "").strip()
+    if authorization.lower().startswith("bearer "):
+        candidates.append(authorization[7:].strip())
+    header_token = request.headers.get("X-AxonGate-Operator-Token")
+    if header_token:
+        candidates.append(header_token.strip())
+    for query_name in ("operator_token", "token"):
+        query_token = request.query_params.get(query_name)
+        if query_token:
+            candidates.append(query_token.strip())
+    return [candidate for candidate in candidates if candidate]
+
+
+def require_operator_access(request: Request) -> None:
+    """Gate raw lead data behind an operator token."""
+    if not OPERATOR_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Private operator lead access is disabled until AXONGATE_OPERATOR_TOKEN is configured.",
+                "env": "AXONGATE_OPERATOR_TOKEN",
+            },
+        )
+
+    for candidate in operator_token_candidates(request):
+        if secrets.compare_digest(candidate, OPERATOR_TOKEN):
+            return
+
+    inc_metric("operator_auth_failures_total")
+    raise HTTPException(
+        status_code=401,
+        detail="Operator token required.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def parse_proof_pack_lead_record(raw: Any) -> Optional[dict[str, Any]]:
+    if isinstance(raw, dict):
+        return dict(raw)
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def durable_proof_pack_leads(limit: int = 50) -> list[dict[str, Any]]:
+    """Return stored Proof Pack leads for private operator views."""
+    bounded_limit = max(1, min(int(limit or 50), PROOF_PACK_LEADS_MEMORY_MAX, 200))
+    leads: list[dict[str, Any]] = []
+
+    if redis_client:
+        try:
+            records = await redis_client.lrange(PROOF_PACK_LEADS_REDIS_KEY, 0, bounded_limit - 1)
+        except Exception as exc:
+            print(f"[PROOF_PACK_LEADS] Redis lead read failed: {exc}")
+        else:
+            for record in records:
+                parsed = parse_proof_pack_lead_record(record)
+                if parsed:
+                    leads.append(parsed)
+
+    if not leads:
+        async with proof_pack_leads_lock:
+            leads = [dict(lead) for lead in proof_pack_leads[:bounded_limit]]
+
+    return leads[:bounded_limit]
+
+
+def proof_pack_lead_stats(leads: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize private lead rows without changing the stored records."""
+    by_pack: dict[str, int] = {}
+    by_source: dict[str, int] = {}
+    latest_created_at = 0
+    total_value_usdc = Decimal("0")
+    for lead in leads:
+        pack = str(lead.get("pack") or "unknown")
+        source = normalize_attribution_source(str(lead.get("source") or "direct"))
+        by_pack[pack] = by_pack.get(pack, 0) + 1
+        by_source[source] = by_source.get(source, 0) + 1
+        try:
+            latest_created_at = max(latest_created_at, int(lead.get("created_at") or 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            total_value_usdc += Decimal(str(lead.get("price_usdc") or "0"))
+        except Exception:
+            pass
+    return {
+        "retained": len(leads),
+        "latest_created_at": latest_created_at or None,
+        "by_pack": dict(sorted(by_pack.items())),
+        "by_source": dict(sorted(by_source.items())),
+        "indicative_value_usdc": float(total_value_usdc),
+    }
+
+
+def lead_created_at_label(value: Any) -> str:
+    try:
+        timestamp = int(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(timestamp))
+
+
+async def send_proof_pack_lead_notification(lead: dict[str, Any]) -> None:
+    """Notify the operator about a new Proof Pack lead when a webhook is configured."""
+    if not PROOF_PACK_LEAD_WEBHOOK_URL:
+        return
+
+    payload = {
+        "agent": "AxonGate",
+        "event": "proof_pack_lead_received",
+        "public_base_url": PUBLIC_BASE_URL,
+        "timestamp": int(time.time()),
+        "lead": {
+            "id": lead.get("id"),
+            "created_at": lead.get("created_at"),
+            "contact": lead.get("contact"),
+            "target_url": lead.get("target_url"),
+            "question": lead.get("question"),
+            "pack": lead.get("pack"),
+            "use_case": lead.get("use_case"),
+            "budget_usdc": lead.get("budget_usdc"),
+            "notes": lead.get("notes"),
+            "source": lead.get("source"),
+            "price_usdc": lead.get("price_usdc"),
+            "amount_units": lead.get("amount_units"),
+        },
+        "next_steps": {
+            "operator_leads": f"{PUBLIC_BASE_URL}/operator/leads",
+            "quote_page": lead.get("quote_page"),
+            "payment_probe_url": lead.get("payment_probe_url"),
+            "paid_endpoint": lead.get("paid_endpoint"),
+            "buyer_command": lead.get("buyer_command"),
+        },
+    }
+    headers = {"Content-Type": "application/json"}
+    if PROOF_PACK_LEAD_WEBHOOK_TOKEN:
+        headers["Authorization"] = f"Bearer {PROOF_PACK_LEAD_WEBHOOK_TOKEN}"
+
+    try:
+        async with httpx.AsyncClient(timeout=PROOF_PACK_LEAD_WEBHOOK_TIMEOUT_SECONDS) as client:
+            response = await client.post(PROOF_PACK_LEAD_WEBHOOK_URL, json=payload, headers=headers)
+            response.raise_for_status()
+        inc_metric("proof_pack_lead_notifications_total")
+    except Exception as exc:
+        inc_metric("proof_pack_lead_notification_errors_total")
+        print(f"[PROOF_PACK_LEADS] Lead webhook delivery failed: {exc}")
+
+
 def proof_pack_lead_public_response(lead: dict[str, Any]) -> dict[str, Any]:
     """Return the lead acknowledgement without echoing contact details."""
     return {
@@ -4098,6 +4262,7 @@ async def create_proof_pack_lead(payload: ProofPackLeadRequest | dict[str, Any],
     lead["storage_backend"] = await store_proof_pack_lead(lead)
     inc_metric("proof_pack_leads_total")
     inc_attribution("proof_pack_leads", source)
+    schedule_background(send_proof_pack_lead_notification(lead))
     return lead
 
 
@@ -4890,6 +5055,7 @@ Summary: x402-paid Clean Context Broker that converts public web pages into clea
 Canonical base URL: {PUBLIC_BASE_URL}
 Human docs: {public_url("/docs")}
 Operator dashboard: {public_url("/operator")}
+Private Proof Pack lead inbox: {public_url("/operator/leads")} (requires AXONGATE_OPERATOR_TOKEN)
 Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
 Quote API: {public_url("/v1/x402/quote")}
@@ -4929,6 +5095,7 @@ Legacy transaction hash header: X-AxonGate-Payment-Hash
 Retry credit header: X-AxonGate-Retry-Credit
 Source attribution header: X-AxonGate-Source
 Facilitator: {PAYAI_FACILITATOR_URL}
+Private operator token header: X-AxonGate-Operator-Token
 
 ## Paid Endpoint
 
@@ -4965,6 +5132,8 @@ GET {public_url("/proof-pack/quote")}?target_url=<url>&question=<question>&pack=
 GET {public_url("/v1/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/proof-pack/request")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 POST {public_url("/v1/proof-pack/leads")}
+GET {public_url("/operator/leads")} (private operator token required)
+GET {public_url("/v1/operator/leads")} (private operator token required)
 POST {public_url("/v1/x402/proof-pack")}?pack=standard
 Header: X-AxonGate-Pack: standard
 Body example:
@@ -5127,6 +5296,7 @@ def build_docs_html() -> str:
       <a href="{public}/discovery/resources">Resource listing</a>
       <a href="{public}/llms.txt">llms.txt</a>
       <a href="{public}/operator">Operator dashboard</a>
+      <a href="{public}/operator/leads">Private leads</a>
       <a href="{public}/quickstart">Quickstart</a>
       <a href="{public}/paid-test">Paid test guide</a>
       <a href="{public}/quote">Quote</a>
@@ -5174,6 +5344,8 @@ def build_docs_html() -> str:
     <pre>curl -X POST "{public}/v1/proof-pack/leads" \\
   -H "Content-Type: application/json" \\
   -d '{proof_lead_json}'</pre>
+    <p>Private lead inbox: <code>{public}/operator/leads</code> and <code>{public}/v1/operator/leads</code> require <code>AXONGATE_OPERATOR_TOKEN</code>. Optional notifications use <code>AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL</code>.</p>
+    <pre>curl -H "X-AxonGate-Operator-Token: &lt;token&gt;" "{public}/v1/operator/leads?limit=25"</pre>
     <pre>{proof_request_json}</pre>
     <pre>{proof_curl_example}</pre>
 
@@ -5459,6 +5631,7 @@ def build_operator_dashboard_html(
       </div>
       <nav class="links" aria-label="Operator links">
         <a href="{public}/metrics">Metrics JSON</a>
+        <a href="{public}/operator/leads">Private Leads</a>
         <a href="{public}/paid-test">Paid Test</a>
         <a href="{public}/docs">Docs</a>
         <a href="{public}/demo">Demo</a>
@@ -5509,6 +5682,175 @@ def build_operator_dashboard_html(
     </table>
 
     <p class="notice"><strong>Alert state:</strong> <span class="{'warn' if triggered_alerts else 'ok'}">{html.escape(alert_text)}</span></p>
+  </main>
+</body>
+</html>"""
+
+
+def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any], limit: int) -> str:
+    """Render a private operator view containing raw Proof Pack lead details."""
+    public = html.escape(PUBLIC_BASE_URL)
+
+    def esc(value: Any) -> str:
+        return html.escape(str(value or ""))
+
+    cards = "\n".join(
+        [
+            f'<div class="card"><span>Retained</span><strong>{esc(stats.get("retained", 0))}</strong><small>latest {esc(lead_created_at_label(stats.get("latest_created_at")))}</small></div>',
+            f'<div class="card"><span>Indicative Value</span><strong>{esc(stats.get("indicative_value_usdc", 0))}</strong><small>USDC if every lead buys selected pack</small></div>',
+            f'<div class="card"><span>Webhook</span><strong>{"on" if PROOF_PACK_LEAD_WEBHOOK_URL else "off"}</strong><small>AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL</small></div>',
+            f'<div class="card"><span>Storage</span><strong>{"Redis" if redis_client else "Memory"}</strong><small>{esc(PROOF_PACK_LEADS_REDIS_KEY if redis_client else "process memory")}</small></div>',
+        ]
+    )
+    pack_rows = "\n".join(
+        f"<tr><td>{esc(pack)}</td><td>{esc(count)}</td></tr>"
+        for pack, count in stats.get("by_pack", {}).items()
+    ) or '<tr><td colspan="2">No retained leads.</td></tr>'
+    source_rows = "\n".join(
+        f"<tr><td>{esc(source)}</td><td>{esc(count)}</td></tr>"
+        for source, count in stats.get("by_source", {}).items()
+    ) or '<tr><td colspan="2">No retained leads.</td></tr>'
+
+    lead_rows = []
+    for lead in leads:
+        quote_page = esc(lead.get("quote_page"))
+        probe_url = esc(lead.get("payment_probe_url"))
+        paid_endpoint = esc(lead.get("paid_endpoint"))
+        buyer_command = esc(lead.get("buyer_command"))
+        lead_rows.append(
+            "<tr>"
+            f"<td><code>{esc(lead.get('id'))}</code><br>{esc(lead_created_at_label(lead.get('created_at')))}</td>"
+            f"<td>{esc(lead.get('contact'))}</td>"
+            f"<td><code>{esc(lead.get('pack'))}</code><br>{esc(lead.get('price_usdc'))} USDC<br><code>{esc(lead.get('amount_units'))}</code></td>"
+            f"<td>{esc(lead.get('source'))}</td>"
+            f"<td><a href=\"{esc(lead.get('target_url'))}\">{esc(lead.get('target_url'))}</a><br><small>{esc(lead.get('question'))}</small></td>"
+            f"<td>{esc(lead.get('use_case'))}<br><small>{esc(lead.get('budget_usdc'))}</small><br><small>{esc(lead.get('notes'))}</small></td>"
+            f"<td><a href=\"{quote_page}\">Quote</a><br><a href=\"{probe_url}\">Probe</a><br><code>{paid_endpoint}</code></td>"
+            f"<td><pre>{buyer_command}</pre></td>"
+            "</tr>"
+        )
+    leads_table = "\n".join(lead_rows) or '<tr><td colspan="8">No Proof Pack leads retained yet.</td></tr>'
+    json_export = html.escape(
+        json.dumps(
+            {
+                "status": "ok",
+                "limit": limit,
+                "stats": stats,
+                "leads": leads,
+            },
+            indent=2,
+        )
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>AxonGate Proof Pack Leads</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #101318;
+      --panel: #181d24;
+      --panel-2: #202630;
+      --text: #f5f7fb;
+      --muted: #b8c2cf;
+      --line: #303844;
+      --accent: #78d6b6;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }}
+    main {{ max-width: 1380px; margin: 0 auto; padding: 28px 18px 56px; }}
+    header {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }}
+    h1 {{ margin: 0; font-size: 1.85rem; line-height: 1.1; }}
+    h2 {{ margin: 26px 0 10px; font-size: 1rem; }}
+    p, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .links {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }}
+    .links a {{ border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--panel); }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }}
+    .card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 96px;
+    }}
+    .card span, .card small {{ display: block; color: var(--muted); }}
+    .card strong {{ display: block; margin: 5px 0; font-size: 1.45rem; line-height: 1.1; }}
+    .split {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }}
+    .table-wrap {{ overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; min-width: 1100px; border-collapse: collapse; background: var(--panel); }}
+    .split table {{ min-width: 0; }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--text); background: var(--panel-2); font-size: 0.9rem; white-space: nowrap; }}
+    td {{ color: var(--muted); max-width: 360px; overflow-wrap: anywhere; }}
+    code, pre {{
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--code);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+    }}
+    code {{ display: inline-block; max-width: 100%; padding: 1px 5px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 360px; max-height: 160px; overflow: auto; white-space: pre; padding: 8px; margin: 0; }}
+    .json pre {{ max-width: 100%; max-height: 460px; padding: 14px; }}
+    @media (max-width: 860px) {{
+      header {{ display: block; }}
+      .links {{ justify-content: flex-start; margin-top: 14px; }}
+      .split {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Proof Pack Leads</h1>
+        <p>Private operator view. Raw contact fields are only available after token authentication.</p>
+      </div>
+      <nav class="links" aria-label="Lead operator links">
+        <a href="{public}/operator">Operator</a>
+        <a href="{public}/metrics">Metrics JSON</a>
+        <a href="{public}/proof-pack/request">Request Page</a>
+        <a href="{public}/proof-pack/quote">Quote Page</a>
+        <a href="{public}/v1/operator/leads?limit={int(limit)}">Lead JSON</a>
+      </nav>
+    </header>
+
+    <section class="cards">{cards}</section>
+
+    <div class="split">
+      <section>
+        <h2>By Pack</h2>
+        <table><thead><tr><th>Pack</th><th>Leads</th></tr></thead><tbody>{pack_rows}</tbody></table>
+      </section>
+      <section>
+        <h2>By Source</h2>
+        <table><thead><tr><th>Source</th><th>Leads</th></tr></thead><tbody>{source_rows}</tbody></table>
+      </section>
+    </div>
+
+    <h2>Lead Inbox</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID / Time</th><th>Contact</th><th>Pack</th><th>Source</th><th>Target / Question</th><th>Use Case</th><th>Payment Links</th><th>Buyer Command</th></tr></thead>
+        <tbody>{leads_table}</tbody>
+      </table>
+    </div>
+
+    <h2>Private JSON Snapshot</h2>
+    <section class="json"><pre>{json_export}</pre></section>
   </main>
 </body>
 </html>"""
@@ -6134,6 +6476,35 @@ async def operator_dashboard(request: Request):
     return build_operator_dashboard_html(metric_values, attribution, rolling_attribution, triggered_alerts)
 
 
+@app.get("/operator/leads", response_class=HTMLResponse, tags=["operations"], summary="Private Proof Pack lead inbox")
+async def operator_leads_page(request: Request, limit: int = 50):
+    """Serve a token-protected operator inbox with raw Proof Pack lead contact data."""
+    require_operator_access(request)
+    inc_discovery_hit("discovery_operator_leads_hits_total", attribution_source_from_request(request))
+    bounded_limit = max(1, min(limit, PROOF_PACK_LEADS_MEMORY_MAX, 200))
+    leads = await durable_proof_pack_leads(bounded_limit)
+    return build_operator_leads_html(leads, proof_pack_lead_stats(leads), bounded_limit)
+
+
+@app.get("/v1/operator/leads", tags=["operations"], summary="Private Proof Pack lead JSON")
+async def operator_leads_api(request: Request, limit: int = 50):
+    """Return token-protected Proof Pack leads with raw contact data for private automation."""
+    require_operator_access(request)
+    inc_discovery_hit("discovery_operator_leads_hits_total", attribution_source_from_request(request))
+    bounded_limit = max(1, min(limit, PROOF_PACK_LEADS_MEMORY_MAX, 200))
+    leads = await durable_proof_pack_leads(bounded_limit)
+    return {
+        "status": "ok",
+        "limit": bounded_limit,
+        "stats": proof_pack_lead_stats(leads),
+        "leads": leads,
+        "notification": {
+            "webhook_enabled": bool(PROOF_PACK_LEAD_WEBHOOK_URL),
+            "token_header": "X-AxonGate-Operator-Token",
+        },
+    }
+
+
 @app.get("/quickstart", response_class=HTMLResponse, tags=["discovery"], summary="First paid AxonGate conversion quickstart")
 async def quickstart(request: Request):
     """Serve the shortest path from discovery to a first paid result."""
@@ -6352,6 +6723,8 @@ async def root(request: Request):
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
+        "operator_leads": f"{PUBLIC_BASE_URL}/operator/leads",
+        "operator_leads_api": f"{PUBLIC_BASE_URL}/v1/operator/leads",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -6478,6 +6851,11 @@ async def metrics_snapshot():
                 "base_rpc_error_rate": ALERT_BASE_RPC_ERROR_RATE,
                 "jina_error_rate": ALERT_JINA_ERROR_RATE,
             },
+        },
+        "operator": {
+            "private_leads_enabled": bool(OPERATOR_TOKEN),
+            "lead_webhook_enabled": bool(PROOF_PACK_LEAD_WEBHOOK_URL),
+            "operator_token_header": "X-AxonGate-Operator-Token",
         },
         "cache": {
             "backend": "redis" if redis_client else "memory",
@@ -7305,6 +7683,23 @@ def custom_openapi() -> dict[str, Any]:
                 },
             }
         )
+
+    security_schemes = schema.setdefault("components", {}).setdefault("securitySchemes", {})
+    security_schemes["OperatorToken"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-AxonGate-Operator-Token",
+        "description": "Private operator token for raw Proof Pack lead contact data.",
+    }
+    for operator_path in ("/operator/leads", "/v1/operator/leads"):
+        operator_get = schema.get("paths", {}).get(operator_path, {}).get("get")
+        if isinstance(operator_get, dict):
+            operator_get["security"] = [{"OperatorToken": []}]
+            operator_get.setdefault("responses", {}).setdefault("401", {"description": "Operator token required"})
+            operator_get.setdefault("responses", {}).setdefault(
+                "503",
+                {"description": "AXONGATE_OPERATOR_TOKEN is not configured"},
+            )
 
     access_request_schema = schema.get("components", {}).get("schemas", {}).get("AccessRequest")
     if isinstance(access_request_schema, dict):

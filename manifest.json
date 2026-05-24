@@ -48,6 +48,8 @@
       "citation_backed_reports",
       "proof_pack_sample_preview",
       "proof_pack_lead_capture",
+      "private_operator_lead_inbox",
+      "lead_webhook_notifications",
       "llm_assisted_deterministic_fallback"
     ],
     "input_modes": [
@@ -141,6 +143,8 @@
     "health": "https://api.axongate.one/health",
     "docs": "https://api.axongate.one/docs",
     "operator": "https://api.axongate.one/operator",
+    "operator_leads": "https://api.axongate.one/operator/leads",
+    "operator_leads_api": "https://api.axongate.one/v1/operator/leads",
     "quickstart": "https://api.axongate.one/quickstart",
     "paid_test": "https://api.axongate.one/paid-test",
     "quote": "https://api.axongate.one/quote",
@@ -290,6 +294,8 @@
       ],
       "docs": "https://api.axongate.one/docs",
       "operator": "https://api.axongate.one/operator",
+      "operator_leads": "https://api.axongate.one/operator/leads",
+      "operator_leads_api": "https://api.axongate.one/v1/operator/leads",
       "quickstart": "https://api.axongate.one/quickstart",
       "paid_test": "https://api.axongate.one/paid-test",
       "demo": "https://api.axongate.one/demo",
@@ -304,6 +310,7 @@
       "proof_pack_request": "https://api.axongate.one/proof-pack/request",
       "proof_pack_leads_api": "https://api.axongate.one/v1/proof-pack/leads",
       "proof_pack_endpoint": "https://api.axongate.one/v1/x402/proof-pack",
+      "private_operator_leads": "https://api.axongate.one/operator/leads",
       "sitemap": "https://api.axongate.one/sitemap.xml"
     },
     "tags": [
@@ -341,7 +348,9 @@
         "supplier_success"
       ],
       "persistent_backend": "Redis when REDIS_URL is configured",
-      "alert_webhooks": true
+      "alert_webhooks": true,
+      "lead_webhooks": "Optional via AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL",
+      "private_leads": "Token-gated with AXONGATE_OPERATOR_TOKEN or AXONGATE_ALERT_WEBHOOK_TOKEN fallback"
     },
     "custom_domain": {
       "status": "ready",

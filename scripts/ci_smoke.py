@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import axongate_gateway as gateway
 
+gateway.OPERATOR_TOKEN = "ci-operator-token"
+
 
 async def main() -> None:
     manifest_path = Path(__file__).resolve().parents[1] / "manifest.json"
@@ -177,6 +179,28 @@ async def main() -> None:
         assert form_lead.status_code == 200, f"Proof Pack request form returned {form_lead.status_code}"
         assert "Request received" in form_lead.text, "Proof Pack request form should acknowledge submit"
 
+        operator_leads_unauthorized = await client.get("/operator/leads")
+        assert operator_leads_unauthorized.status_code == 401, "operator leads should require a token"
+
+        operator_leads_page = await client.get("/operator/leads?operator_token=ci-operator-token&limit=10")
+        assert operator_leads_page.status_code == 200, "operator leads page should accept operator token"
+        assert "Proof Pack Leads" in operator_leads_page.text, "operator leads page missing heading"
+        assert "codex-test@example.invalid" in operator_leads_page.text, "operator leads page should show private contact"
+        assert "Buyer Command" in operator_leads_page.text, "operator leads page missing conversion next step"
+
+        operator_leads_api = await client.get(
+            "/v1/operator/leads?limit=10",
+            headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+        )
+        assert operator_leads_api.status_code == 200, "operator leads API should accept operator token header"
+        operator_leads_json = operator_leads_api.json()
+        assert operator_leads_json["status"] == "ok", "operator leads API returned wrong status"
+        assert operator_leads_json["stats"]["retained"] >= 2, "operator leads API should retain smoke leads"
+        assert any(
+            lead.get("contact") == "codex-test@example.invalid"
+            for lead in operator_leads_json["leads"]
+        ), "operator leads API should include private contact"
+
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
         assert proof_sample["supplier_spend"] is False, "Proof Pack sample should not spend supplier budget"
@@ -288,6 +312,8 @@ async def main() -> None:
         assert post_operation.get("x-payment-info"), "OpenAPI payment extension missing from paid endpoint"
         proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
         assert proof_operation.get("x-payment-info"), "OpenAPI payment extension missing from Proof Pack endpoint"
+        operator_operation = openapi.get("paths", {}).get("/v1/operator/leads", {}).get("get", {})
+        assert operator_operation.get("security"), "OpenAPI operator leads security missing"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
 
         metrics = (await client.get("/metrics")).json()
@@ -308,6 +334,8 @@ async def main() -> None:
         assert metrics["metrics"].get("proof_pack_leads_total", 0) >= 2, "Proof Pack leads should be counted"
         assert metrics["conversion_funnel"].get("proof_pack_leads", 0) >= 2, "Proof Pack leads missing from funnel"
         assert "proof_pack_leads" in metrics, "Proof Pack lead storage snapshot missing from metrics"
+        assert metrics["operator"]["private_leads_enabled"] is True, "operator private leads should be enabled in CI"
+        assert "operator_auth_failures_total" in metrics["metrics"], "operator auth failures metric missing"
 
 
 if __name__ == "__main__":

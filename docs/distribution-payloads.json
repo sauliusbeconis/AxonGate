@@ -5,6 +5,8 @@
   "proof_pack_quote": "https://api.axongate.one/proof-pack/quote",
   "proof_pack_request": "https://api.axongate.one/proof-pack/request",
   "proof_pack_leads_api": "https://api.axongate.one/v1/proof-pack/leads",
+  "operator_leads": "https://api.axongate.one/operator/leads",
+  "operator_leads_api": "https://api.axongate.one/v1/operator/leads",
   "sources": {
     "x402-list": {
       "endpoint": "https://api.axongate.one/from/x402-list/v1/x402/starter",
