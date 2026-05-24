@@ -184,6 +184,7 @@ ATTRIBUTION_FUNNEL_STAGES = (
     "delivery_success",
     "payment_replay_rejections",
     "retry_credit_attempts",
+    "proof_pack_previews",
     "proof_pack_quotes",
     "proof_pack_leads",
     "proof_pack_requests",
@@ -318,6 +319,7 @@ metrics: dict[str, int] = {
     "discovery_quote_hits_total": 0,
     "discovery_proof_pack_hits_total": 0,
     "discovery_proof_pack_sample_hits_total": 0,
+    "discovery_proof_pack_preview_hits_total": 0,
     "discovery_proof_pack_quote_hits_total": 0,
     "discovery_proof_pack_request_hits_total": 0,
     "discovery_demo_hits_total": 0,
@@ -348,6 +350,8 @@ metrics: dict[str, int] = {
     "alert_checks_total": 0,
     "alerts_sent_total": 0,
     "alert_errors_total": 0,
+    "proof_pack_previews_total": 0,
+    "proof_pack_preview_cache_hits_total": 0,
     "proof_pack_quotes_total": 0,
     "proof_pack_leads_total": 0,
     "proof_pack_lead_errors_total": 0,
@@ -903,6 +907,8 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "retry_credit_issued": values.get("delivery_credits_issued_total", 0),
         "retry_delivery_success": values.get("retry_delivery_success_total", 0),
         "proof_pack_sample_hits": values.get("discovery_proof_pack_sample_hits_total", 0),
+        "proof_pack_previews": values.get("proof_pack_previews_total", 0),
+        "proof_pack_preview_cache_hits": values.get("proof_pack_preview_cache_hits_total", 0),
         "proof_pack_quotes": values.get("proof_pack_quotes_total", 0),
         "proof_pack_leads": values.get("proof_pack_leads_total", 0),
         "proof_pack_requests": values.get("proof_pack_requests_total", 0),
@@ -1514,6 +1520,8 @@ def build_x402_resource() -> dict[str, Any]:
             "proofPack": f"{PUBLIC_BASE_URL}/proof-pack",
             "proofPackSample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "proofPackSampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+            "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
+            "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
             "proofPackQuote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
             "proofPackQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
             "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
@@ -1578,6 +1586,8 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
             "sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "sampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+            "preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
+            "previewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
             "quoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
             "request": f"{PUBLIC_BASE_URL}/proof-pack/request",
@@ -1675,6 +1685,8 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofPack": f"{PUBLIC_BASE_URL}/proof-pack",
         "proofPackSample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
         "proofPackSampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+        "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
+        "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proofPackQuote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
         "proofPackQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
         "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
@@ -1761,6 +1773,7 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "X-AxonGate-Proof-Pack": f"{PUBLIC_BASE_URL}/proof-pack",
         "X-AxonGate-Proof-Pack-Sample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+        "X-AxonGate-Proof-Pack-Preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
         "X-AxonGate-Proof-Pack-Quote-Page": f"{PUBLIC_BASE_URL}/proof-pack/quote",
         "X-AxonGate-Proof-Pack-Quote": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
         "X-AxonGate-Proof-Pack-Request": f"{PUBLIC_BASE_URL}/proof-pack/request",
@@ -1773,6 +1786,7 @@ def buyer_guidance_headers() -> dict[str, str]:
             f'<{PUBLIC_BASE_URL}/v1/x402/quote>; rel="quote", '
             f'<{PUBLIC_BASE_URL}/proof-pack>; rel="service", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/sample>; rel="proof-pack-sample", '
+            f'<{PUBLIC_BASE_URL}/proof-pack/preview>; rel="proof-pack-preview", '
             f'<{PUBLIC_BASE_URL}/proof-pack/quote>; rel="proof-pack-quote-page", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/quote>; rel="proof-pack-quote", '
             f'<{PUBLIC_BASE_URL}/proof-pack/request>; rel="proof-pack-request", '
@@ -1853,6 +1867,8 @@ def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -
             "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
             "sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "sample_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+            "preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
+            "preview_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
             "quote_page": f"{PUBLIC_BASE_URL}/proof-pack/quote",
             "quote": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
             "request": f"{PUBLIC_BASE_URL}/proof-pack/request",
@@ -1872,6 +1888,8 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "proofPackSample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+        "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
+        "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "paymentHeader": "PAYMENT-SIGNATURE",
@@ -3361,6 +3379,30 @@ def proof_pack_payment_probe_url(pack: str, source: str) -> str:
     return f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}&source={normalized_source}"
 
 
+def proof_pack_preview_page_url(target_url: str, question: str, pack: str, source: str) -> str:
+    normalized_pack = normalize_proof_pack(pack)
+    normalized_source = normalize_attribution_source(source)
+    return (
+        f"{PUBLIC_BASE_URL}/proof-pack/preview?"
+        f"target_url={url_quote(target_url, safe='')}"
+        f"&question={url_quote(question, safe='')}"
+        f"&pack={url_quote(normalized_pack, safe='')}"
+        f"&source={url_quote(normalized_source, safe='')}"
+    )
+
+
+def proof_pack_preview_api_url(target_url: str, question: str, pack: str, source: str) -> str:
+    normalized_pack = normalize_proof_pack(pack)
+    normalized_source = normalize_attribution_source(source)
+    return (
+        f"{PUBLIC_BASE_URL}/v1/proof-pack/preview?"
+        f"target_url={url_quote(target_url, safe='')}"
+        f"&question={url_quote(question, safe='')}"
+        f"&pack={url_quote(normalized_pack, safe='')}"
+        f"&source={url_quote(normalized_source, safe='')}"
+    )
+
+
 def proof_pack_buyer_command(target_url: str, question: str, pack: str, source: str) -> str:
     normalized_pack = normalize_proof_pack(pack)
     normalized_source = normalize_attribution_source(source)
@@ -3829,6 +3871,18 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
         "next_steps": {
             "sample_page": public_url("/proof-pack/sample"),
             "sample_api": public_url("/v1/proof-pack/sample"),
+            "preview_page": proof_pack_preview_page_url(
+                PROOF_PACK_SAMPLE_TARGET_URL,
+                PROOF_PACK_SAMPLE_QUESTION,
+                PROOF_PACK_SAMPLE_PACK,
+                normalized_source,
+            ),
+            "preview_api": proof_pack_preview_api_url(
+                PROOF_PACK_SAMPLE_TARGET_URL,
+                PROOF_PACK_SAMPLE_QUESTION,
+                PROOF_PACK_SAMPLE_PACK,
+                normalized_source,
+            ),
             "quote_page": public_url("/proof-pack/quote"),
             "quote_api": quote_url,
             "request_page": proof_pack_request_page_url(
@@ -3917,6 +3971,18 @@ async def build_proof_pack_quote(
             "proof_pack_page": public_url("/proof-pack"),
             "proof_pack_sample": public_url("/proof-pack/sample"),
             "proof_pack_sample_api": public_url("/v1/proof-pack/sample"),
+            "proof_pack_preview_page": proof_pack_preview_page_url(
+                normalized_target,
+                normalized_question,
+                normalized_pack,
+                normalized_source,
+            ),
+            "proof_pack_preview_api": proof_pack_preview_api_url(
+                normalized_target,
+                normalized_question,
+                normalized_pack,
+                normalized_source,
+            ),
             "proof_pack_quote_page": public_url("/proof-pack/quote"),
             "proof_pack_request_page": proof_pack_request_page_url(
                 normalized_target,
@@ -3925,6 +3991,176 @@ async def build_proof_pack_quote(
                 normalized_source,
             ),
         },
+    }
+
+
+async def build_proof_pack_preview(
+    target_url: str,
+    question: Optional[str] = None,
+    pack: Optional[str] = None,
+    source: str = "proof-pack-preview",
+) -> dict[str, Any]:
+    """Return a no-spend mini preview from cached material when available."""
+    normalized_target = await assert_public_target_url(target_url)
+    normalized_source = normalize_attribution_source(source)
+    normalized_pack = normalize_proof_pack(pack or PROOF_PACK_SAMPLE_PACK)
+    normalized_question = proof_pack_question(question)
+    internal_tier = proof_pack_internal_tier(normalized_pack)
+
+    markdown = await get_cache_candidate_for_tier(normalized_target, internal_tier, False)
+    preview_kind = "cached_source" if markdown is not None else "cache_miss"
+    if markdown is None:
+        starter_markdown = starter_sample_markdown_for_target(normalized_target)
+        if starter_markdown is not None:
+            markdown = starter_markdown
+            preview_kind = "starter_sample"
+
+    price = price_for_proof_pack(normalized_pack)
+    next_steps = {
+        "preview_page": proof_pack_preview_page_url(
+            normalized_target,
+            normalized_question,
+            normalized_pack,
+            normalized_source,
+        ),
+        "preview_api": proof_pack_preview_api_url(
+            normalized_target,
+            normalized_question,
+            normalized_pack,
+            normalized_source,
+        ),
+        "quote_page": proof_pack_quote_page_url(
+            normalized_target,
+            normalized_question,
+            normalized_pack,
+            normalized_source,
+        ),
+        "quote_api": (
+            f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
+            f"target_url={url_quote(normalized_target, safe='')}"
+            f"&question={url_quote(normalized_question, safe='')}"
+            f"&pack={url_quote(normalized_pack, safe='')}"
+            f"&source={url_quote(normalized_source, safe='')}"
+        ),
+        "request_page": proof_pack_request_page_url(
+            normalized_target,
+            normalized_question,
+            normalized_pack,
+            normalized_source,
+        ),
+        "sample_page": public_url("/proof-pack/sample"),
+        "sample_api": public_url("/v1/proof-pack/sample"),
+        "probe_payment_terms": proof_pack_payment_probe_url(normalized_pack, normalized_source),
+        "paid_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}&source={normalized_source}",
+        "confirm_spend_usdc": str(price),
+        "buyer_command": proof_pack_buyer_command(
+            normalized_target,
+            normalized_question,
+            normalized_pack,
+            normalized_source,
+        ),
+    }
+
+    if markdown is None:
+        return {
+            "status": "proof_pack_preview",
+            "supplier_spend": False,
+            "preview_available": False,
+            "preview_kind": preview_kind,
+            "target_url": normalized_target,
+            "question": normalized_question,
+            "source": normalized_source,
+            "pack": normalized_pack,
+            "answer": (
+                "No cached mini preview is available for this target yet. "
+                "A paid Proof Pack can fetch the source and return cited claims."
+            ),
+            "executive_summary": "Use the quote or request path to continue without surprise spend.",
+            "confidence_score": 0.0,
+            "key_claims": [],
+            "citations": [],
+            "risks": [
+                "No source content was fetched for this free preview.",
+                "Preview misses do not indicate source quality; they only mean AxonGate has no reusable cached material yet.",
+            ],
+            "source_profile": {
+                "final_url": normalized_target,
+                "content_sha256": None,
+                "markdown_chars": 0,
+                "citation_count": 0,
+            },
+            "cache": {
+                "hit": False,
+                "source": None,
+            },
+            "payment": {
+                "required_for_full_report": True,
+                "network": "eip155:8453",
+                "vault_address": load_vault_address(),
+                "token_address": BASE_USDC_ADDRESS,
+                "full_pack_amount_usdc": float(price),
+                "full_pack_amount_units": str(usdc_units(price)),
+                "source": normalized_source,
+            },
+            "next_steps": next_steps,
+        }
+
+    inc_metric("proof_pack_preview_cache_hits_total")
+    citations = extract_proof_pack_evidence(markdown, normalized_target, normalized_pack)[:3]
+    proof_content = deterministic_proof_pack(
+        target_url=normalized_target,
+        question=normalized_question,
+        pack=normalized_pack,
+        markdown=markdown,
+        citations=citations,
+        cache_hit=True,
+        fallback_reason=f"free_preview_{preview_kind}",
+    )
+    mini_claims = proof_content["key_claims"][:2]
+    mini_citations = [
+        {key: value for key, value in citation.items() if key != "fingerprint"}
+        for citation in citations[:2]
+    ]
+    preview_risks = [
+        "Free preview is limited to cached/source-sample material and only shows the first cited claims.",
+        "Paid Proof Packs can refresh source material, run the selected pack depth, and return the full cited report.",
+    ]
+    if preview_kind == "starter_sample":
+        preview_risks.append("This preview uses the embedded starter sample for the reserved-domains target.")
+
+    return {
+        "status": "proof_pack_preview",
+        "supplier_spend": False,
+        "preview_available": True,
+        "preview_kind": preview_kind,
+        "target_url": normalized_target,
+        "question": normalized_question,
+        "source": normalized_source,
+        "pack": normalized_pack,
+        "answer": clean_evidence_excerpt(proof_content["answer"], 520),
+        "executive_summary": clean_evidence_excerpt(proof_content["executive_summary"], 420),
+        "confidence_score": max(0.0, round(float(proof_content["confidence_score"]) - 0.08, 2)),
+        "key_claims": mini_claims,
+        "citations": mini_citations,
+        "risks": preview_risks,
+        "source_profile": {
+            **proof_content["source_profile"],
+            "preview_limited": True,
+        },
+        "cache": {
+            "hit": True,
+            "source": preview_kind,
+        },
+        "payment": {
+            "required_for_full_report": True,
+            "network": "eip155:8453",
+            "vault_address": load_vault_address(),
+            "token_address": BASE_USDC_ADDRESS,
+            "full_pack_amount_usdc": float(price),
+            "full_pack_amount_units": str(usdc_units(price)),
+            "source": normalized_source,
+        },
+        "next_steps": next_steps,
     }
 
 
@@ -4157,6 +4393,7 @@ async def send_proof_pack_lead_notification(lead: dict[str, Any]) -> None:
         },
         "next_steps": {
             "operator_leads": f"{PUBLIC_BASE_URL}/operator/leads",
+            "preview_page": lead.get("preview_page"),
             "quote_page": lead.get("quote_page"),
             "payment_probe_url": lead.get("payment_probe_url"),
             "paid_endpoint": lead.get("paid_endpoint"),
@@ -4190,6 +4427,8 @@ def proof_pack_lead_public_response(lead: dict[str, Any]) -> dict[str, Any]:
         "source": lead["source"],
         "contact_received": bool(lead.get("contact")),
         "next_steps": {
+            "preview_page": lead.get("preview_page"),
+            "preview_api": lead.get("preview_api"),
             "quote_page": lead["quote_page"],
             "quote_api": lead["quote_api"],
             "request_page": lead["request_page"],
@@ -4232,6 +4471,8 @@ async def create_proof_pack_lead(payload: ProofPackLeadRequest | dict[str, Any],
     )[:16]
 
     quote_page = proof_pack_quote_page_url(normalized_target, question, normalized_pack, source)
+    preview_page = proof_pack_preview_page_url(normalized_target, question, normalized_pack, source)
+    preview_api = proof_pack_preview_api_url(normalized_target, question, normalized_pack, source)
     quote_api = (
         f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
         f"target_url={url_quote(normalized_target, safe='')}"
@@ -4253,6 +4494,8 @@ async def create_proof_pack_lead(payload: ProofPackLeadRequest | dict[str, Any],
         "price_usdc": float(price),
         "amount_units": str(usdc_units(price)),
         "request_page": proof_pack_request_page_url(normalized_target, question, normalized_pack, source),
+        "preview_page": preview_page,
+        "preview_api": preview_api,
         "quote_page": quote_page,
         "quote_api": quote_api,
         "payment_probe_url": proof_pack_payment_probe_url(normalized_pack, source),
@@ -4405,6 +4648,179 @@ def build_quote_html(quote: dict[str, Any]) -> str:
 </html>"""
 
 
+def build_proof_pack_preview_html(preview: dict[str, Any]) -> str:
+    """Render a no-spend Proof Pack mini preview page."""
+    public = html.escape(PUBLIC_BASE_URL)
+    target = html.escape(str(preview["target_url"]))
+    question = html.escape(str(preview["question"]))
+    pack = str(preview["pack"])
+    source = str(preview["source"])
+    preview_available = bool(preview["preview_available"])
+    status_label = "available from cache" if preview_available else "not cached yet"
+    amount_units = html.escape(str(preview["payment"]["full_pack_amount_units"]))
+    price = html.escape(str(preview["payment"]["full_pack_amount_usdc"]))
+    steps = preview["next_steps"]
+    quote_url = html.escape(str(steps["quote_page"]))
+    request_url = html.escape(str(steps["request_page"]))
+    probe_url = html.escape(str(steps["probe_payment_terms"]))
+    preview_api = html.escape(str(steps["preview_api"]))
+    paid_endpoint = html.escape(str(steps["paid_endpoint"]))
+    buyer_command = html.escape(str(steps["buyer_command"]))
+    answer = html.escape(str(preview["answer"]))
+    executive_summary = html.escape(str(preview["executive_summary"]))
+    pack_options = "\n".join(
+        f'<option value="{html.escape(pack_name)}"{" selected" if pack_name == pack else ""}>{html.escape(pack_name)}</option>'
+        for pack_name in PROOF_PACK_PRICING_USDC
+    )
+    claim_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(str(claim['claim']))}</td>"
+        f"<td>{html.escape(', '.join(claim.get('citation_ids', [])))}</td>"
+        f"<td>{html.escape(str(claim.get('confidence', 0)))}</td>"
+        "</tr>"
+        for claim in preview["key_claims"]
+    ) or '<tr><td colspan="3">No cached claims yet. Use the paid or request path to continue.</td></tr>'
+    citation_rows = "\n".join(
+        "<tr>"
+        f"<td><code>{html.escape(str(citation['id']))}</code></td>"
+        f"<td>{html.escape(str(citation['excerpt']))}</td>"
+        "</tr>"
+        for citation in preview["citations"]
+    ) or '<tr><td colspan="2">No cached citations available for this free preview.</td></tr>'
+    risk_items = "\n".join(f"<li>{html.escape(str(risk))}</li>" for risk in preview["risks"])
+    source_hash = preview["source_profile"].get("content_sha256") or "none"
+    source_hash_display = html.escape(str(source_hash)[:20] + ("..." if source_hash and source_hash != "none" else ""))
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Proof Pack Preview</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 1040px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2rem, 4vw, 3.2rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 36px 0 12px; font-size: 1.25rem; }}
+    p, label, li, td {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    form {{ display: grid; gap: 12px; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 150px auto; margin: 24px 0; align-items: end; }}
+    label {{ display: grid; gap: 6px; font-size: .9rem; }}
+    input, select {{
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 11px 12px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }}
+    button {{
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 11px 14px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+    }}
+    .summary {{ max-width: 780px; font-size: 1.06rem; }}
+    .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
+    .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0; }}
+    .box {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ display: inline-block; max-width: 100%; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; overflow-x: auto; white-space: pre; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--text); }}
+    @media (max-width: 760px) {{
+      form {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Proof Pack Preview</h1>
+    <p class="summary">A free, no-spend mini preview. If AxonGate already has reusable source material, this page shows a few cited claims; otherwise it validates the target and gives the fastest paid or request path.</p>
+    <nav class="links" aria-label="Proof Pack preview links">
+      <a href="{public}/proof-pack">Proof Packs</a>
+      <a href="{quote_url}">Quote Page</a>
+      <a href="{request_url}">Request Report</a>
+      <a href="{public}/proof-pack/sample">Sample Report</a>
+      <a href="{public}/docs">Docs</a>
+      <a href="{public}/operator">Operator</a>
+    </nav>
+    <form method="get" action="/proof-pack/preview">
+      <label>Target URL
+        <input name="target_url" value="{target}" aria-label="Target URL">
+      </label>
+      <label>Question
+        <input name="question" value="{question}" aria-label="Question">
+      </label>
+      <label>Pack
+        <select name="pack" aria-label="Proof Pack">{pack_options}</select>
+      </label>
+      <button type="submit">Preview</button>
+    </form>
+    <div class="cta">
+      <a href="{quote_url}">Get Quote</a>
+      <a href="{probe_url}">Probe Payment Terms</a>
+      <a href="{request_url}">Request This Report</a>
+      <a href="{preview_api}">Open Preview JSON</a>
+    </div>
+
+    <div class="grid">
+      <div class="box"><strong>Preview</strong><br>{html.escape(status_label)}<br><code>{html.escape(str(preview["preview_kind"]))}</code></div>
+      <div class="box"><strong>Selected Pack</strong><br><code>{html.escape(pack)}</code></div>
+      <div class="box"><strong>Full Report</strong><br>{price} USDC<br><code>{amount_units}</code> units</div>
+      <div class="box"><strong>Source Hash</strong><br><code>{source_hash_display}</code></div>
+    </div>
+
+    <h2>Mini Answer</h2>
+    <p>{answer}</p>
+    <h2>Mini Summary</h2>
+    <p>{executive_summary}</p>
+    <h2>Preview Claims</h2>
+    <table>
+      <thead><tr><th>Claim</th><th>Citations</th><th>Confidence</th></tr></thead>
+      <tbody>{claim_rows}</tbody>
+    </table>
+    <h2>Preview Citations</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Excerpt</th></tr></thead>
+      <tbody>{citation_rows}</tbody>
+    </table>
+    <h2>Risks</h2>
+    <ul>{risk_items}</ul>
+    <h2>Paid Endpoint</h2>
+    <pre>{paid_endpoint}</pre>
+    <h2>Buyer Command</h2>
+    <pre>{buyer_command}</pre>
+  </main>
+</body>
+</html>"""
+
+
 def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     """Render a Proof Pack quote page that turns interest into a paid x402 attempt."""
     public = html.escape(PUBLIC_BASE_URL)
@@ -4441,6 +4857,7 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     short_paid_endpoint = html.escape("POST /v1/x402/proof-pack")
     selector_hint = html.escape(f"pack={pack}, source={quote['source']}")
     request_url = html.escape(proof_pack_request_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
+    preview_url = html.escape(proof_pack_preview_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
 
     return f"""<!doctype html>
 <html lang="en">
@@ -4519,6 +4936,7 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
       <a href="{public}/proof-pack">Proof Packs</a>
       <a href="{public}/proof-pack/sample">Sample Report</a>
       <a href="{public}/v1/proof-pack/sample">Sample JSON</a>
+      <a href="{preview_url}">Mini Preview</a>
       <a href="{request_url}">Request Report</a>
       <a href="{public}/quickstart">Quickstart</a>
       <a href="{public}/docs">Docs</a>
@@ -4538,6 +4956,7 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     </form>
     <div class="cta">
       <a href="{probe_url}">Probe Payment Terms</a>
+      <a href="{preview_url}">Try Mini Preview</a>
       <a href="{api_url}">Open JSON Quote</a>
       <a href="{request_url}">Request This Report</a>
       <a href="{public}/proof-pack/sample">View Sample</a>
@@ -4587,6 +5006,7 @@ def build_proof_pack_request_html(
     notes = clean_lead_text(values.get("notes"), 500)
     price = price_for_proof_pack(pack)
     amount_units = str(usdc_units(price))
+    preview_url = html.escape(proof_pack_preview_page_url(target_url, question, pack, source))
     quote_url = html.escape(proof_pack_quote_page_url(target_url, question, pack, source))
     probe_url = html.escape(proof_pack_payment_probe_url(pack, source))
     paid_endpoint = html.escape(f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={pack}&source={source}")
@@ -4704,6 +5124,7 @@ def build_proof_pack_request_html(
     <p class="summary">Capture a report request before payment. This does not call suppliers, spend USDC, or run the LLM; it stores buyer intent so AxonGate can follow up and convert demand into paid Proof Packs.</p>
     <nav class="links" aria-label="Proof Pack request links">
       <a href="{public}/proof-pack">Proof Packs</a>
+      <a href="{preview_url}">Mini Preview</a>
       <a href="{quote_url}">Quote Page</a>
       <a href="{public}/proof-pack/sample">Sample Report</a>
       <a href="{public}/docs">Docs</a>
@@ -4748,6 +5169,7 @@ def build_proof_pack_request_html(
     </form>
     <div class="cta">
       <a href="{quote_url}">Open Quote</a>
+      <a href="{preview_url}">Try Mini Preview</a>
       <a href="{probe_url}">Probe Payment Terms</a>
     </div>
     <h2>Full Paid Endpoint</h2>
@@ -4767,6 +5189,7 @@ def build_proof_pack_html() -> str:
     pro_url = html.escape(PROOF_PRO_PAYMENT_URL or f"{PUBLIC_BASE_URL}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard")
     team_url = html.escape(PROOF_TEAM_PAYMENT_URL or f"{PUBLIC_BASE_URL}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=deep")
     quote_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard")
+    preview_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&pack=quick")
     request_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick")
     sample_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/sample")
     sample_api_url = html.escape(f"{PUBLIC_BASE_URL}/v1/proof-pack/sample")
@@ -4832,6 +5255,7 @@ def build_proof_pack_html() -> str:
     <nav class="links" aria-label="Proof Pack links">
       <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard">Quote Page</a>
       <a href="{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard">Quote API</a>
+      <a href="{preview_url}">Mini Preview</a>
       <a href="{request_url}">Request Report</a>
       <a href="{sample_url}">Sample Report</a>
       <a href="{sample_api_url}">Sample JSON</a>
@@ -4843,6 +5267,7 @@ def build_proof_pack_html() -> str:
     </nav>
     <div class="cta">
       <a href="{sample_url}">View Sample</a>
+      <a href="{preview_url}">Try Mini Preview</a>
       <a href="{quote_url}">Get Quote</a>
       <a href="{request_url}">Request Proof Pack</a>
       <a href="{pro_url}">Proof Pro</a>
@@ -4889,6 +5314,7 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
     public = html.escape(PUBLIC_BASE_URL)
     sample_api = html.escape(f"{PUBLIC_BASE_URL}/v1/proof-pack/sample?source={url_quote(sample['payment']['source'], safe='')}")
     quote_api = html.escape(sample["next_steps"]["quote_api"])
+    preview_url = html.escape(sample["next_steps"]["preview_page"])
     request_url = html.escape(
         proof_pack_request_page_url(
             sample["target_url"],
@@ -4968,6 +5394,7 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
     <nav class="links" aria-label="Sample links">
       <a href="{public}/proof-pack">Proof Packs</a>
       <a href="{sample_api}">Sample JSON</a>
+      <a href="{preview_url}">Mini Preview</a>
       <a href="{quote_api}">Quote API</a>
       <a href="{request_url}">Request Report</a>
       <a href="{public}/docs">Docs</a>
@@ -4976,6 +5403,7 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
     </nav>
     <div class="cta">
       <a href="{quote_api}">Get Live Quote</a>
+      <a href="{preview_url}">Try Mini Preview</a>
       <a href="{request_url}">Request This Report</a>
       <a href="{paid_endpoint}">Probe Payment Terms</a>
     </div>
@@ -5063,6 +5491,8 @@ Quote page: {public_url("/quote")}
 Proof Pack page: {public_url("/proof-pack")}
 Proof Pack sample page: {public_url("/proof-pack/sample")}
 Proof Pack sample API: {public_url("/v1/proof-pack/sample")}
+Proof Pack mini preview page: {public_url("/proof-pack/preview")}
+Proof Pack mini preview API: {public_url("/v1/proof-pack/preview")}
 Proof Pack quote page: {public_url("/proof-pack/quote")}
 Proof Pack quote API: {public_url("/v1/proof-pack/quote")}
 Proof Pack request page: {public_url("/proof-pack/request")}
@@ -5128,6 +5558,8 @@ Use only when AxonGate returns a retryable 503 with X-AxonGate-Retry-Credit afte
 GET {public_url("/proof-pack")}
 GET {public_url("/proof-pack/sample")}
 GET {public_url("/v1/proof-pack/sample")}
+GET {public_url("/proof-pack/preview")}?target_url=<url>&question=<question>&pack=quick|standard|deep
+GET {public_url("/v1/proof-pack/preview")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/v1/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/proof-pack/request")}?target_url=<url>&question=<question>&pack=quick|standard|deep
@@ -5302,6 +5734,7 @@ def build_docs_html() -> str:
       <a href="{public}/quote">Quote</a>
       <a href="{public}/proof-pack">Proof Packs</a>
       <a href="{public}/proof-pack/sample">Proof Sample</a>
+      <a href="{public}/proof-pack/preview">Proof Preview</a>
       <a href="{public}/proof-pack/quote">Proof Quote</a>
       <a href="{public}/proof-pack/request">Proof Request</a>
       <a href="{public}/demo">Demo</a>
@@ -5338,6 +5771,8 @@ def build_docs_html() -> str:
       <tbody>{proof_pack_rows}</tbody>
     </table>
     <pre>curl "{public}/v1/proof-pack/sample?source=docs"</pre>
+    <p>Mini preview page: <a href="{public}/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs">{public}/proof-pack/preview</a></p>
+    <pre>curl "{public}/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs"</pre>
     <p>Human quote page: <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/proof-pack/quote</a></p>
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
     <p>Request capture page: <a href="{public}/proof-pack/request?target_url=https%3A%2F%2Fexample.com&amp;pack=quick&amp;source=docs">{public}/proof-pack/request</a></p>
@@ -5426,6 +5861,7 @@ def build_operator_dashboard_html(
             card("Paid Attempts", count(metric("paid_attempts_total")), percent(challenge_rate)),
             card("Accepted Payments", count(metric("payments_accepted_total")), percent(accepted_rate)),
             card("Delivered", count(metric("delivery_success_total")), percent(delivered_rate)),
+            card("Proof Previews", count(metric("proof_pack_previews_total")), f'{count(metric("proof_pack_preview_cache_hits_total"))} cache hits'),
             card("Proof Quotes", count(metric("proof_pack_quotes_total")), "No-spend report quotes"),
             card("Proof Leads", count(metric("proof_pack_leads_total")), "Request capture submits"),
             card("Proof Requests", count(metric("proof_pack_requests_total")), "Paid Proof Pack posts"),
@@ -5510,6 +5946,7 @@ def build_operator_dashboard_html(
             f"<tr><td>Quote</td><td>{count(metric('discovery_quote_hits_total'))}</td></tr>",
             f"<tr><td>Proof Packs</td><td>{count(metric('discovery_proof_pack_hits_total'))}</td></tr>",
             f"<tr><td>Proof Pack Sample</td><td>{count(metric('discovery_proof_pack_sample_hits_total'))}</td></tr>",
+            f"<tr><td>Proof Pack Preview</td><td>{count(metric('discovery_proof_pack_preview_hits_total'))}</td></tr>",
             f"<tr><td>Proof Pack Quote</td><td>{count(metric('discovery_proof_pack_quote_hits_total'))}</td></tr>",
             f"<tr><td>Proof Pack Request</td><td>{count(metric('discovery_proof_pack_request_hits_total'))}</td></tr>",
             f"<tr><td>Demo</td><td>{count(metric('discovery_demo_hits_total'))}</td></tr>",
@@ -5714,6 +6151,7 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
     lead_rows = []
     for lead in leads:
         quote_page = esc(lead.get("quote_page"))
+        preview_page = esc(lead.get("preview_page"))
         probe_url = esc(lead.get("payment_probe_url"))
         paid_endpoint = esc(lead.get("paid_endpoint"))
         buyer_command = esc(lead.get("buyer_command"))
@@ -5725,7 +6163,7 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
             f"<td>{esc(lead.get('source'))}</td>"
             f"<td><a href=\"{esc(lead.get('target_url'))}\">{esc(lead.get('target_url'))}</a><br><small>{esc(lead.get('question'))}</small></td>"
             f"<td>{esc(lead.get('use_case'))}<br><small>{esc(lead.get('budget_usdc'))}</small><br><small>{esc(lead.get('notes'))}</small></td>"
-            f"<td><a href=\"{quote_page}\">Quote</a><br><a href=\"{probe_url}\">Probe</a><br><code>{paid_endpoint}</code></td>"
+            f"<td><a href=\"{preview_page}\">Preview</a><br><a href=\"{quote_page}\">Quote</a><br><a href=\"{probe_url}\">Probe</a><br><code>{paid_endpoint}</code></td>"
             f"<td><pre>{buyer_command}</pre></td>"
             "</tr>"
         )
@@ -6010,6 +6448,7 @@ npm run paid:buyer -- \\
       <a href="{public}/quote">Quote</a>
       <a href="{public}/proof-pack">Proof Packs</a>
       <a href="{public}/proof-pack/sample">Proof Sample</a>
+      <a href="{public}/proof-pack/preview">Proof Preview</a>
       <a href="{public}/proof-pack/quote">Proof Quote</a>
       <a href="{public}/docs">Docs</a>
       <a href="{public}/operator">Operator</a>
@@ -6419,9 +6858,11 @@ def build_sitemap_xml() -> str:
         ("/v1/x402/quote", "0.8"),
         ("/proof-pack", "0.95"),
         ("/proof-pack/sample", "0.9"),
+        ("/proof-pack/preview", "0.9"),
         ("/proof-pack/quote", "0.9"),
         ("/proof-pack/request", "0.9"),
         ("/v1/proof-pack/sample", "0.85"),
+        ("/v1/proof-pack/preview", "0.85"),
         ("/v1/proof-pack/quote", "0.85"),
         ("/v1/x402/proof-pack", "0.85"),
         ("/demo", "0.9"),
@@ -6540,6 +6981,49 @@ async def proof_pack_sample_api(request: Request):
     source = attribution_source_from_request(request)
     inc_discovery_hit("discovery_proof_pack_sample_hits_total", source)
     return build_proof_pack_sample_response(source)
+
+
+@app.get("/proof-pack/preview", response_class=HTMLResponse, tags=["discovery"], summary="No-spend Proof Pack mini preview")
+async def proof_pack_preview_page(
+    request: Request,
+    target_url: str = PROOF_PACK_SAMPLE_TARGET_URL,
+    question: Optional[str] = None,
+    pack: str = PROOF_PACK_SAMPLE_PACK,
+):
+    """Serve a cached mini preview before a buyer commits to a paid Proof Pack."""
+    source = attribution_source_from_request(request)
+    inc_metric("proof_pack_previews_total")
+    inc_attribution("proof_pack_previews", source)
+    inc_discovery_hit("discovery_proof_pack_preview_hits_total", source)
+    try:
+        await enforce_rate_limit("proof_pack_preview_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        preview = await build_proof_pack_preview(target_url, question, pack, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    return build_proof_pack_preview_html(preview)
+
+
+@app.get("/v1/proof-pack/preview", tags=["discovery"], summary="No-spend Proof Pack mini preview JSON")
+async def proof_pack_preview_api(
+    request: Request,
+    target_url: str = PROOF_PACK_SAMPLE_TARGET_URL,
+    question: Optional[str] = None,
+    pack: str = PROOF_PACK_SAMPLE_PACK,
+):
+    """Return cached mini preview data without supplier, LLM, or payment spend."""
+    source = attribution_source_from_request(request)
+    inc_metric("proof_pack_previews_total")
+    inc_attribution("proof_pack_previews", source)
+    inc_discovery_hit("discovery_proof_pack_preview_hits_total", source)
+    try:
+        await enforce_rate_limit("proof_pack_preview_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        return await build_proof_pack_preview(target_url, question, pack, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
 
 
 @app.get("/proof-pack/request", response_class=HTMLResponse, tags=["discovery"], summary="Proof Pack request capture page")
@@ -6732,6 +7216,8 @@ async def root(request: Request):
         "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
         "proof_pack_sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
         "proof_pack_sample_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+        "proof_pack_preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
+        "proof_pack_preview_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proof_pack_quote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
         "proof_pack_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
         "proof_pack_request": f"{PUBLIC_BASE_URL}/proof-pack/request",

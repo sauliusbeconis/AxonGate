@@ -51,6 +51,12 @@ https://api.axongate.one/proof-pack/sample
 Proof Pack sample API:
 https://api.axongate.one/v1/proof-pack/sample
 
+Proof Pack mini preview page:
+https://api.axongate.one/proof-pack/preview
+
+Proof Pack mini preview API:
+https://api.axongate.one/v1/proof-pack/preview
+
 Proof Pack quote page:
 https://api.axongate.one/proof-pack/quote
 
@@ -87,9 +93,11 @@ Endpoint paths:
 /v1/x402/quote
 /proof-pack
 /proof-pack/sample
+/proof-pack/preview
 /proof-pack/quote
 /proof-pack/request
 /v1/proof-pack/sample
+/v1/proof-pack/preview
 /v1/proof-pack/quote
 /v1/proof-pack/leads
 /v1/x402/proof-pack
@@ -268,7 +276,7 @@ Endpoint paths:
 ```
 
 Notes:
-Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, and Proof Packs support pack pricing via query param or X-AxonGate-Pack header. AxonGate includes official Bazaar discovery metadata, optional payment-identifier, supplier-free quote APIs, request capture for Proof Pack demand, a starter sample tier for first paid conversion, cache-only low-cost tiers, and citation-backed Proof Packs. The custom domain is now connected at api.axongate.one, so use the custom-domain URLs for re-submission.
+Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, and Proof Packs support pack pricing via query param or X-AxonGate-Pack header. AxonGate includes official Bazaar discovery metadata, optional payment-identifier, supplier-free quote APIs, no-spend Proof Pack mini previews, request capture for Proof Pack demand, a starter sample tier for first paid conversion, cache-only low-cost tiers, and citation-backed Proof Packs. The custom domain is now connected at api.axongate.one, so use the custom-domain URLs for re-submission.
 
 ## 402agents Fields
 

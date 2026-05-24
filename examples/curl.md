@@ -59,6 +59,16 @@ curl "$AXONGATE_BASE_URL/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&q
 curl "$AXONGATE_BASE_URL/v1/proof-pack/sample?source=$AXONGATE_SOURCE"
 ```
 
+Mini preview for a target-specific, no-spend taste of the report:
+
+```bash
+curl "$AXONGATE_BASE_URL/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&question=What%20does%20this%20source%20establish%3F&pack=quick&source=$AXONGATE_SOURCE"
+```
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&question=What%20does%20this%20source%20establish%3F&pack=quick&source=$AXONGATE_SOURCE"
+```
+
 ```bash
 curl "$AXONGATE_BASE_URL/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
 ```

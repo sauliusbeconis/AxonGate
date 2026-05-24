@@ -45,9 +45,11 @@ async def main() -> None:
             "/quote",
             "/proof-pack",
             "/proof-pack/sample",
+            "/proof-pack/preview",
             "/proof-pack/quote",
             "/proof-pack/request",
             "/v1/proof-pack/sample",
+            "/v1/proof-pack/preview",
             "/demo",
             "/robots.txt",
             "/sitemap.xml",
@@ -130,9 +132,42 @@ async def main() -> None:
         assert proof_quote["next_steps"]["proof_pack_sample_api"].endswith(
             "/v1/proof-pack/sample"
         ), "Proof Pack quote should point to sample JSON"
+        assert "proof_pack_preview_page" in proof_quote["next_steps"], "Proof Pack quote should point to mini preview"
         assert proof_quote["next_steps"]["proof_pack_quote_page"].endswith(
             "/proof-pack/quote"
         ), "Proof Pack quote should point to the human quote page"
+
+        proof_preview = (
+            await client.get(
+                "/v1/proof-pack/preview?target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
+            )
+        ).json()
+        assert proof_preview["status"] == "proof_pack_preview", "Proof Pack preview returned wrong status"
+        assert proof_preview["supplier_spend"] is False, "Proof Pack preview should not spend supplier budget"
+        assert proof_preview["preview_available"] is True, "sample target should produce a mini preview"
+        assert proof_preview["payment"]["full_pack_amount_units"] == "100000", "preview should expose quick amount"
+        assert proof_preview["citations"], "cached mini preview should include citations"
+        assert "buyer_command" in proof_preview["next_steps"], "Proof Pack preview missing buyer command"
+
+        preview_miss = (
+            await client.get(
+                "/v1/proof-pack/preview?target_url=https://www.rfc-editor.org/rfc/rfc9110.html&pack=quick&source=ci"
+            )
+        ).json()
+        assert preview_miss["status"] == "proof_pack_preview", "Proof Pack preview miss returned wrong status"
+        assert preview_miss["supplier_spend"] is False, "Proof Pack preview miss should not spend supplier budget"
+        assert preview_miss["preview_available"] is False, "uncached example preview should miss cleanly"
+        assert preview_miss["citations"] == [], "uncached preview should not invent citations"
+
+        proof_preview_page = await client.get(
+            "/proof-pack/preview?target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
+        )
+        assert proof_preview_page.status_code == 200, "Proof Pack preview page should render"
+        assert "Proof Pack Preview" in proof_preview_page.text, "Proof Pack preview page missing heading"
+        assert "Mini Answer" in proof_preview_page.text, "Proof Pack preview page missing mini answer"
+        assert "Try Mini Preview" in proof_preview_page.text or "Open Preview JSON" in proof_preview_page.text, (
+            "Proof Pack preview page missing conversion links"
+        )
 
         proof_quote_page = await client.get(
             "/proof-pack/quote?target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
@@ -142,6 +177,7 @@ async def main() -> None:
         assert "100000" in proof_quote_page.text, "Proof Pack quote page missing quick amount"
         assert "Probe Payment Terms" in proof_quote_page.text, "Proof Pack quote page missing paid next step"
         assert "Request This Report" in proof_quote_page.text, "Proof Pack quote page missing request CTA"
+        assert "Try Mini Preview" in proof_quote_page.text, "Proof Pack quote page missing preview CTA"
         assert "POST /v1/x402/proof-pack" in proof_quote_page.text, "Proof Pack quote page missing short endpoint"
         assert "Full Paid Endpoint" in proof_quote_page.text, "Proof Pack quote page should keep full URL in a scroll-safe block"
 
@@ -299,6 +335,8 @@ async def main() -> None:
         assert "cached" in x402_discovery["metadata"]["tiers"], "cached tier missing from public discovery"
         assert "proofPacks" in x402_discovery["metadata"], "Proof Pack pricing missing from public discovery"
         assert "proofPackSampleApi" in x402_discovery["metadata"], "Proof Pack sample missing from public discovery"
+        assert "proofPackPreview" in x402_discovery["metadata"], "Proof Pack preview page missing from public discovery"
+        assert "proofPackPreviewApi" in x402_discovery["metadata"], "Proof Pack preview API missing from public discovery"
         assert "proofPackQuote" in x402_discovery["metadata"], "Proof Pack quote page missing from public discovery"
         assert "proofPackRequest" in x402_discovery["metadata"], "Proof Pack request page missing from public discovery"
         assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
@@ -331,6 +369,8 @@ async def main() -> None:
         assert "attribution_events_redis_key" in metrics["metrics_backend"], "attribution event Redis key missing from metrics"
         assert "alerts" in metrics, "alerts block missing from metrics"
         assert "proof_pack_pricing" in metrics, "Proof Pack pricing missing from metrics"
+        assert metrics["metrics"].get("proof_pack_previews_total", 0) >= 3, "Proof Pack previews should be counted"
+        assert metrics["conversion_funnel"].get("proof_pack_previews", 0) >= 3, "Proof Pack previews missing from funnel"
         assert metrics["metrics"].get("proof_pack_leads_total", 0) >= 2, "Proof Pack leads should be counted"
         assert metrics["conversion_funnel"].get("proof_pack_leads", 0) >= 2, "Proof Pack leads missing from funnel"
         assert "proof_pack_leads" in metrics, "Proof Pack lead storage snapshot missing from metrics"
