@@ -231,13 +231,22 @@ async def main() -> None:
         assert proof_bundle_quote["amount_units"] == "2000000", "scout Proof Bundle should cost 2.00 USDC"
         assert proof_bundle_quote["source_limit"] == 3, "scout Proof Bundle source limit mismatch"
         assert "bundle_page" in proof_bundle_quote["next_steps"], "Proof Bundle quote missing bundle page"
+        assert "proof-pack/bundle/pay" in proof_bundle_quote["next_steps"]["checkout_url"], (
+            "Proof Bundle quote missing tracked checkout URL"
+        )
 
         proof_bundle_page = await client.get(f"/proof-pack/bundle/quote?{bundle_query}")
         assert proof_bundle_page.status_code == 200, "Proof Bundle quote page should render"
         assert "Proof Bundle Quote" in proof_bundle_page.text, "Proof Bundle quote page missing heading"
         assert "Request Bundle" in proof_bundle_page.text, "Proof Bundle quote page missing request CTA"
+        assert "Checkout" in proof_bundle_page.text, "Proof Bundle quote page missing checkout CTA"
         assert "POST https://api.axongate.one/v1/x402/proof-pack?pack=standard" in proof_bundle_page.text, (
             "Proof Bundle quote should keep immediate x402 fallback in a scroll-safe block"
+        )
+        proof_bundle_checkout = await client.get(f"/proof-pack/bundle/pay?{bundle_query}", follow_redirects=False)
+        assert proof_bundle_checkout.status_code == 302, "Proof Bundle checkout should redirect"
+        assert "/proof-pack/bundle" in proof_bundle_checkout.headers["location"], (
+            "Unconfigured Proof Bundle checkout should fall back to request capture"
         )
 
         bundle_lead_payload = {
@@ -281,6 +290,7 @@ async def main() -> None:
         assert operator_leads_json["stats"]["by_product"].get("proof_bundle", 0) >= 1, (
             "operator leads API should summarize Proof Bundle leads"
         )
+        assert "new" in operator_leads_json["stats"]["by_status"], "operator leads API should include pipeline status"
         assert any(
             lead.get("contact") == "codex-test@example.invalid"
             for lead in operator_leads_json["leads"]
@@ -289,6 +299,21 @@ async def main() -> None:
             lead.get("contact") == "codex-bundle@example.invalid" and lead.get("product") == "proof_bundle"
             for lead in operator_leads_json["leads"]
         ), "operator leads API should include private bundle contact"
+        operator_status = await client.post(
+            f"/v1/operator/leads/{proof_bundle_lead_json['lead_id']}/status",
+            headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+            json={
+                "status": "paid",
+                "note": "CI marked paid.",
+                "fulfillment_url": "https://example.com/report",
+            },
+        )
+        assert operator_status.status_code == 200, "operator status API should accept valid status updates"
+        operator_status_json = operator_status.json()
+        assert operator_status_json["lead"]["status"] == "paid", "operator status API should persist paid status"
+        assert operator_status_json["lead"]["fulfillment_url"] == "https://example.com/report", (
+            "operator status API should persist fulfillment URL"
+        )
 
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"

@@ -181,8 +181,10 @@
     "proof_pack_access": "https://api.axongate.one/v1/x402/proof-pack",
     "proof_bundle": "https://api.axongate.one/proof-pack/bundle",
     "proof_bundle_quote": "https://api.axongate.one/proof-pack/bundle/quote",
+    "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay",
     "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
     "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
+    "operator_lead_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",
     "demo": "https://api.axongate.one/demo",
     "llms_txt": "https://api.axongate.one/llms.txt",
     "robots": "https://api.axongate.one/robots.txt",
@@ -313,8 +315,10 @@
     "path": "/v1/proof-pack/bundle/quote",
     "docs": "https://api.axongate.one/proof-pack/bundle",
     "quote": "https://api.axongate.one/proof-pack/bundle/quote",
+    "checkout": "https://api.axongate.one/proof-pack/bundle/pay",
     "quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
     "lead_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
+    "operator_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",
     "payload_schema": {
       "contact": "required for lead capture",
       "target_urls": "array or newline-separated public HTTP/HTTPS URLs",
@@ -324,8 +328,16 @@
       "budget_usdc": "optional string",
       "source": "optional attribution source"
     },
-    "lead_capture_only_v1": true,
-    "payment_links": "Optional external payment URLs via AXONGATE_PROOF_BUNDLE_*_PAYMENT_URL",
+    "lead_capture_only_v1": false,
+    "checkout_tracked": true,
+    "payment_links": "Optional external payment URLs via AXONGATE_PROOF_BUNDLE_*_PAYMENT_URL. Checkout clicks are tracked and fall back to request capture when a payment link is not configured.",
+    "pipeline_statuses": [
+      "new",
+      "contacted",
+      "paid",
+      "fulfilled",
+      "lost"
+    ],
     "bundles": {
       "scout": {
         "price_usdc": 2.0,
@@ -378,8 +390,10 @@
       "proof_pack_endpoint": "https://api.axongate.one/v1/x402/proof-pack",
       "proof_bundle": "https://api.axongate.one/proof-pack/bundle",
       "proof_bundle_quote": "https://api.axongate.one/proof-pack/bundle/quote",
+      "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay",
       "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
       "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
+      "operator_lead_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",
       "private_operator_leads": "https://api.axongate.one/operator/leads",
       "sitemap": "https://api.axongate.one/sitemap.xml"
     },
@@ -417,6 +431,9 @@
         "proof_pack_leads",
         "proof_bundle_quotes",
         "proof_bundle_leads",
+        "proof_bundle_payment_clicks",
+        "proof_bundle_paid",
+        "proof_bundle_fulfilled",
         "proof_pack_requests",
         "proof_pack_delivery_success",
         "ueg_rejections",

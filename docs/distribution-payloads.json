@@ -9,8 +9,10 @@
   "proof_pack_leads_api": "https://api.axongate.one/v1/proof-pack/leads",
   "proof_bundle": "https://api.axongate.one/proof-pack/bundle",
   "proof_bundle_quote": "https://api.axongate.one/proof-pack/bundle/quote",
+  "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay",
   "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
   "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
+  "operator_lead_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",
   "operator_leads": "https://api.axongate.one/operator/leads",
   "operator_leads_api": "https://api.axongate.one/v1/operator/leads",
   "sources": {
@@ -23,6 +25,7 @@
       "proof_pack_request": "https://api.axongate.one/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick&source=x402-list",
       "proof_bundle": "https://api.axongate.one/proof-pack/bundle?source=x402-list",
       "proof_bundle_quote": "https://api.axongate.one/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=x402-list",
+      "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=x402-list",
       "docs": "https://api.axongate.one/docs?source=x402-list",
       "paid_test": "https://api.axongate.one/paid-test?source=x402-list"
     },
@@ -43,6 +46,7 @@
       "proof_pack_request": "https://api.axongate.one/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick&source=payanagent",
       "proof_bundle": "https://api.axongate.one/proof-pack/bundle?source=payanagent",
       "proof_bundle_quote": "https://api.axongate.one/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=payanagent",
+      "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=payanagent",
       "docs": "https://api.axongate.one/docs?source=payanagent",
       "paid_test": "https://api.axongate.one/paid-test?source=payanagent",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
@@ -132,7 +136,7 @@
     },
     "proof_bundle_service_payload": {
       "name": "AxonGate Proof Bundles",
-      "description": "Higher-value multi-source evidence bundle quotes and lead capture for agent builders. Quotes validate public URLs, return exact USDC units, and capture demand before batch delivery.",
+      "description": "Multi-source evidence bundle quotes, tracked checkout, and lead pipeline for agent builders. Quotes validate public URLs, return exact USDC units, and send buyers to payment links when configured.",
       "serviceType": "api",
       "category": "Data",
       "pricingModel": "per_request",

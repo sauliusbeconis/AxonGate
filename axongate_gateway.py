@@ -189,6 +189,7 @@ ATTRIBUTION_FUNNEL_STAGES = (
     "proof_pack_leads",
     "proof_bundle_quotes",
     "proof_bundle_leads",
+    "proof_bundle_payment_clicks",
     "proof_pack_requests",
     "proof_pack_delivery_success",
 )
@@ -242,6 +243,7 @@ PROOF_BUNDLE_PAYMENT_URLS = {
     DEFAULT_PROOF_BUNDLE: os.getenv("AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL", "").strip(),
     "audit": os.getenv("AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL", "").strip(),
 }
+PROOF_BUNDLE_LEAD_STATUSES = ("new", "contacted", "paid", "fulfilled", "lost")
 LLM_ENABLED = os.getenv("AXONGATE_LLM_ENABLED", "false").lower() in {"1", "true", "yes"}
 LLM_API_KEY = os.getenv("AXONGATE_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 LLM_BASE_URL = os.getenv("AXONGATE_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -381,6 +383,12 @@ metrics: dict[str, int] = {
     "proof_bundle_quotes_total": 0,
     "proof_bundle_leads_total": 0,
     "proof_bundle_lead_errors_total": 0,
+    "proof_bundle_payment_clicks_total": 0,
+    "proof_bundle_payment_configured_clicks_total": 0,
+    "proof_bundle_payment_missing_clicks_total": 0,
+    "proof_bundle_status_updates_total": 0,
+    "proof_bundle_paid_total": 0,
+    "proof_bundle_fulfilled_total": 0,
     "proof_pack_requests_total": 0,
     "proof_pack_llm_success_total": 0,
     "proof_pack_llm_fallback_total": 0,
@@ -513,6 +521,13 @@ class ProofBundleLeadRequest(BaseModel):
             ]
         }
     }
+
+
+class OperatorLeadStatusUpdate(BaseModel):
+    status: str = Field(..., description="Pipeline status: new, contacted, paid, fulfilled, or lost")
+    note: Optional[str] = Field(None, description="Private operator note for the status history")
+    fulfillment_url: Optional[str] = Field(None, description="Optional delivery URL for paid or fulfilled work")
+    delivery_note: Optional[str] = Field(None, description="Optional private fulfillment note")
 
 
 class ComputeRequest(BaseModel):
@@ -969,6 +984,9 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_leads": values.get("proof_pack_leads_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
+        "proof_bundle_payment_clicks": values.get("proof_bundle_payment_clicks_total", 0),
+        "proof_bundle_paid": values.get("proof_bundle_paid_total", 0),
+        "proof_bundle_fulfilled": values.get("proof_bundle_fulfilled_total", 0),
         "proof_pack_requests": values.get("proof_pack_requests_total", 0),
         "proof_pack_llm_success": values.get("proof_pack_llm_success_total", 0),
         "proof_pack_llm_fallback": values.get("proof_pack_llm_fallback_total", 0),
@@ -987,6 +1005,11 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
             "paid_attempt_per_challenge": conversion_rate(paid_attempts, challenges),
             "accepted_per_paid_attempt": conversion_rate(accepted, paid_attempts),
             "delivered_per_accepted": conversion_rate(delivered, accepted),
+            "bundle_lead_per_quote": conversion_rate(values.get("proof_bundle_leads_total", 0), values.get("proof_bundle_quotes_total", 0)),
+            "bundle_payment_click_per_quote": conversion_rate(
+                values.get("proof_bundle_payment_clicks_total", 0),
+                values.get("proof_bundle_quotes_total", 0),
+            ),
             "supplier_success_per_request": conversion_rate(values.get("jina_success_total", 0), supplier_requests),
         },
     }
@@ -1620,8 +1643,10 @@ def build_x402_resource() -> dict[str, Any]:
             "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
             "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
+            "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1689,6 +1714,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "bundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "bundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "bundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "bundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
@@ -1745,15 +1771,18 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "basename": "axongate.base.eth",
             "category": "evidence-reports",
             "service": "AxonGate Proof Bundles",
-            "description": "No-spend quote and lead capture for multi-source evidence bundles aimed at agent builders.",
-            "tags": ["proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture"],
+            "description": "No-spend quote, tracked checkout, and operator pipeline for multi-source evidence bundles aimed at agent builders.",
+            "tags": ["proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "quoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "operatorLeads": f"{PUBLIC_BASE_URL}/operator/leads",
+            "operatorStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
             "defaultBundle": DEFAULT_PROOF_BUNDLE,
             "paymentLinkConfigured": any(bool(url) for url in PROOF_BUNDLE_PAYMENT_URLS.values()),
+            "pipelineStatuses": list(PROOF_BUNDLE_LEAD_STATUSES),
             "pricing": {
                 bundle: {
                     "amount": str(usdc_units(price)),
@@ -1855,8 +1884,10 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
+        "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -2074,8 +2105,10 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
+        "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
         "paymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
         "tierQueryParam": "tier",
@@ -4451,6 +4484,19 @@ def proof_bundle_request_page_url(target_urls: list[str], question: str, bundle:
     )
 
 
+def proof_bundle_checkout_url(target_urls: list[str], question: str, bundle: str, source: str) -> str:
+    """Return the tracked checkout redirect for a bundle quote."""
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_source = normalize_attribution_source(source)
+    query = (
+        f"target_urls={proof_bundle_target_query(target_urls)}"
+        f"&question={url_quote(question, safe='')}"
+        f"&bundle={url_quote(normalized_bundle, safe='')}"
+        f"&source={url_quote(normalized_source, safe='')}"
+    )
+    return f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay?{query}"
+
+
 async def validate_proof_bundle_targets(target_urls: list[str], bundle: str) -> list[str]:
     normalized_bundle = normalize_proof_bundle(bundle)
     limit = proof_bundle_source_limit(normalized_bundle)
@@ -4505,6 +4551,7 @@ async def build_proof_bundle_quote(
     selected_price = price_for_proof_bundle(normalized_bundle)
     quote_page = proof_bundle_quote_page_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
     request_page = proof_bundle_request_page_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
+    checkout_url = proof_bundle_checkout_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
     quote_api = (
         f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote?"
         f"target_urls={proof_bundle_target_query(normalized_targets)}"
@@ -4518,12 +4565,16 @@ async def build_proof_bundle_quote(
     for bundle_name, price in PROOF_BUNDLE_PRICING_USDC.items():
         bundle_quote_page = proof_bundle_quote_page_url(normalized_targets, normalized_question, bundle_name, normalized_source)
         bundle_request_page = proof_bundle_request_page_url(normalized_targets, normalized_question, bundle_name, normalized_source)
+        bundle_checkout_url = proof_bundle_checkout_url(normalized_targets, normalized_question, bundle_name, normalized_source)
+        bundle_external_payment_url = proof_bundle_payment_url(bundle_name)
         bundles[bundle_name] = {
             "price_usdc": float(price),
             "amount_units": str(usdc_units(price)),
             "source_limit": proof_bundle_source_limit(bundle_name),
             "policy": proof_bundle_policy(bundle_name),
-            "payment_url": proof_bundle_payment_url(bundle_name) or bundle_request_page,
+            "checkout_url": bundle_checkout_url,
+            "payment_url": bundle_checkout_url,
+            "external_payment_url_configured": bool(bundle_external_payment_url),
             "quote_page": bundle_quote_page,
             "request_page": bundle_request_page,
         }
@@ -4547,18 +4598,52 @@ async def build_proof_bundle_quote(
             "quote_page": quote_page,
             "quote_api": quote_api,
             "request_page": request_page,
-            "payment_url": payment_url or request_page,
+            "checkout_url": checkout_url,
+            "payment_url": checkout_url,
             "payment_link_configured": bool(payment_url),
+            "external_payment_url_configured": bool(payment_url),
             "single_source_proof_pack_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
             "single_source_quote_api": public_url("/v1/proof-pack/quote"),
             "operator_leads": public_url("/operator/leads"),
-            "note": "Proof Bundles are captured as higher-value leads in v1; single-source Proof Packs remain x402-paid immediately.",
+            "note": "Proof Bundle checkout clicks are tracked; configured payment links redirect to checkout, otherwise AxonGate falls back to request capture.",
         },
     }
 
 
+def normalize_lead_status(status: Any) -> str:
+    normalized = str(status or "new").strip().lower().replace(" ", "_")
+    if normalized not in PROOF_BUNDLE_LEAD_STATUSES:
+        raise PaymentValidationError(f"Unsupported lead status. Use {', '.join(PROOF_BUNDLE_LEAD_STATUSES)}.")
+    return normalized
+
+
+def lead_with_pipeline_defaults(lead: dict[str, Any]) -> dict[str, Any]:
+    """Backfill pipeline fields for older stored leads without changing the raw record."""
+    updated = dict(lead)
+    created_at = int(updated.get("created_at") or time.time())
+    try:
+        status = normalize_lead_status(updated.get("status") or "new")
+    except PaymentValidationError:
+        status = "new"
+    updated["status"] = status
+    updated.setdefault("status_updated_at", created_at)
+    history = updated.get("status_history")
+    if not isinstance(history, list) or not history:
+        updated["status_history"] = [
+            {
+                "status": status,
+                "at": int(updated.get("status_updated_at") or created_at),
+                "note": "Lead captured.",
+            }
+        ]
+    updated.setdefault("fulfillment_url", "")
+    updated.setdefault("delivery_note", "")
+    return updated
+
+
 async def store_proof_pack_lead(lead: dict[str, Any]) -> str:
     """Store a Proof Pack lead in Redis with an in-memory fallback."""
+    lead.update(lead_with_pipeline_defaults(lead))
     payload = json.dumps(lead, separators=(",", ":"), sort_keys=True)
     if redis_client:
         try:
@@ -4609,6 +4694,8 @@ async def proof_pack_leads_public_snapshot() -> dict[str, Any]:
             "target_count": latest.get("target_count") or (len(latest.get("target_urls") or []) if latest.get("target_urls") else 1),
             "source": latest.get("source"),
             "amount_units": latest.get("amount_units"),
+            "status": latest.get("status") or "new",
+            "fulfillment_url_configured": bool(latest.get("fulfillment_url")),
             "has_contact": bool(latest.get("contact")),
         }
     return snapshot
@@ -4679,13 +4766,113 @@ async def durable_proof_pack_leads(limit: int = 50) -> list[dict[str, Any]]:
             for record in records:
                 parsed = parse_proof_pack_lead_record(record)
                 if parsed:
-                    leads.append(parsed)
+                    leads.append(lead_with_pipeline_defaults(parsed))
 
     if not leads:
         async with proof_pack_leads_lock:
-            leads = [dict(lead) for lead in proof_pack_leads[:bounded_limit]]
+            leads = [lead_with_pipeline_defaults(lead) for lead in proof_pack_leads[:bounded_limit]]
 
     return leads[:bounded_limit]
+
+
+async def update_stored_proof_pack_lead(lead_id: str, updates: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Update one stored lead in Redis or memory and return the updated record."""
+    normalized_id = str(lead_id or "").strip()
+    if not normalized_id:
+        return None
+
+    def apply_updates(record: dict[str, Any]) -> dict[str, Any]:
+        updated = lead_with_pipeline_defaults(record)
+        updated.update({key: value for key, value in updates.items() if value is not None})
+        return lead_with_pipeline_defaults(updated)
+
+    if redis_client:
+        try:
+            records = await redis_client.lrange(PROOF_PACK_LEADS_REDIS_KEY, 0, PROOF_PACK_LEADS_MEMORY_MAX - 1)
+            parsed_records = [parse_proof_pack_lead_record(record) for record in records]
+            updated_records: list[dict[str, Any]] = []
+            updated_lead: Optional[dict[str, Any]] = None
+            for parsed in parsed_records:
+                if not parsed:
+                    continue
+                if str(parsed.get("id") or "") == normalized_id:
+                    parsed = apply_updates(parsed)
+                    updated_lead = parsed
+                else:
+                    parsed = lead_with_pipeline_defaults(parsed)
+                updated_records.append(parsed)
+            if updated_lead is not None:
+                pipe = redis_client.pipeline()
+                pipe.delete(PROOF_PACK_LEADS_REDIS_KEY)
+                if updated_records:
+                    pipe.rpush(
+                        PROOF_PACK_LEADS_REDIS_KEY,
+                        *[
+                            json.dumps(record, separators=(",", ":"), sort_keys=True)
+                            for record in updated_records[:PROOF_PACK_LEADS_MEMORY_MAX]
+                        ],
+                    )
+                    pipe.ltrim(PROOF_PACK_LEADS_REDIS_KEY, 0, PROOF_PACK_LEADS_MEMORY_MAX - 1)
+                await pipe.execute()
+                return updated_lead
+        except Exception as exc:
+            inc_metric("proof_pack_lead_errors_total")
+            print(f"[PROOF_PACK_LEADS] Redis lead update failed: {exc}")
+
+    async with proof_pack_leads_lock:
+        for index, lead in enumerate(proof_pack_leads):
+            if str(lead.get("id") or "") == normalized_id:
+                proof_pack_leads[index] = apply_updates(lead)
+                return dict(proof_pack_leads[index])
+    return None
+
+
+async def update_proof_pack_lead_status(
+    lead_id: str,
+    status: str,
+    *,
+    note: Optional[str] = None,
+    fulfillment_url: Optional[str] = None,
+    delivery_note: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Move a lead through the lightweight operator pipeline."""
+    normalized_status = normalize_lead_status(status)
+    now = int(time.time())
+    clean_note = clean_lead_text(note, 500)
+    clean_fulfillment_url = clean_lead_text(fulfillment_url, 2048)
+    clean_delivery_note = clean_lead_text(delivery_note, 800)
+    existing = next((lead for lead in await durable_proof_pack_leads(PROOF_PACK_LEADS_MEMORY_MAX) if lead.get("id") == lead_id), None)
+    if not existing:
+        return None
+    history = existing.get("status_history") if isinstance(existing.get("status_history"), list) else []
+    history = list(history)[-20:]
+    history.append(
+        {
+            "status": normalized_status,
+            "at": now,
+            "note": clean_note or f"Marked {normalized_status}.",
+        }
+    )
+    updates: dict[str, Any] = {
+        "status": normalized_status,
+        "status_updated_at": now,
+        "status_history": history,
+    }
+    if clean_fulfillment_url:
+        updates["fulfillment_url"] = clean_fulfillment_url
+    if clean_delivery_note:
+        updates["delivery_note"] = clean_delivery_note
+    if normalized_status == "fulfilled":
+        updates["fulfilled_at"] = now
+    updated = await update_stored_proof_pack_lead(lead_id, updates)
+    if updated:
+        inc_metric("proof_bundle_status_updates_total")
+        if str(updated.get("product") or "") == "proof_bundle":
+            if normalized_status == "paid":
+                inc_metric("proof_bundle_paid_total")
+            if normalized_status == "fulfilled":
+                inc_metric("proof_bundle_fulfilled_total")
+    return updated
 
 
 def proof_pack_lead_stats(leads: list[dict[str, Any]]) -> dict[str, Any]:
@@ -4693,21 +4880,34 @@ def proof_pack_lead_stats(leads: list[dict[str, Any]]) -> dict[str, Any]:
     by_product: dict[str, int] = {}
     by_pack: dict[str, int] = {}
     by_source: dict[str, int] = {}
+    by_status: dict[str, int] = {}
     latest_created_at = 0
     total_value_usdc = Decimal("0")
+    open_value_usdc = Decimal("0")
+    paid_value_usdc = Decimal("0")
+    fulfilled_value_usdc = Decimal("0")
     for lead in leads:
         product = str(lead.get("product") or "proof_pack")
         pack = str(lead.get("pack") or "unknown")
         source = normalize_attribution_source(str(lead.get("source") or "direct"))
+        status = normalize_lead_status(lead.get("status") or "new")
         by_product[product] = by_product.get(product, 0) + 1
         by_pack[pack] = by_pack.get(pack, 0) + 1
         by_source[source] = by_source.get(source, 0) + 1
+        by_status[status] = by_status.get(status, 0) + 1
         try:
             latest_created_at = max(latest_created_at, int(lead.get("created_at") or 0))
         except (TypeError, ValueError):
             pass
         try:
-            total_value_usdc += Decimal(str(lead.get("price_usdc") or "0"))
+            lead_value = Decimal(str(lead.get("price_usdc") or "0"))
+            total_value_usdc += lead_value
+            if status in {"new", "contacted"}:
+                open_value_usdc += lead_value
+            if status in {"paid", "fulfilled"}:
+                paid_value_usdc += lead_value
+            if status == "fulfilled":
+                fulfilled_value_usdc += lead_value
         except Exception:
             pass
     return {
@@ -4716,7 +4916,11 @@ def proof_pack_lead_stats(leads: list[dict[str, Any]]) -> dict[str, Any]:
         "by_product": dict(sorted(by_product.items())),
         "by_pack": dict(sorted(by_pack.items())),
         "by_source": dict(sorted(by_source.items())),
+        "by_status": {status: by_status.get(status, 0) for status in PROOF_BUNDLE_LEAD_STATUSES},
         "indicative_value_usdc": float(total_value_usdc),
+        "open_value_usdc": float(open_value_usdc),
+        "paid_value_usdc": float(paid_value_usdc),
+        "fulfilled_value_usdc": float(fulfilled_value_usdc),
     }
 
 
@@ -4898,6 +5102,7 @@ def proof_bundle_lead_public_response(lead: dict[str, Any]) -> dict[str, Any]:
             "quote_api": lead["quote_api"],
             "request_page": lead["request_page"],
             "payment_url": lead["payment_url"],
+            "checkout_url": lead.get("checkout_url") or lead["payment_url"],
             "payment_link_configured": lead["payment_link_configured"],
             "operator_leads": public_url("/operator/leads"),
             "single_source_proof_pack_endpoint": lead["paid_endpoint"],
@@ -4963,6 +5168,7 @@ async def create_proof_bundle_lead(payload: ProofBundleLeadRequest | dict[str, A
         "request_page": quote["next_steps"]["request_page"],
         "quote_page": quote["next_steps"]["quote_page"],
         "quote_api": quote["next_steps"]["quote_api"],
+        "checkout_url": quote["next_steps"]["checkout_url"],
         "payment_url": quote["next_steps"]["payment_url"],
         "payment_link_configured": quote["next_steps"]["payment_link_configured"],
         "paid_endpoint": quote["next_steps"]["single_source_proof_pack_endpoint"],
@@ -6045,7 +6251,8 @@ def build_proof_bundle_html(
         f"&bundle={url_quote(bundle, safe='')}"
         f"&source={url_quote(source, safe='')}"
     )
-    payment_url = html.escape(proof_bundle_payment_url(bundle) or quote_url)
+    payment_url = html.escape(proof_bundle_checkout_url(split_bundle_target_urls(target_urls), question, bundle, source))
+    payment_link_state = "configured" if proof_bundle_payment_url(bundle) else "routes to request capture"
     bundle_options = "\n".join(
         f'<option value="{html.escape(bundle_name)}"{" selected" if bundle_name == bundle else ""}>{html.escape(bundle_name)}</option>'
         for bundle_name in PROOF_BUNDLE_PRICING_USDC
@@ -6197,7 +6404,7 @@ def build_proof_bundle_html(
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Indicative Price</strong><br>{html.escape(str(price))} USDC<br><code>{html.escape(amount_units)}</code> units</div>
       <div class="box"><strong>Source Limit</strong><br>{html.escape(str(proof_bundle_source_limit(bundle)))} public URLs</div>
-      <div class="box"><strong>Delivery Shape</strong><br>Captured lead now; x402 batch delivery next.</div>
+      <div class="box"><strong>Checkout</strong><br>Payment link {html.escape(payment_link_state)}.</div>
     </div>
     <form method="get" action="/proof-pack/bundle/quote" accept-charset="utf-8">
       <input type="hidden" name="source" value="{html.escape(source)}">
@@ -6285,6 +6492,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
         f"<td>{html.escape(str(info['amount_units']))}</td>"
         f"<td>{html.escape(str(info['source_limit']))}</td>"
         f"<td>{html.escape(str(info['policy']))}</td>"
+        f"<td><a href=\"{html.escape(str(info['checkout_url']))}\">Checkout</a></td>"
         f"<td><a href=\"{html.escape(str(info['quote_page']))}\">Quote</a></td>"
         "</tr>"
         for bundle_name, info in quote["bundles"].items()
@@ -6292,6 +6500,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     request_page = html.escape(str(quote["next_steps"]["request_page"]))
     quote_api = html.escape(str(quote["next_steps"]["quote_api"]))
     payment_url = html.escape(str(quote["next_steps"]["payment_url"]))
+    checkout_state = "configured payment link" if quote["next_steps"].get("payment_link_configured") else "request capture fallback"
     single_source_endpoint = html.escape(str(quote["next_steps"]["single_source_proof_pack_endpoint"]))
     nav = site_nav_html("Bundles")
     actions = action_bar_html(
@@ -6406,7 +6615,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Price</strong><br>{html.escape(str(quote["price_usdc"]))} USDC<br><code>{html.escape(str(quote["amount_units"]))}</code> units</div>
       <div class="box"><strong>Sources</strong><br>{html.escape(str(quote["target_count"]))} of {html.escape(str(quote["source_limit"]))}</div>
-      <div class="box"><strong>Cached Sources</strong><br>{html.escape(str(quote["cached_sources_count"]))}</div>
+      <div class="box"><strong>Checkout</strong><br>{html.escape(checkout_state)}<br><code>{html.escape(str(quote["next_steps"]["checkout_url"]))}</code></div>
     </div>
     <h2>Payment Or Request Path</h2>
     <pre>{payment_url}</pre>
@@ -6422,7 +6631,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     <h2>Bundles</h2>
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th><th>Quote</th></tr></thead>
+      <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th><th>Checkout</th><th>Quote</th></tr></thead>
       <tbody>{bundle_rows}</tbody>
     </table>
     </div>
@@ -6849,8 +7058,10 @@ Proof Pack prices:
 Proof Bundle quote and lead capture:
 GET {public_url("/proof-pack/bundle")}
 GET {public_url("/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
+GET {public_url("/proof-pack/bundle/pay")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 GET {public_url("/v1/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 POST {public_url("/v1/proof-pack/bundle/leads")}
+POST {public_url("/v1/operator/leads/<lead_id>/status")} (private operator token required; statuses: {", ".join(PROOF_BUNDLE_LEAD_STATUSES)})
 
 Proof Bundle prices:
 {proof_bundle_lines}
@@ -6967,6 +7178,7 @@ def build_docs_html() -> str:
                 [
                     ("Proof Packs", f"{PUBLIC_BASE_URL}/proof-pack"),
                     ("Proof Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+                    ("Bundle Checkout", f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay"),
                     ("Proof Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
                     ("Proof Preview", f"{PUBLIC_BASE_URL}/proof-pack/preview"),
                     ("Proof Quote", f"{PUBLIC_BASE_URL}/proof-pack/quote"),
@@ -7122,7 +7334,7 @@ def build_docs_html() -> str:
     <pre>{proof_curl_example}</pre>
 
     <h2>Proof Bundles</h2>
-    <p>Proof Bundles are multi-source evidence requests for buyers who need a cited source set rather than one page. The v1 path is no-spend quote and lead capture, with external payment links when configured; immediate paid delivery still uses single-source x402 Proof Packs.</p>
+    <p>Proof Bundles are multi-source evidence requests for buyers who need a cited source set rather than one page. The quote page now includes a tracked checkout redirect: configured payment links send buyers to payment, while unconfigured bundles fall back to request capture. Operators can then move leads through <code>new</code>, <code>contacted</code>, <code>paid</code>, <code>fulfilled</code>, or <code>lost</code>.</p>
     <div class="table-wrap">
     <table>
       <thead><tr><th>Bundle</th><th>Price</th><th>Sources</th><th>Policy</th></tr></thead>
@@ -7130,6 +7342,7 @@ def build_docs_html() -> str:
     </table>
     </div>
     <p>Human bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
+    <p>Tracked checkout route: <code>{public}/proof-pack/bundle/pay</code>. Configure payment URLs with <code>AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL</code>, <code>AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL</code>, and <code>AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL</code>.</p>
     <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
     <pre>curl -X POST "{public}/v1/proof-pack/bundle/leads" \\
   -H "Content-Type: application/json" \\
@@ -7217,6 +7430,9 @@ def build_operator_dashboard_html(
             card("Proof Leads", count(metric("proof_pack_leads_total")), "Request capture submits"),
             card("Bundle Quotes", count(metric("proof_bundle_quotes_total")), "Multi-source quote interest"),
             card("Bundle Leads", count(metric("proof_bundle_leads_total")), "Higher-ticket demand capture"),
+            card("Bundle Checkout", count(metric("proof_bundle_payment_clicks_total")), "Tracked payment clicks"),
+            card("Bundle Paid", count(metric("proof_bundle_paid_total")), "Operator-marked paid"),
+            card("Bundle Fulfilled", count(metric("proof_bundle_fulfilled_total")), "Operator-marked fulfilled"),
             card("Proof Requests", count(metric("proof_pack_requests_total")), "Paid Proof Pack posts"),
             card("Proof Delivered", count(metric("proof_pack_delivery_success_total")), "Citation reports delivered"),
             card("Cache Hits", count(metric("cache_hits_total")), f'{count(metric("cache_misses_total"))} misses'),
@@ -7499,17 +7715,34 @@ def build_operator_dashboard_html(
 </html>"""
 
 
-def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any], limit: int) -> str:
+def build_operator_leads_html(
+    leads: list[dict[str, Any]],
+    stats: dict[str, Any],
+    limit: int,
+    operator_token: str = "",
+) -> str:
     """Render a private operator view containing raw Proof Pack lead details."""
     public = html.escape(PUBLIC_BASE_URL)
 
     def esc(value: Any) -> str:
         return html.escape(str(value or ""))
 
+    operator_query = (
+        f"?operator_token={url_quote(operator_token, safe='')}&limit={int(limit)}"
+        if operator_token
+        else f"?limit={int(limit)}"
+    )
+    operator_query_attr = html.escape(operator_query, quote=True)
+    status_options_html = lambda current: "\n".join(
+        f'<option value="{esc(status)}"{" selected" if status == current else ""}>{esc(status)}</option>'
+        for status in PROOF_BUNDLE_LEAD_STATUSES
+    )
     cards = "\n".join(
         [
             f'<div class="card"><span>Retained</span><strong>{esc(stats.get("retained", 0))}</strong><small>latest {esc(lead_created_at_label(stats.get("latest_created_at")))}</small></div>',
-            f'<div class="card"><span>Indicative Value</span><strong>{esc(stats.get("indicative_value_usdc", 0))}</strong><small>USDC if every lead buys selected pack</small></div>',
+            f'<div class="card"><span>Open Pipeline</span><strong>{esc(stats.get("open_value_usdc", 0))}</strong><small>USDC in new/contacted leads</small></div>',
+            f'<div class="card"><span>Paid Value</span><strong>{esc(stats.get("paid_value_usdc", 0))}</strong><small>USDC marked paid or fulfilled</small></div>',
+            f'<div class="card"><span>Fulfilled Value</span><strong>{esc(stats.get("fulfilled_value_usdc", 0))}</strong><small>USDC marked fulfilled</small></div>',
             f'<div class="card"><span>Webhook</span><strong>{"on" if PROOF_PACK_LEAD_WEBHOOK_URL else "off"}</strong><small>AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL</small></div>',
             f'<div class="card"><span>Storage</span><strong>{"Redis" if redis_client else "Memory"}</strong><small>{esc(PROOF_PACK_LEADS_REDIS_KEY if redis_client else "process memory")}</small></div>',
         ]
@@ -7526,10 +7759,16 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
         f"<tr><td>{esc(source)}</td><td>{esc(count)}</td></tr>"
         for source, count in stats.get("by_source", {}).items()
     ) or '<tr><td colspan="2">No retained leads.</td></tr>'
+    status_rows = "\n".join(
+        f"<tr><td>{esc(status)}</td><td>{esc(count)}</td></tr>"
+        for status, count in stats.get("by_status", {}).items()
+    ) or '<tr><td colspan="2">No retained leads.</td></tr>'
 
     lead_rows = []
     for lead in leads:
+        lead = lead_with_pipeline_defaults(lead)
         product = str(lead.get("product") or "proof_pack")
+        lead_status = normalize_lead_status(lead.get("status") or "new")
         quote_page = esc(lead.get("quote_page"))
         preview_page = esc(lead.get("preview_page"))
         request_page = esc(lead.get("request_page"))
@@ -7551,6 +7790,23 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
         if paid_endpoint:
             payment_links.append(f"<code>{paid_endpoint}</code>")
         payment_links_html = "<br>".join(payment_links) or "<small>No payment path stored.</small>"
+        fulfillment_url = esc(lead.get("fulfillment_url"))
+        fulfillment_link = f'<a href="{fulfillment_url}">Delivery</a><br>' if fulfillment_url else ""
+        status_form = f"""
+              <form class="status-form" method="post" action="/operator/leads/{esc(lead.get('id'))}/status{operator_query_attr}">
+                <label>Status
+                  <select name="status">{status_options_html(lead_status)}</select>
+                </label>
+                <label>Delivery URL
+                  <input name="fulfillment_url" value="{fulfillment_url}" placeholder="https://...">
+                </label>
+                <label>Note
+                  <input name="note" value="" placeholder="private update note">
+                </label>
+                <button type="submit">Update</button>
+              </form>
+              <small>{fulfillment_link}{esc(lead.get('delivery_note'))}</small>
+        """
         target_urls = lead.get("target_urls") if isinstance(lead.get("target_urls"), list) else []
         if target_urls:
             target_links = "<br>".join(
@@ -7567,6 +7823,7 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
             f"<td><code>{esc(lead.get('id'))}</code><br>{esc(lead_created_at_label(lead.get('created_at')))}</td>"
             f"<td>{esc(lead.get('contact'))}</td>"
             f"<td><code>{esc(product)}</code><br><code>{esc(lead.get('bundle') or lead.get('pack'))}</code><br>{esc(lead.get('price_usdc'))} USDC<br><code>{esc(lead.get('amount_units'))}</code></td>"
+            f"<td><code>{esc(lead_status)}</code>{status_form}</td>"
             f"<td>{esc(lead.get('source'))}</td>"
             f"<td>{target_links}<br><small>{esc(lead.get('question'))}</small></td>"
             f"<td>{esc(lead.get('use_case'))}<br><small>{esc(lead.get('budget_usdc'))}</small><br><small>{esc(lead.get('notes'))}</small></td>"
@@ -7574,7 +7831,7 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
             f"<td><pre>{buyer_command}</pre></td>"
             "</tr>"
         )
-    leads_table = "\n".join(lead_rows) or '<tr><td colspan="8">No Proof Pack leads retained yet.</td></tr>'
+    leads_table = "\n".join(lead_rows) or '<tr><td colspan="9">No Proof Pack leads retained yet.</td></tr>'
     json_export = html.escape(
         json.dumps(
             {
@@ -7623,6 +7880,19 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
     a:hover {{ text-decoration: underline; }}
     .links {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }}
     .links a {{ border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--panel); }}
+    input, select, button {{
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+    }}
+    button {{ cursor: pointer; }}
+    .status-form {{ display: grid; gap: 7px; min-width: 220px; margin-top: 8px; }}
+    .status-form label {{ display: grid; gap: 4px; color: var(--muted); font-size: 0.82rem; }}
     .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }}
     .card {{
       background: var(--panel);
@@ -7648,7 +7918,7 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
       border-radius: 4px;
     }}
     code {{ display: inline-block; max-width: 100%; padding: 1px 5px; overflow-wrap: anywhere; }}
-    pre {{ max-width: 360px; max-height: 160px; overflow: auto; white-space: pre; padding: 8px; margin: 0; }}
+    pre {{ max-width: 360px; max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 8px; margin: 0; }}
     .json pre {{ max-width: 100%; max-height: 460px; padding: 14px; }}
     @media (max-width: 860px) {{
       header {{ display: block; }}
@@ -7691,12 +7961,16 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
         <h2>By Source</h2>
         <table><thead><tr><th>Source</th><th>Leads</th></tr></thead><tbody>{source_rows}</tbody></table>
       </section>
+      <section>
+        <h2>By Status</h2>
+        <table><thead><tr><th>Status</th><th>Leads</th></tr></thead><tbody>{status_rows}</tbody></table>
+      </section>
     </div>
 
     <h2>Lead Inbox</h2>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>ID / Time</th><th>Contact</th><th>Pack</th><th>Source</th><th>Target / Question</th><th>Use Case</th><th>Payment Links</th><th>Buyer Command</th></tr></thead>
+        <thead><tr><th>ID / Time</th><th>Contact</th><th>Pack</th><th>Status / Delivery</th><th>Source</th><th>Target / Question</th><th>Use Case</th><th>Payment Links</th><th>Buyer Command</th></tr></thead>
         <tbody>{leads_table}</tbody>
       </table>
     </div>
@@ -8298,6 +8572,7 @@ def build_sitemap_xml() -> str:
         ("/proof-pack/request", "0.9"),
         ("/proof-pack/bundle", "0.9"),
         ("/proof-pack/bundle/quote", "0.9"),
+        ("/proof-pack/bundle/pay", "0.8"),
         ("/v1/proof-pack/sample", "0.85"),
         ("/v1/proof-pack/preview", "0.85"),
         ("/v1/proof-pack/quote", "0.85"),
@@ -8363,7 +8638,8 @@ async def operator_leads_page(request: Request, limit: int = 50):
     inc_discovery_hit("discovery_operator_leads_hits_total", attribution_source_from_request(request))
     bounded_limit = max(1, min(limit, PROOF_PACK_LEADS_MEMORY_MAX, 200))
     leads = await durable_proof_pack_leads(bounded_limit)
-    return build_operator_leads_html(leads, proof_pack_lead_stats(leads), bounded_limit)
+    query_token = request.query_params.get("operator_token") or request.query_params.get("token") or ""
+    return build_operator_leads_html(leads, proof_pack_lead_stats(leads), bounded_limit, query_token)
 
 
 @app.get("/v1/operator/leads", tags=["operations"], summary="Private Proof Pack lead JSON")
@@ -8383,6 +8659,48 @@ async def operator_leads_api(request: Request, limit: int = 50):
             "token_header": "X-AxonGate-Operator-Token",
         },
     }
+
+
+@app.post("/v1/operator/leads/{lead_id}/status", tags=["operations"], summary="Update private lead pipeline status")
+async def operator_lead_status_api(request: Request, lead_id: str, status_update: OperatorLeadStatusUpdate):
+    """Move a private lead through the operator pipeline."""
+    require_operator_access(request)
+    try:
+        updated = await update_proof_pack_lead_status(
+            lead_id,
+            status_update.status,
+            note=status_update.note,
+            fulfillment_url=status_update.fulfillment_url,
+            delivery_note=status_update.delivery_note,
+        )
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    return {"status": "ok", "lead": updated, "stats": proof_pack_lead_stats(await durable_proof_pack_leads())}
+
+
+@app.post("/operator/leads/{lead_id}/status", response_class=HTMLResponse, tags=["operations"], summary="Update private lead pipeline status from operator page")
+async def operator_lead_status_form(request: Request, lead_id: str, limit: int = 50):
+    """Accept a browser form update for private lead status."""
+    require_operator_access(request)
+    payload = parse_urlencoded_payload(await request.body())
+    try:
+        updated = await update_proof_pack_lead_status(
+            lead_id,
+            str(payload.get("status") or "new"),
+            note=payload.get("note"),
+            fulfillment_url=payload.get("fulfillment_url"),
+            delivery_note=payload.get("delivery_note"),
+        )
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Lead not found.")
+    bounded_limit = max(1, min(limit, PROOF_PACK_LEADS_MEMORY_MAX, 200))
+    leads = await durable_proof_pack_leads(bounded_limit)
+    query_token = request.query_params.get("operator_token") or request.query_params.get("token") or ""
+    return build_operator_leads_html(leads, proof_pack_lead_stats(leads), bounded_limit, query_token)
 
 
 @app.get("/quickstart", response_class=HTMLResponse, tags=["discovery"], summary="First paid AxonGate conversion quickstart")
@@ -8503,6 +8821,37 @@ async def proof_bundle_quote_api(
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
+@app.get("/proof-pack/bundle/pay", response_class=RedirectResponse, tags=["discovery"], summary="Tracked Proof Bundle checkout")
+async def proof_bundle_checkout(
+    request: Request,
+    target_urls: str = "",
+    question: Optional[str] = None,
+    bundle: str = DEFAULT_PROOF_BUNDLE,
+):
+    """Track checkout intent and redirect to configured payment link or request capture."""
+    source = attribution_source_from_request(request)
+    try:
+        normalized_bundle = normalize_proof_bundle(bundle)
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    raw_targets = split_bundle_target_urls(target_urls)
+    normalized_question = proof_bundle_question(question)
+    inc_metric("proof_bundle_payment_clicks_total")
+    inc_attribution("proof_bundle_payment_clicks", source)
+    external_payment_url = proof_bundle_payment_url(normalized_bundle)
+    if external_payment_url:
+        inc_metric("proof_bundle_payment_configured_clicks_total")
+        return RedirectResponse(external_payment_url, status_code=302)
+
+    inc_metric("proof_bundle_payment_missing_clicks_total")
+    fallback_url = (
+        proof_bundle_request_page_url(raw_targets, normalized_question, normalized_bundle, source)
+        if raw_targets
+        else f"{PUBLIC_BASE_URL}/proof-pack/bundle?bundle={url_quote(normalized_bundle, safe='')}&source={url_quote(source, safe='')}"
+    )
+    return RedirectResponse(fallback_url, status_code=302)
 
 
 @app.post("/v1/proof-pack/bundle/leads", tags=["discovery"], summary="No-spend Proof Bundle lead capture")
@@ -8778,6 +9127,7 @@ async def root(request: Request):
         "proof_pack_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "proof_bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proof_bundle_quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proof_bundle_checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proof_bundle_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proof_bundle_leads_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "demo": f"{PUBLIC_BASE_URL}/demo",
