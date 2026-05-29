@@ -4999,6 +4999,335 @@ def resolve_proof_pack_selection(
     return normalized_pack
 
 
+def shared_ui_css() -> str:
+    """Return shared styling for the human-facing HTML surfaces."""
+    return """
+    :root {
+      --focus: #9ee7d5;
+      --shadow: 0 18px 42px rgba(0, 0, 0, 0.22);
+    }
+    html { min-width: 0; }
+    body {
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+    }
+    main, section, article, header, nav, .grid, .row, .box, .card, .panel, .notice {
+      min-width: 0;
+    }
+    main {
+      width: min(100%, var(--page-max, 1080px));
+      padding-inline: clamp(16px, 4vw, 28px);
+    }
+    h1, h2, h3, p, li, td, th, label, small, a, code, pre {
+      overflow-wrap: anywhere;
+    }
+    h1 { letter-spacing: 0; }
+    p { max-width: 78ch; }
+    a { text-underline-offset: 3px; }
+    a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+      outline: 2px solid var(--focus);
+      outline-offset: 3px;
+    }
+    .site-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin: 0 0 30px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand {
+      display: inline-grid;
+      gap: 1px;
+      color: var(--text);
+      font-weight: 700;
+      line-height: 1.1;
+      text-decoration: none;
+    }
+    .brand small {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 500;
+    }
+    .nav-core {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+      min-width: 0;
+    }
+    .nav-core a,
+    .button,
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      max-width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 12px;
+      background: color-mix(in srgb, var(--panel), transparent 8%);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      line-height: 1.15;
+      text-decoration: none;
+      cursor: pointer;
+      white-space: normal;
+      text-align: center;
+    }
+    .nav-core a:hover,
+    .button:hover,
+    button:hover {
+      border-color: color-mix(in srgb, var(--accent), var(--line) 35%);
+      background: color-mix(in srgb, var(--accent), var(--panel) 88%);
+      text-decoration: none;
+    }
+    .nav-core a[aria-current="page"],
+    .button.primary {
+      border-color: color-mix(in srgb, var(--accent), var(--line) 25%);
+      background: color-mix(in srgb, var(--accent), var(--panel) 78%);
+      color: var(--text);
+    }
+    .button.secondary {
+      color: var(--text);
+    }
+    .action-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin: 22px 0;
+    }
+    .ui-menu {
+      position: relative;
+      min-width: 180px;
+    }
+    .ui-menu summary {
+      list-style: none;
+    }
+    .ui-menu summary::-webkit-details-marker {
+      display: none;
+    }
+    .ui-menu summary::after {
+      content: "v";
+      margin-left: 8px;
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+    .menu-panel {
+      position: absolute;
+      z-index: 10;
+      right: 0;
+      top: calc(100% + 8px);
+      display: grid;
+      gap: 6px;
+      width: min(320px, calc(100vw - 32px));
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .menu-panel a {
+      display: block;
+      padding: 9px 10px;
+      border-radius: 6px;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .menu-panel a:hover {
+      background: color-mix(in srgb, var(--accent), var(--panel) 86%);
+      text-decoration: none;
+    }
+    .link-cluster {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      margin: 18px 0;
+    }
+    .link-cluster details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 0;
+    }
+    .link-cluster summary {
+      cursor: pointer;
+      padding: 12px 14px;
+      color: var(--text);
+      font-weight: 700;
+    }
+    .link-cluster .menu-panel {
+      position: static;
+      width: auto;
+      border: 0;
+      border-top: 1px solid var(--line);
+      border-radius: 0;
+      box-shadow: none;
+      background: transparent;
+    }
+    input, select, textarea {
+      max-width: 100%;
+    }
+    button {
+      width: auto;
+    }
+    .box, .card, .panel, .notice {
+      box-shadow: none;
+    }
+    code {
+      white-space: normal;
+      word-break: break-word;
+    }
+    .endpoint-card code {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+    }
+    pre {
+      max-width: 100%;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+    }
+    .table-wrap {
+      max-width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .table-wrap table {
+      min-width: 620px;
+      border: 0;
+    }
+    table {
+      max-width: 100%;
+    }
+    th, td {
+      vertical-align: top;
+    }
+    .compact-copy {
+      max-width: 68ch;
+    }
+    @media (max-width: 760px) {
+      .site-nav {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .nav-core {
+        justify-content: flex-start;
+        width: 100%;
+      }
+      .nav-core a,
+      .action-row > .button,
+      .action-row > .ui-menu {
+        flex: 1 1 150px;
+      }
+      .ui-menu {
+        position: static;
+      }
+      .action-row > .ui-menu,
+      .nav-core > .ui-menu {
+        flex-basis: 100%;
+        width: 100%;
+      }
+      .menu-panel {
+        position: static;
+        left: 0;
+        right: auto;
+        width: 100%;
+        margin-top: 8px;
+        box-shadow: none;
+      }
+    }
+    """
+
+
+def ui_link(label: str, href: Any, *, class_name: str = "button secondary", current: bool = False) -> str:
+    """Render a safely escaped link button."""
+    safe_href = html.escape(html.unescape(str(href or "#")), quote=True)
+    safe_label = html.escape(str(label))
+    current_attr = ' aria-current="page"' if current else ""
+    class_attr = f' class="{html.escape(class_name)}"' if class_name else ""
+    return f'<a href="{safe_href}"{class_attr}{current_attr}>{safe_label}</a>'
+
+
+def site_nav_html(active: str = "") -> str:
+    """Render the compact shared top navigation."""
+    nav_items = [
+        ("Proof Packs", public_url("/proof-pack")),
+        ("Bundles", public_url("/proof-pack/bundle")),
+        ("Docs", public_url("/docs")),
+        ("Quickstart", public_url("/quickstart")),
+    ]
+    nav_links = "\n        ".join(
+        ui_link(label, href, class_name="", current=label.lower() == active.lower())
+        for label, href in nav_items
+    )
+    more_links = "\n          ".join(
+        ui_link(label, href, class_name="")
+        for label, href in [
+            ("Sample Report", public_url("/proof-pack/sample")),
+            ("Proof Quote", public_url("/proof-pack/quote")),
+            ("Request", public_url("/proof-pack/request")),
+            ("Operator", public_url("/operator")),
+            ("Discovery", public_url("/discovery/resources")),
+        ]
+    )
+    return f"""
+    <nav class="site-nav" aria-label="Main navigation">
+      <a class="brand" href="{html.escape(public_url('/proof-pack'), quote=True)}">AxonGate<small>proof and context gateway</small></a>
+      <div class="nav-core">
+        {nav_links}
+        <details class="ui-menu">
+          <summary class="button secondary">More</summary>
+          <div class="menu-panel">{more_links}</div>
+        </details>
+      </div>
+    </nav>"""
+
+
+def action_bar_html(
+    primary: list[tuple[str, Any]],
+    secondary: Optional[list[tuple[str, Any]]] = None,
+    *,
+    menu_label: str = "More actions",
+) -> str:
+    """Render primary actions with secondary links tucked into a dropdown."""
+    secondary = secondary or []
+    links = []
+    for index, (label, href) in enumerate(primary):
+        links.append(ui_link(label, href, class_name="button primary" if index == 0 else "button secondary"))
+    if secondary:
+        menu_links = "\n          ".join(ui_link(label, href, class_name="") for label, href in secondary)
+        links.append(
+            f"""
+        <details class="ui-menu">
+          <summary class="button secondary">{html.escape(menu_label)}</summary>
+          <div class="menu-panel">{menu_links}</div>
+        </details>"""
+        )
+    return '<div class="action-row">' + "\n      ".join(links) + "</div>"
+
+
+def link_cluster_html(groups: list[tuple[str, list[tuple[str, Any]]]]) -> str:
+    """Render grouped documentation links without flooding the page."""
+    rendered_groups = []
+    for title, links in groups:
+        menu_links = "\n          ".join(ui_link(label, href, class_name="") for label, href in links)
+        rendered_groups.append(
+            f"""
+      <details>
+        <summary>{html.escape(title)}</summary>
+        <div class="menu-panel">{menu_links}</div>
+      </details>"""
+        )
+    return '<section class="link-cluster" aria-label="Discovery links">' + "\n".join(rendered_groups) + "\n    </section>"
+
+
 def build_quote_html(quote: dict[str, Any]) -> str:
     """Render a compact quote page that turns discovery into a paid test."""
     public = html.escape(PUBLIC_BASE_URL)
@@ -5022,6 +5351,19 @@ def build_quote_html(quote: dict[str, Any]) -> str:
     )
     buyer_command = html.escape(quote["next_steps"]["buyer_command"])
     probe_url = html.escape(quote["next_steps"]["probe_payment_terms"])
+    nav = site_nav_html("Docs")
+    actions = action_bar_html(
+        [
+            ("Paid Test", f"{PUBLIC_BASE_URL}/paid-test"),
+            ("Proof Packs", f"{PUBLIC_BASE_URL}/proof-pack"),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+        ],
+        [
+            ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
+            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
+            ("Open Quote JSON", api_url),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -5082,18 +5424,15 @@ def build_quote_html(quote: dict[str, Any]) -> str:
     table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
     .links a {{ display: inline-block; margin: 0 14px 10px 0; }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>AxonGate Quote</h1>
     <p>Preview the right paid path before spending. This validates the URL, checks starter/cache availability, and returns exact x402 amounts without supplier work.</p>
-    <nav class="links" aria-label="Quote links">
-      <a href="{public}/quickstart">Quickstart</a>
-      <a href="{public}/paid-test">Paid Test</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{public}/operator">Operator</a>
-    </nav>
+    {actions}
     <form method="get" action="/quote">
       <input name="target_url" value="{target}" aria-label="Target URL">
       <button type="submit">Quote</button>
@@ -5109,10 +5448,12 @@ def build_quote_html(quote: dict[str, Any]) -> str:
     <h2>Buyer Command</h2>
     <pre>{buyer_command}</pre>
     <h2>Tiers</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>USDC Units</th><th>Available Now</th><th>Policy</th></tr></thead>
       <tbody>{tiers_rows}</tbody>
     </table>
+    </div>
   </main>
 </body>
 </html>"""
@@ -5160,6 +5501,20 @@ def build_proof_pack_preview_html(preview: dict[str, Any]) -> str:
     risk_items = "\n".join(f"<li>{html.escape(str(risk))}</li>" for risk in preview["risks"])
     source_hash = preview["source_profile"].get("content_sha256") or "none"
     source_hash_display = html.escape(str(source_hash)[:20] + ("..." if source_hash and source_hash != "none" else ""))
+    nav = site_nav_html("Proof Packs")
+    actions = action_bar_html(
+        [
+            ("Get Quote", quote_url),
+            ("Probe Payment Terms", probe_url),
+            ("Request This Report", request_url),
+        ],
+        [
+            ("Open Preview JSON", preview_api),
+            ("Sample Report", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -5226,20 +5581,14 @@ def build_proof_pack_preview_html(preview: dict[str, Any]) -> str:
     @media (max-width: 760px) {{
       form {{ grid-template-columns: 1fr; }}
     }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>Proof Pack Preview</h1>
     <p class="summary">A free, no-spend mini preview. If AxonGate already has reusable source material, this page shows a few cited claims; otherwise it validates the target and gives the fastest paid or request path.</p>
-    <nav class="links" aria-label="Proof Pack preview links">
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{quote_url}">Quote Page</a>
-      <a href="{request_url}">Request Report</a>
-      <a href="{public}/proof-pack/sample">Sample Report</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{public}/operator">Operator</a>
-    </nav>
     <form method="get" action="/proof-pack/preview">
       <label>Target URL
         <input name="target_url" value="{target}" aria-label="Target URL">
@@ -5252,12 +5601,7 @@ def build_proof_pack_preview_html(preview: dict[str, Any]) -> str:
       </label>
       <button type="submit">Preview</button>
     </form>
-    <div class="cta">
-      <a href="{quote_url}">Get Quote</a>
-      <a href="{probe_url}">Probe Payment Terms</a>
-      <a href="{request_url}">Request This Report</a>
-      <a href="{preview_api}">Open Preview JSON</a>
-    </div>
+    {actions}
 
     <div class="grid">
       <div class="box"><strong>Preview</strong><br>{html.escape(status_label)}<br><code>{html.escape(str(preview["preview_kind"]))}</code></div>
@@ -5271,15 +5615,19 @@ def build_proof_pack_preview_html(preview: dict[str, Any]) -> str:
     <h2>Mini Summary</h2>
     <p>{executive_summary}</p>
     <h2>Preview Claims</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Claim</th><th>Citations</th><th>Confidence</th></tr></thead>
       <tbody>{claim_rows}</tbody>
     </table>
+    </div>
     <h2>Preview Citations</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>ID</th><th>Excerpt</th></tr></thead>
       <tbody>{citation_rows}</tbody>
     </table>
+    </div>
     <h2>Risks</h2>
     <ul>{risk_items}</ul>
     <h2>Paid Endpoint</h2>
@@ -5328,6 +5676,20 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     selector_hint = html.escape(f"pack={pack}, source={quote['source']}")
     request_url = html.escape(proof_pack_request_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
     preview_url = html.escape(proof_pack_preview_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
+    nav = site_nav_html("Proof Packs")
+    actions = action_bar_html(
+        [
+            ("Probe Payment Terms", probe_url),
+            ("Try Mini Preview", preview_url),
+            ("Request This Report", request_url),
+        ],
+        [
+            ("Open JSON Quote", api_url),
+            ("View Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -5396,22 +5758,14 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     @media (max-width: 760px) {{
       form {{ grid-template-columns: 1fr; }}
     }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>Proof Pack Quote</h1>
     <p class="summary">Price a cited evidence report before spending. This page validates the public target, shows exact x402 USDC units, and gives you the next paid command without calling suppliers or the LLM.</p>
-    <nav class="links" aria-label="Proof Pack quote links">
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{public}/proof-pack/sample">Sample Report</a>
-      <a href="{public}/v1/proof-pack/sample">Sample JSON</a>
-      <a href="{preview_url}">Mini Preview</a>
-      <a href="{request_url}">Request Report</a>
-      <a href="{public}/quickstart">Quickstart</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{public}/operator">Operator</a>
-    </nav>
     <form method="get" action="/proof-pack/quote">
       <label>Target URL
         <input name="target_url" value="{target}" aria-label="Target URL">
@@ -5424,13 +5778,7 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
       </label>
       <button type="submit">Quote</button>
     </form>
-    <div class="cta">
-      <a href="{probe_url}">Probe Payment Terms</a>
-      <a href="{preview_url}">Try Mini Preview</a>
-      <a href="{api_url}">Open JSON Quote</a>
-      <a href="{request_url}">Request This Report</a>
-      <a href="{public}/proof-pack/sample">View Sample</a>
-    </div>
+    {actions}
 
     <div class="grid">
       <div class="box"><strong>Selected Pack</strong><br><code>{html.escape(pack)}</code></div>
@@ -5446,10 +5794,12 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     <h2>Buyer Command</h2>
     <pre>{buyer_command}</pre>
     <h2>Packs</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Pack</th><th>Price</th><th>USDC Units</th><th>Cached</th><th>Policy</th><th>Probe</th></tr></thead>
       <tbody>{pack_rows}</tbody>
     </table>
+    </div>
   </main>
 </body>
 </html>"""
@@ -5516,6 +5866,19 @@ def build_proof_pack_request_html(
         <a href="{html.escape(str(steps.get("payment_probe_url", probe_url)))}">Probe Payment Terms</a>
       </div>
     </div>"""
+    nav = site_nav_html("Proof Packs")
+    actions = action_bar_html(
+        [
+            ("Open Quote", quote_url),
+            ("Try Mini Preview", preview_url),
+            ("Probe Payment Terms", probe_url),
+        ],
+        [
+            ("Sample Report", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -5586,20 +5949,14 @@ def build_proof_pack_request_html(
     @media (max-width: 760px) {{
       .row {{ grid-template-columns: 1fr; }}
     }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>Proof Pack Request</h1>
-    <p class="summary">Capture a report request before payment. This does not call suppliers, spend USDC, or run the LLM; it stores buyer intent so AxonGate can follow up and convert demand into paid Proof Packs.</p>
-    <nav class="links" aria-label="Proof Pack request links">
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{preview_url}">Mini Preview</a>
-      <a href="{quote_url}">Quote Page</a>
-      <a href="{public}/proof-pack/sample">Sample Report</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{public}/operator">Operator</a>
-    </nav>
+    <p class="summary">Save buyer intent before payment. This form does not call suppliers, run the LLM, or move USDC; it gives AxonGate a private follow-up path for converting demand into paid Proof Packs.</p>
     {error_html}
     {success_html}
     <div class="grid">
@@ -5637,11 +5994,7 @@ def build_proof_pack_request_html(
       </label>
       <button type="submit">Send Request</button>
     </form>
-    <div class="cta">
-      <a href="{quote_url}">Open Quote</a>
-      <a href="{preview_url}">Try Mini Preview</a>
-      <a href="{probe_url}">Probe Payment Terms</a>
-    </div>
+    {actions}
     <h2>Full Paid Endpoint</h2>
     <pre>{paid_endpoint}</pre>
     <h2>JSON Lead API</h2>
@@ -5739,6 +6092,20 @@ def build_proof_bundle_html(
         <a href="{html.escape(str(steps.get("payment_url", payment_url)))}">Payment Link</a>
       </div>
     </div>"""
+    nav = site_nav_html("Bundles")
+    actions = action_bar_html(
+        [
+            ("Quote Bundle", quote_url),
+            ("Request Bundle", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+            ("Payment Link", payment_url),
+        ],
+        [
+            ("Single-Source Request", f"{PUBLIC_BASE_URL}/proof-pack/request"),
+            ("Sample Report", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
+            ("Private Leads", f"{PUBLIC_BASE_URL}/operator/leads"),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -5815,27 +6182,17 @@ def build_proof_bundle_html(
     @media (max-width: 760px) {{
       .row {{ grid-template-columns: 1fr; }}
     }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>AxonGate Proof Bundles</h1>
-    <p class="summary">Multi-source evidence bundles for agent builders who need more than one cited page. This is the higher-value path: validate source sets, quote the bundle, capture buyer intent, then convert into paid Proof Pack work or an external subscription/payment link.</p>
-    <nav class="links" aria-label="Proof Bundle links">
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{public}/proof-pack/bundle/quote">Bundle Quote</a>
-      <a href="{public}/proof-pack/sample">Sample Report</a>
-      <a href="{public}/proof-pack/preview">Mini Preview</a>
-      <a href="{public}/operator/leads">Private Leads</a>
-      <a href="{public}/docs">Docs</a>
-    </nav>
+    <p class="summary">Multi-source evidence bundles for agent builders who need a cited source set, not just one page. Validate the sources, quote the bundle, capture buyer intent, then convert that demand into paid Proof Pack work or a configured payment path.</p>
     {error_html}
     {success_html}
-    <div class="cta">
-      <a href="{quote_url}">Quote Bundle</a>
-      <a href="{payment_url}">Payment Link</a>
-      <a href="{public}/proof-pack/request">Single-Source Request</a>
-    </div>
+    {actions}
     <div class="grid">
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Indicative Price</strong><br>{html.escape(str(price))} USDC<br><code>{html.escape(amount_units)}</code> units</div>
@@ -5887,10 +6244,12 @@ def build_proof_bundle_html(
       <button type="submit">Request Bundle</button>
     </form>
     <h2>Bundle Pricing</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th></tr></thead>
       <tbody>{bundle_rows}</tbody>
     </table>
+    </div>
     <h2>JSON Lead API</h2>
     <pre>curl -X POST {public}/v1/proof-pack/bundle/leads \\
   -H "Content-Type: application/json" \\
@@ -5934,6 +6293,20 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     quote_api = html.escape(str(quote["next_steps"]["quote_api"]))
     payment_url = html.escape(str(quote["next_steps"]["payment_url"]))
     single_source_endpoint = html.escape(str(quote["next_steps"]["single_source_proof_pack_endpoint"]))
+    nav = site_nav_html("Bundles")
+    actions = action_bar_html(
+        [
+            ("Request Bundle", request_page),
+            ("Payment Link", payment_url),
+            ("JSON Quote", quote_api),
+        ],
+        [
+            ("Proof Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+            ("Proof Packs", f"{PUBLIC_BASE_URL}/proof-pack"),
+            ("Private Leads", f"{PUBLIC_BASE_URL}/operator/leads"),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -6005,20 +6378,14 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     @media (max-width: 760px) {{
       .row {{ grid-template-columns: 1fr; }}
     }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>Proof Bundle Quote</h1>
     <p class="summary">A supplier-free quote for a multi-source evidence bundle. It validates public URLs, checks reusable source material, and returns exact USDC units before any paid work happens.</p>
-    <nav class="links" aria-label="Proof Bundle quote links">
-      <a href="{public}/proof-pack/bundle">Proof Bundles</a>
-      <a href="{request_page}">Request Bundle</a>
-      <a href="{quote_api}">Open JSON Quote</a>
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{public}/operator/leads">Private Leads</a>
-      <a href="{public}/docs">Docs</a>
-    </nav>
     <form method="get" action="/proof-pack/bundle/quote">
       <input type="hidden" name="source" value="{html.escape(source)}">
       <label>Source URLs
@@ -6034,18 +6401,14 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
         <button type="submit">Quote</button>
       </div>
     </form>
-    <div class="cta">
-      <a href="{request_page}">Request Bundle</a>
-      <a href="{payment_url}">Payment Link</a>
-      <a href="{quote_api}">JSON Quote</a>
-    </div>
+    {actions}
     <div class="grid">
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Price</strong><br>{html.escape(str(quote["price_usdc"]))} USDC<br><code>{html.escape(str(quote["amount_units"]))}</code> units</div>
       <div class="box"><strong>Sources</strong><br>{html.escape(str(quote["target_count"]))} of {html.escape(str(quote["source_limit"]))}</div>
       <div class="box"><strong>Cached Sources</strong><br>{html.escape(str(quote["cached_sources_count"]))}</div>
     </div>
-    <h2>Payment Link</h2>
+    <h2>Payment Or Request Path</h2>
     <pre>{payment_url}</pre>
     <h2>Immediate Single-Source Endpoint</h2>
     <pre>POST {single_source_endpoint}?pack=standard</pre>
@@ -6093,6 +6456,24 @@ def build_proof_pack_html() -> str:
         "</tr>"
         for pack, price in PROOF_PACK_PRICING_USDC.items()
     )
+    nav = site_nav_html("Proof Packs")
+    actions = action_bar_html(
+        [
+            ("View Sample", sample_url),
+            ("Get Quote", quote_url),
+            ("Request Proof Pack", request_url),
+            ("Quote Bundle", bundle_quote_url),
+        ],
+        [
+            ("Try Mini Preview", preview_url),
+            ("Proof Bundles", bundle_url),
+            ("Proof Pro", pro_url),
+            ("Proof Team", team_url),
+            ("Quote API", f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard"),
+            ("x402 Discovery", f"{PUBLIC_BASE_URL}/.well-known/x402"),
+            ("Resources", f"{PUBLIC_BASE_URL}/discovery/resources"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -6135,35 +6516,15 @@ def build_proof_pack_html() -> str:
     pre {{ overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
     table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>AxonGate Proof Packs</h1>
     <p class="summary">Paid, citation-backed evidence reports for agent builders. Send a public source URL and a question; AxonGate returns a compact answer, executive summary, key claims, citations, risks, source hash, payment metadata, and UEG receipt.</p>
-    <nav class="links" aria-label="Proof Pack links">
-      <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard">Quote Page</a>
-      <a href="{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard">Quote API</a>
-      <a href="{preview_url}">Mini Preview</a>
-      <a href="{request_url}">Request Report</a>
-      <a href="{bundle_url}">Proof Bundles</a>
-      <a href="{sample_url}">Sample Report</a>
-      <a href="{sample_api_url}">Sample JSON</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{public}/quickstart">Quickstart</a>
-      <a href="{public}/operator">Operator</a>
-      <a href="{public}/.well-known/x402">x402 Discovery</a>
-      <a href="{public}/discovery/resources">Resources</a>
-    </nav>
-    <div class="cta">
-      <a href="{sample_url}">View Sample</a>
-      <a href="{preview_url}">Try Mini Preview</a>
-      <a href="{quote_url}">Get Quote</a>
-      <a href="{request_url}">Request Proof Pack</a>
-      <a href="{bundle_quote_url}">Quote Bundle</a>
-      <a href="{pro_url}">Proof Pro</a>
-      <a href="{team_url}">Proof Team</a>
-    </div>
+    {actions}
 
     <div class="grid">
       <div class="box"><strong>Buyer</strong><br>Agent builders who need source-backed claims.</div>
@@ -6173,16 +6534,18 @@ def build_proof_pack_html() -> str:
     </div>
 
     <h2>Pricing</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Pack</th><th>Price</th><th>USDC Units</th><th>Policy</th></tr></thead>
       <tbody>{pack_rows}</tbody>
     </table>
+    </div>
 
     <h2>Quote</h2>
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;question=What%20does%20this%20source%20establish%3F&amp;pack=standard&amp;source=docs"</pre>
 
     <h2>Proof Bundles</h2>
-    <p>When a buyer has several sources or wants an agent-launch evidence set, route them to Proof Bundles instead of a single Proof Pack. Bundles quote at higher values and capture demand before batch delivery is automated.</p>
+    <p>When a buyer has several sources or wants an agent-launch evidence set, route them to Proof Bundles. Bundles quote multi-source work clearly and capture demand before batch delivery is automated.</p>
     <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
 
     <h2>No-Spend Sample</h2>
@@ -6237,6 +6600,21 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
         for citation in sample["citations"]
     )
     risk_items = "\n".join(f"<li>{html.escape(risk)}</li>" for risk in sample["risks"])
+    nav = site_nav_html("Proof Packs")
+    actions = action_bar_html(
+        [
+            ("Get Live Quote", quote_api),
+            ("Try Mini Preview", preview_url),
+            ("Request This Report", request_url),
+        ],
+        [
+            ("Sample JSON", sample_api),
+            ("Probe Payment Terms", paid_endpoint),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+            ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
+            ("Resources", f"{PUBLIC_BASE_URL}/discovery/resources"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -6280,28 +6658,15 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
     table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
     th {{ color: var(--text); }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>Proof Pack Sample</h1>
     <p class="summary">This is a no-spend preview of the report shape buyers get from the paid Proof Pack endpoint. It uses embedded sample source material, skips supplier work, and never calls the LLM.</p>
-    <nav class="links" aria-label="Sample links">
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{sample_api}">Sample JSON</a>
-      <a href="{preview_url}">Mini Preview</a>
-      <a href="{quote_api}">Quote API</a>
-      <a href="{request_url}">Request Report</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{public}/quickstart">Quickstart</a>
-      <a href="{public}/discovery/resources">Resources</a>
-    </nav>
-    <div class="cta">
-      <a href="{quote_api}">Get Live Quote</a>
-      <a href="{preview_url}">Try Mini Preview</a>
-      <a href="{request_url}">Request This Report</a>
-      <a href="{paid_endpoint}">Probe Payment Terms</a>
-    </div>
+    {actions}
 
     <div class="grid">
       <div class="box"><strong>Status</strong><br><code>{html.escape(sample["status"])}</code></div>
@@ -6317,16 +6682,20 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
     <p>{html.escape(sample["executive_summary"])}</p>
 
     <h2>Key Claims</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Claim</th><th>Citations</th><th>Confidence</th></tr></thead>
       <tbody>{claim_rows}</tbody>
     </table>
+    </div>
 
     <h2>Citations</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>ID</th><th>Excerpt</th></tr></thead>
       <tbody>{citation_rows}</tbody>
     </table>
+    </div>
 
     <h2>Risks</h2>
     <ul>{risk_items}</ul>
@@ -6590,6 +6959,55 @@ def build_docs_html() -> str:
             indent=2,
         )
     )
+    nav = site_nav_html("Docs")
+    discovery_links = link_cluster_html(
+        [
+            (
+                "Product",
+                [
+                    ("Proof Packs", f"{PUBLIC_BASE_URL}/proof-pack"),
+                    ("Proof Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+                    ("Proof Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
+                    ("Proof Preview", f"{PUBLIC_BASE_URL}/proof-pack/preview"),
+                    ("Proof Quote", f"{PUBLIC_BASE_URL}/proof-pack/quote"),
+                    ("Proof Request", f"{PUBLIC_BASE_URL}/proof-pack/request"),
+                ],
+            ),
+            (
+                "Discovery",
+                [
+                    ("Manifest", f"{PUBLIC_BASE_URL}/manifest.json"),
+                    ("Agent card", f"{PUBLIC_BASE_URL}/.well-known/agent.json"),
+                    ("x402 discovery", f"{PUBLIC_BASE_URL}/.well-known/x402"),
+                    ("Resource listing", f"{PUBLIC_BASE_URL}/discovery/resources"),
+                    ("llms.txt", f"{PUBLIC_BASE_URL}/llms.txt"),
+                    ("Sitemap", f"{PUBLIC_BASE_URL}/sitemap.xml"),
+                ],
+            ),
+            (
+                "Operators",
+                [
+                    ("Operator dashboard", f"{PUBLIC_BASE_URL}/operator"),
+                    ("Private leads", f"{PUBLIC_BASE_URL}/operator/leads"),
+                    ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
+                    ("Paid test guide", f"{PUBLIC_BASE_URL}/paid-test"),
+                    ("Quote", f"{PUBLIC_BASE_URL}/quote"),
+                    ("Demo", f"{PUBLIC_BASE_URL}/demo"),
+                ],
+            ),
+            (
+                "Examples",
+                [
+                    ("OpenAPI JSON", f"{PUBLIC_BASE_URL}/openapi.json"),
+                    ("Swagger UI", f"{PUBLIC_BASE_URL}/swagger"),
+                    ("Python client", f"{GITHUB_REPO_URL}/blob/main/examples/python_client.py"),
+                    ("cURL examples", f"{GITHUB_REPO_URL}/blob/main/examples/curl.md"),
+                    ("Paid buyer", f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs"),
+                    ("MCP guide", f"{GITHUB_REPO_URL}/blob/main/examples/mcp.md"),
+                ],
+            ),
+        ]
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -6651,42 +7069,16 @@ def build_docs_html() -> str:
     th {{ color: var(--text); }}
     td {{ color: var(--muted); }}
     .links a {{ display: inline-block; margin: 0 14px 10px 0; }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>AxonGate</h1>
     <p class="summary">The Clean Context Broker is an x402-paid Web-to-Markdown API for agents that need token-efficient public web context. It runs on Base mainnet, accepts USDC, and checks dynamic unit economics before supplier work.</p>
 
-    <section class="links" aria-label="Discovery links">
-      <a href="{public}/manifest.json">Manifest</a>
-      <a href="{public}/.well-known/agent.json">Agent card</a>
-      <a href="{public}/.well-known/agent-card.json">Agent card alias</a>
-      <a href="{public}/.well-known/x402">x402 discovery</a>
-      <a href="{public}/.well-known/x402.json">x402 JSON</a>
-      <a href="{public}/discovery/resources">Resource listing</a>
-      <a href="{public}/llms.txt">llms.txt</a>
-      <a href="{public}/operator">Operator dashboard</a>
-      <a href="{public}/operator/leads">Private leads</a>
-      <a href="{public}/quickstart">Quickstart</a>
-      <a href="{public}/paid-test">Paid test guide</a>
-      <a href="{public}/quote">Quote</a>
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{public}/proof-pack/sample">Proof Sample</a>
-      <a href="{public}/proof-pack/preview">Proof Preview</a>
-      <a href="{public}/proof-pack/quote">Proof Quote</a>
-      <a href="{public}/proof-pack/request">Proof Request</a>
-      <a href="{public}/proof-pack/bundle">Proof Bundles</a>
-      <a href="{public}/proof-pack/bundle/quote">Bundle Quote</a>
-      <a href="{public}/demo">Demo</a>
-      <a href="{public}/openapi.json">OpenAPI JSON</a>
-      <a href="{public}/swagger">Swagger UI</a>
-      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/python_client.py">Python client</a>
-      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/curl.md">cURL examples</a>
-      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/paid_buyer.mjs">Paid buyer</a>
-      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/axongate_mcp.mjs">MCP server</a>
-      <a href="{html.escape(GITHUB_REPO_URL)}/blob/main/examples/mcp.md">MCP guide</a>
-    </section>
+    {discovery_links}
 
     <h2>Service Contract</h2>
     <div class="grid">
@@ -6700,17 +7092,21 @@ def build_docs_html() -> str:
 
     <h2>Pricing</h2>
     <p>The recommended tier for production agent calls is <code>{html.escape(RECOMMENDED_TIER)}</code>. Starter is available for first paid conversion on the sample target or existing cache; cached, basic, fresh, and deep cover repeat reads and live supplier-backed workloads.</p>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>Cache policy</th></tr></thead>
       <tbody>{tiers_rows}</tbody>
     </table>
+    </div>
 
     <h2>Proof Packs</h2>
     <p>Proof Packs are paid, citation-backed evidence reports for agent builders. Use the no-spend sample to inspect the report shape, use the quote API before spending, capture request intent when a buyer is not ready to pay yet, then POST to the x402 endpoint with <code>?pack=</code> or <code>X-AxonGate-Pack</code> so the payment challenge matches the requested pack.</p>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Pack</th><th>Price</th><th>Policy</th></tr></thead>
       <tbody>{proof_pack_rows}</tbody>
     </table>
+    </div>
     <pre>curl "{public}/v1/proof-pack/sample?source=docs"</pre>
     <p>Mini preview page: <a href="{public}/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs">{public}/proof-pack/preview</a></p>
     <pre>curl "{public}/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs"</pre>
@@ -6726,11 +7122,13 @@ def build_docs_html() -> str:
     <pre>{proof_curl_example}</pre>
 
     <h2>Proof Bundles</h2>
-    <p>Proof Bundles are higher-ticket multi-source evidence requests for buyers who need a cited source set rather than one page. The v1 path is no-spend quote and lead capture, with external payment links when configured; immediate paid delivery still uses single-source x402 Proof Packs.</p>
+    <p>Proof Bundles are multi-source evidence requests for buyers who need a cited source set rather than one page. The v1 path is no-spend quote and lead capture, with external payment links when configured; immediate paid delivery still uses single-source x402 Proof Packs.</p>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Bundle</th><th>Price</th><th>Sources</th><th>Policy</th></tr></thead>
       <tbody>{proof_bundle_rows}</tbody>
     </table>
+    </div>
     <p>Human bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
     <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
     <pre>curl -X POST "{public}/v1/proof-pack/bundle/leads" \\
@@ -7024,6 +7422,8 @@ def build_operator_dashboard_html(
       header {{ display: block; }}
       .links {{ justify-content: flex-start; margin-top: 14px; }}
       .split {{ grid-template-columns: 1fr; }}
+      table {{ display: block; max-width: 100%; overflow-x: auto; }}
+      th, td {{ white-space: nowrap; }}
     }}
   </style>
 </head>
@@ -7137,6 +7537,20 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
         probe_url = esc(lead.get("payment_probe_url"))
         paid_endpoint = esc(lead.get("paid_endpoint"))
         buyer_command = esc(lead.get("buyer_command"))
+        payment_links = []
+        if preview_page:
+            payment_links.append(f'<a href="{preview_page}">Preview</a>')
+        if quote_page:
+            payment_links.append(f'<a href="{quote_page}">Quote</a>')
+        if request_page:
+            payment_links.append(f'<a href="{request_page}">Request</a>')
+        if payment_url:
+            payment_links.append(f'<a href="{payment_url}">Payment</a>')
+        if probe_url:
+            payment_links.append(f'<a href="{probe_url}">Probe</a>')
+        if paid_endpoint:
+            payment_links.append(f"<code>{paid_endpoint}</code>")
+        payment_links_html = "<br>".join(payment_links) or "<small>No payment path stored.</small>"
         target_urls = lead.get("target_urls") if isinstance(lead.get("target_urls"), list) else []
         if target_urls:
             target_links = "<br>".join(
@@ -7156,7 +7570,7 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
             f"<td>{esc(lead.get('source'))}</td>"
             f"<td>{target_links}<br><small>{esc(lead.get('question'))}</small></td>"
             f"<td>{esc(lead.get('use_case'))}<br><small>{esc(lead.get('budget_usdc'))}</small><br><small>{esc(lead.get('notes'))}</small></td>"
-            f"<td><a href=\"{preview_page}\">Preview</a><br><a href=\"{quote_page}\">Quote</a><br><a href=\"{request_page}\">Request</a><br><a href=\"{payment_url}\">Payment</a><br><a href=\"{probe_url}\">Probe</a><br><code>{paid_endpoint}</code></td>"
+            f"<td>{payment_links_html}</td>"
             f"<td><pre>{buyer_command}</pre></td>"
             "</tr>"
         )
@@ -7378,6 +7792,25 @@ npm run paid:buyer -- \\
   }
 }"""
     )
+    nav = site_nav_html("Quickstart")
+    actions = action_bar_html(
+        [
+            ("Paid Test", f"{PUBLIC_BASE_URL}/paid-test"),
+            ("Get Quote", f"{PUBLIC_BASE_URL}/quote"),
+            ("Proof Packs", f"{PUBLIC_BASE_URL}/proof-pack"),
+        ],
+        [
+            ("Demo", f"{PUBLIC_BASE_URL}/demo"),
+            ("Proof Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
+            ("Proof Preview", f"{PUBLIC_BASE_URL}/proof-pack/preview"),
+            ("Proof Quote", f"{PUBLIC_BASE_URL}/proof-pack/quote"),
+            ("Proof Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
+            ("Buyer Script", f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs"),
+            ("MCP Server", f"{GITHUB_REPO_URL}/blob/main/examples/axongate_mcp.mjs"),
+        ],
+    )
 
     return f"""<!doctype html>
 <html lang="en">
@@ -7436,26 +7869,15 @@ npm run paid:buyer -- \\
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
     th {{ color: var(--text); }}
     td {{ color: var(--muted); }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>AxonGate Quickstart</h1>
     <p>Turn a public URL into clean RAG-ready markdown or a citation-backed Proof Pack with one paid x402 call. Use the terminal buyer for a direct smoke test, or attach the MCP server so an agent can call AxonGate as a tool.</p>
-    <nav class="links" aria-label="Quickstart links">
-      <a href="{public}/demo">Demo</a>
-      <a href="{public}/paid-test">Paid Test</a>
-      <a href="{public}/quote">Quote</a>
-      <a href="{public}/proof-pack">Proof Packs</a>
-      <a href="{public}/proof-pack/sample">Proof Sample</a>
-      <a href="{public}/proof-pack/preview">Proof Preview</a>
-      <a href="{public}/proof-pack/quote">Proof Quote</a>
-      <a href="{public}/proof-pack/bundle">Proof Bundles</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{public}/operator">Operator</a>
-      <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
-      <a href="{github}/blob/main/examples/axongate_mcp.mjs">MCP Server</a>
-    </nav>
+    {actions}
 
     <div class="steps">
       <div class="step"><strong>1. Fund burner wallet</strong>Use Base USDC. Starter costs <code>{starter_price} USDC</code>; fresh costs <code>{fresh_price} USDC</code>.</div>
@@ -7484,6 +7906,7 @@ npm run paid:buyer -- \\
     <pre>{mcp_proof_paid}</pre>
 
     <h2>Pricing</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Tier</th><th>Price</th><th>Best For</th></tr></thead>
       <tbody>
@@ -7494,6 +7917,7 @@ npm run paid:buyer -- \\
         <tr><td><code>deep</code></td><td>{html.escape(str(TIER_PRICING_USDC["deep"]))} USDC</td><td>Higher-value calls with a short cache window</td></tr>
       </tbody>
     </table>
+    </div>
   </main>
 </body>
 </html>"""
@@ -7542,6 +7966,18 @@ REPLAY
   "http_status": 402,
   "detail": "Payment proof has already been processed..."
 }"""
+    )
+    nav = site_nav_html("Quickstart")
+    actions = action_bar_html(
+        [
+            ("Operator Dashboard", f"{PUBLIC_BASE_URL}/operator"),
+            ("Metrics JSON", f"{PUBLIC_BASE_URL}/metrics"),
+            ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
+        ],
+        [
+            ("Docs", f"{PUBLIC_BASE_URL}/docs"),
+            ("Buyer Script", f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs"),
+        ],
     )
 
     return f"""<!doctype html>
@@ -7598,19 +8034,15 @@ REPLAY
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
     th {{ color: var(--text); }}
     td {{ color: var(--muted); }}
+    {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
+    {nav}
     <h1>AxonGate Paid Test</h1>
     <p>Run a real Base USDC x402 smoke test against production, with a bounded spend confirmation and replay check.</p>
-    <nav class="links" aria-label="Paid test links">
-      <a href="{public}/operator">Operator Dashboard</a>
-      <a href="{public}/metrics">Metrics JSON</a>
-      <a href="{public}/quickstart">Quickstart</a>
-      <a href="{public}/docs">Docs</a>
-      <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
-    </nav>
+    {actions}
 
     <p class="callout"><strong>This spends real USDC.</strong> The starter tier currently authorizes <code>{html.escape(str(TIER_PRICING_USDC[STARTER_TIER]))} USDC</code>. Use a burner wallet and keep the explicit <code>--confirm-spend</code> value in the command.</p>
 
@@ -7624,6 +8056,7 @@ REPLAY
     <pre>{expected_result}</pre>
 
     <h2>What To Check</h2>
+    <div class="table-wrap">
     <table>
       <thead><tr><th>Signal</th><th>Expected</th></tr></thead>
       <tbody>
@@ -7634,6 +8067,7 @@ REPLAY
         <tr><td>Attribution</td><td><code>/metrics</code> shows the selected source under paid, accepted, delivered, and replay rejection stages</td></tr>
       </tbody>
     </table>
+    </div>
   </main>
 </body>
 </html>"""
