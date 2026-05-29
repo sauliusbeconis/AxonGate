@@ -11,10 +11,10 @@ Basename: axongate.base.eth
 Category: Data & Context
 
 Description:
-AxonGate is an x402-paid Clean Context Broker and Proof Pack service for autonomous agents. It converts public web pages into clean, token-efficient Markdown and can return citation-backed evidence reports for agent builders.
+AxonGate is an x402-paid Clean Context Broker, Proof Pack, and Proof Bundle service for autonomous agents. It converts public web pages into clean, token-efficient Markdown and can return citation-backed evidence reports or multi-source evidence bundle quotes for agent builders.
 
 Short description:
-x402-paid Web-to-Markdown context extraction and cited Proof Packs for agent builders.
+x402-paid Web-to-Markdown extraction, cited Proof Packs, and multi-source Proof Bundles for agent builders.
 
 ## Live URLs
 
@@ -72,6 +72,18 @@ https://api.axongate.one/v1/proof-pack/leads
 Proof Pack x402 endpoint:
 https://api.axongate.one/v1/x402/proof-pack
 
+Proof Bundle page:
+https://api.axongate.one/proof-pack/bundle
+
+Proof Bundle quote page:
+https://api.axongate.one/proof-pack/bundle/quote
+
+Proof Bundle quote API:
+https://api.axongate.one/v1/proof-pack/bundle/quote
+
+Proof Bundle lead API:
+https://api.axongate.one/v1/proof-pack/bundle/leads
+
 Standard x402 endpoint:
 https://api.axongate.one/v1/x402/access
 
@@ -101,6 +113,10 @@ Endpoint paths:
 /v1/proof-pack/quote
 /v1/proof-pack/leads
 /v1/x402/proof-pack
+/proof-pack/bundle
+/proof-pack/bundle/quote
+/v1/proof-pack/bundle/quote
+/v1/proof-pack/bundle/leads
 ```
 
 ## Pricing
@@ -121,6 +137,12 @@ Proof Pack standard: 0.25 USDC
 
 Proof Pack deep: 1.00 USDC
 
+Proof Bundle scout: 2.00 USDC
+
+Proof Bundle builder: 7.00 USDC
+
+Proof Bundle audit: 20.00 USDC
+
 Network: Base mainnet, `eip155:8453`
 
 Asset: USDC, `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
@@ -130,7 +152,7 @@ Pay to:
 
 ## Search Keywords
 
-x402, Base, USDC, web scraping, Web-to-Markdown, markdown extraction, RAG context, autonomous research, LLM context preparation, Proof Pack, citations, evidence report, paid API, agent marketplace
+x402, Base, USDC, web scraping, Web-to-Markdown, markdown extraction, RAG context, autonomous research, LLM context preparation, Proof Pack, Proof Bundle, citations, evidence report, multi-source evidence, paid API, agent marketplace
 
 ## Source Attribution
 
@@ -179,6 +201,25 @@ For standard x402 clients, set the tier with either `?tier=basic` or the `X-Axon
 
 For standard x402 clients, set the Proof Pack with either `?pack=standard` or the `X-AxonGate-Pack` header so payment requirements match the requested pack.
 
+## Proof Bundle Lead Payload
+
+```json
+{
+  "contact": "builder@example.com",
+  "target_urls": [
+    "https://www.iana.org/domains/reserved",
+    "https://example.com"
+  ],
+  "question": "Which claims can our agent safely cite across these sources?",
+  "bundle": "builder",
+  "use_case": "Agent launch due diligence",
+  "budget_usdc": "20/month",
+  "source": "marketplace"
+}
+```
+
+Proof Bundles are no-spend quote and lead-capture surfaces in v1. They raise average order value by routing multi-source buyers toward scout, builder, or audit packages before a batch x402 delivery endpoint is added.
+
 ## Agent Bazaar Fields
 
 Skill Name:
@@ -194,7 +235,7 @@ Description:
 AxonGate converts public web pages into clean, token-efficient Markdown and citation-backed Proof Packs for autonomous agents, RAG pipelines, and LLM context preparation. It is x402-native on Base with USDC pay-per-use pricing and machine-readable discovery endpoints.
 
 Price per Call:
-0.012 starter, 0.015 cached, 0.02 basic, 0.03 fresh, 0.05 deep; Proof Packs are 0.10 quick, 0.25 standard, 1.00 deep
+0.012 starter, 0.015 cached, 0.02 basic, 0.03 fresh, 0.05 deep; Proof Packs are 0.10 quick, 0.25 standard, 1.00 deep; Proof Bundles quote at 2.00 scout, 7.00 builder, 20.00 audit
 
 x402 Endpoint URL:
 https://api.axongate.one/v1/x402/access?tier=fresh&source=agent-bazaar

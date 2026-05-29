@@ -18,6 +18,7 @@ payment challenges, paid attempts, accepted payments, and deliveries.
 | `payanagent-starter` | `https://api.axongate.one/v1/x402/access?tier=starter&source=payanagent-starter` | `https://api.axongate.one/docs?source=payanagent-starter` | `https://api.axongate.one/paid-test?source=payanagent-starter` |
 | `payanagent` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=payanagent` | `https://api.axongate.one/docs?source=payanagent` | `https://api.axongate.one/paid-test?source=payanagent` |
 | `payanagent-proof` | `https://api.axongate.one/v1/x402/proof-pack?pack=standard&source=payanagent` | `https://api.axongate.one/proof-pack?source=payanagent` | `https://api.axongate.one/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=payanagent` |
+| `payanagent-bundle` | `https://api.axongate.one/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=builder&source=payanagent` | `https://api.axongate.one/proof-pack/bundle?source=payanagent` | `https://api.axongate.one/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=payanagent` |
 | `agora402` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=agora402` | `https://api.axongate.one/docs?source=agora402` | `https://api.axongate.one/paid-test?source=agora402` |
 | `agent-bazaar` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=agent-bazaar` | `https://api.axongate.one/docs?source=agent-bazaar` | `https://api.axongate.one/paid-test?source=agent-bazaar` |
 | `the402` | `https://api.axongate.one/v1/x402/access?tier=fresh&source=the402` | `https://api.axongate.one/docs?source=the402` | `https://api.axongate.one/paid-test?source=the402` |
@@ -34,6 +35,8 @@ https://api.axongate.one/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.or
 https://api.axongate.one/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&pack=quick&source=reviewer
 https://api.axongate.one/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=reviewer
 https://api.axongate.one/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick&source=reviewer
+https://api.axongate.one/proof-pack/bundle?source=reviewer
+https://api.axongate.one/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=reviewer
 ```
 
 Private lead inbox for operators:
@@ -92,6 +95,21 @@ Proof Pack service payload:
   "priceInCents": 25,
   "endpoint": "https://api.axongate.one/v1/x402/proof-pack?pack=standard&source=payanagent",
   "tags": ["x402", "base", "usdc", "proof-pack", "citations", "evidence", "agent-builders"]
+}
+```
+
+Proof Bundle service payload:
+
+```json
+{
+  "name": "AxonGate Proof Bundles",
+  "description": "Higher-value multi-source evidence bundle quotes and lead capture for agent builders. Validates public URLs, returns exact USDC units, and routes buyers to payment/request follow-up.",
+  "serviceType": "api",
+  "category": "Data",
+  "pricingModel": "per_request",
+  "priceInCents": 700,
+  "endpoint": "https://api.axongate.one/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=builder&source=payanagent",
+  "tags": ["proof-bundle", "proof-pack", "citations", "evidence", "agent-builders"]
 }
 ```
 

@@ -105,6 +105,37 @@ curl -sS "$AXONGATE_BASE_URL/v1/operator/leads?limit=25" \
   -H "X-AxonGate-Operator-Token: $AXONGATE_OPERATOR_TOKEN"
 ```
 
+## Proof Bundle Quote And Lead Capture
+
+Use this when a buyer has several sources and should be routed into a higher
+value package instead of one single-source report. This is still no-spend: it
+validates public URLs, quotes exact USDC units, and stores demand for follow-up.
+
+```bash
+curl "$AXONGATE_BASE_URL/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&question=Which%20claims%20can%20our%20agent%20cite%3F&bundle=scout&source=$AXONGATE_SOURCE"
+```
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&question=Which%20claims%20can%20our%20agent%20cite%3F&bundle=scout&source=$AXONGATE_SOURCE"
+```
+
+```bash
+curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/bundle/leads" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"contact\": \"builder@example.com\",
+    \"target_urls\": [
+      \"https://www.iana.org/domains/reserved\",
+      \"https://example.com\"
+    ],
+    \"question\": \"Which claims can our agent safely cite across these sources?\",
+    \"bundle\": \"scout\",
+    \"use_case\": \"Agent launch due diligence\",
+    \"budget_usdc\": \"20/month\",
+    \"source\": \"$AXONGATE_SOURCE\"
+  }"
+```
+
 ## Standard x402 Paid Request
 
 For a real Base USDC smoke test from a burner wallet, use the repo-native buyer:

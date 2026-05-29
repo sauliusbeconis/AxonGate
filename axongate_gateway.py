@@ -79,7 +79,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid Clean Context Broker for Web-to-Markdown extraction on Base.",
-    version="1.2.0",
+    version="1.3.0",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -187,6 +187,8 @@ ATTRIBUTION_FUNNEL_STAGES = (
     "proof_pack_previews",
     "proof_pack_quotes",
     "proof_pack_leads",
+    "proof_bundle_quotes",
+    "proof_bundle_leads",
     "proof_pack_requests",
     "proof_pack_delivery_success",
 )
@@ -224,6 +226,22 @@ PROOF_PACK_INTERNAL_TIERS = {
 }
 PROOF_PRO_PAYMENT_URL = os.getenv("AXONGATE_PROOF_PRO_PAYMENT_URL", "").strip()
 PROOF_TEAM_PAYMENT_URL = os.getenv("AXONGATE_PROOF_TEAM_PAYMENT_URL", "").strip()
+DEFAULT_PROOF_BUNDLE = "builder"
+PROOF_BUNDLE_PRICING_USDC = {
+    "scout": Decimal(os.getenv("AXONGATE_PROOF_BUNDLE_SCOUT_PRICE_USDC", "2.00")),
+    DEFAULT_PROOF_BUNDLE: Decimal(os.getenv("AXONGATE_PROOF_BUNDLE_BUILDER_PRICE_USDC", "7.00")),
+    "audit": Decimal(os.getenv("AXONGATE_PROOF_BUNDLE_AUDIT_PRICE_USDC", "20.00")),
+}
+PROOF_BUNDLE_SOURCE_LIMITS = {
+    "scout": int(os.getenv("AXONGATE_PROOF_BUNDLE_SCOUT_SOURCE_LIMIT", "3")),
+    DEFAULT_PROOF_BUNDLE: int(os.getenv("AXONGATE_PROOF_BUNDLE_BUILDER_SOURCE_LIMIT", "10")),
+    "audit": int(os.getenv("AXONGATE_PROOF_BUNDLE_AUDIT_SOURCE_LIMIT", "25")),
+}
+PROOF_BUNDLE_PAYMENT_URLS = {
+    "scout": os.getenv("AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL", "").strip(),
+    DEFAULT_PROOF_BUNDLE: os.getenv("AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL", "").strip(),
+    "audit": os.getenv("AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL", "").strip(),
+}
 LLM_ENABLED = os.getenv("AXONGATE_LLM_ENABLED", "false").lower() in {"1", "true", "yes"}
 LLM_API_KEY = os.getenv("AXONGATE_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 LLM_BASE_URL = os.getenv("AXONGATE_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -322,6 +340,9 @@ metrics: dict[str, int] = {
     "discovery_proof_pack_preview_hits_total": 0,
     "discovery_proof_pack_quote_hits_total": 0,
     "discovery_proof_pack_request_hits_total": 0,
+    "discovery_proof_bundle_hits_total": 0,
+    "discovery_proof_bundle_quote_hits_total": 0,
+    "discovery_proof_bundle_request_hits_total": 0,
     "discovery_demo_hits_total": 0,
     "discovery_robots_hits_total": 0,
     "discovery_sitemap_hits_total": 0,
@@ -357,6 +378,9 @@ metrics: dict[str, int] = {
     "proof_pack_lead_errors_total": 0,
     "proof_pack_lead_notifications_total": 0,
     "proof_pack_lead_notification_errors_total": 0,
+    "proof_bundle_quotes_total": 0,
+    "proof_bundle_leads_total": 0,
+    "proof_bundle_lead_errors_total": 0,
     "proof_pack_requests_total": 0,
     "proof_pack_llm_success_total": 0,
     "proof_pack_llm_fallback_total": 0,
@@ -453,6 +477,38 @@ class ProofPackLeadRequest(BaseModel):
                     "budget_usdc": "10/month",
                     "source": "proof-pack-request",
                     "notes": "Need a first report before setting up x402 payment.",
+                }
+            ]
+        }
+    }
+
+
+class ProofBundleLeadRequest(BaseModel):
+    contact: str = Field(..., description="Email, Telegram, X handle, or other reply path")
+    target_urls: list[str] = Field(..., description="Public source URLs to bundle into one evidence package")
+    question: Optional[str] = Field(None, description="Bundle-level evidence objective")
+    bundle: str = Field(DEFAULT_PROOF_BUNDLE, description="Bundle level: scout, builder, or audit")
+    use_case: Optional[str] = Field(None, description="How the buyer plans to use the bundle")
+    budget_usdc: Optional[str] = Field(None, description="Optional budget or subscription intent")
+    source: Optional[str] = Field(None, description="Attribution source for this request")
+    notes: Optional[str] = Field(None, description="Optional buyer context")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "contact": "builder@example.com",
+                    "target_urls": [
+                        "https://www.iana.org/domains/reserved",
+                        "https://example.com",
+                        "https://example.org",
+                    ],
+                    "question": "Which claims can our agent safely cite across these sources?",
+                    "bundle": DEFAULT_PROOF_BUNDLE,
+                    "use_case": "Agent launch due diligence",
+                    "budget_usdc": "20/month",
+                    "source": "proof-bundle-request",
+                    "notes": "Need a multi-source evidence pack before wiring recurring calls.",
                 }
             ]
         }
@@ -911,6 +967,8 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_preview_cache_hits": values.get("proof_pack_preview_cache_hits_total", 0),
         "proof_pack_quotes": values.get("proof_pack_quotes_total", 0),
         "proof_pack_leads": values.get("proof_pack_leads_total", 0),
+        "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
+        "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
         "proof_pack_requests": values.get("proof_pack_requests_total", 0),
         "proof_pack_llm_success": values.get("proof_pack_llm_success_total", 0),
         "proof_pack_llm_fallback": values.get("proof_pack_llm_fallback_total", 0),
@@ -1079,6 +1137,10 @@ def proof_pack_names() -> str:
     return ", ".join(PROOF_PACK_PRICING_USDC.keys())
 
 
+def proof_bundle_names() -> str:
+    return ", ".join(PROOF_BUNDLE_PRICING_USDC.keys())
+
+
 def normalize_tier(tier: Optional[str]) -> str:
     normalized = (tier or RECOMMENDED_TIER).strip().lower()
     if normalized not in TIER_PRICING_USDC:
@@ -1090,6 +1152,13 @@ def normalize_proof_pack(pack: Optional[str]) -> str:
     normalized = (pack or DEFAULT_PROOF_PACK).strip().lower()
     if normalized not in PROOF_PACK_PRICING_USDC:
         raise PaymentValidationError(f"Unsupported Proof Pack. Use {proof_pack_names()}.")
+    return normalized
+
+
+def normalize_proof_bundle(bundle: Optional[str]) -> str:
+    normalized = (bundle or DEFAULT_PROOF_BUNDLE).strip().lower()
+    if normalized not in PROOF_BUNDLE_PRICING_USDC:
+        raise PaymentValidationError(f"Unsupported Proof Bundle. Use {proof_bundle_names()}.")
     return normalized
 
 
@@ -1109,6 +1178,18 @@ def price_for_proof_pack(pack: Optional[str]) -> Decimal:
     return PROOF_PACK_PRICING_USDC[normalize_proof_pack(pack)]
 
 
+def price_for_proof_bundle(bundle: Optional[str]) -> Decimal:
+    return PROOF_BUNDLE_PRICING_USDC[normalize_proof_bundle(bundle)]
+
+
+def proof_bundle_source_limit(bundle: Optional[str]) -> int:
+    return PROOF_BUNDLE_SOURCE_LIMITS[normalize_proof_bundle(bundle)]
+
+
+def proof_bundle_payment_url(bundle: Optional[str]) -> str:
+    return PROOF_BUNDLE_PAYMENT_URLS.get(normalize_proof_bundle(bundle), "")
+
+
 def proof_pack_internal_tier(pack: Optional[str]) -> str:
     return PROOF_PACK_INTERNAL_TIERS[normalize_proof_pack(pack)]
 
@@ -1120,6 +1201,16 @@ def proof_pack_cache_policy(pack: str) -> str:
     if normalized_pack == "deep":
         return "deep evidence pack with short-cache source material and fresh-by-default refresh"
     return "cache-aware source read with LLM-assisted evidence synthesis when configured"
+
+
+def proof_bundle_policy(bundle: str) -> str:
+    normalized_bundle = normalize_proof_bundle(bundle)
+    limit = proof_bundle_source_limit(normalized_bundle)
+    if normalized_bundle == "scout":
+        return f"up to {limit} public sources for a lightweight multi-source evidence scout"
+    if normalized_bundle == "audit":
+        return f"up to {limit} public sources for deeper agent-launch or vendor due diligence"
+    return f"up to {limit} public sources for a builder-ready evidence bundle"
 
 
 def cache_ttl_for_tier(tier: str, force_refresh: bool = False) -> int:
@@ -1527,6 +1618,10 @@ def build_x402_resource() -> dict[str, Any]:
             "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
             "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+            "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+            "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
+            "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1592,6 +1687,10 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "quoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
             "request": f"{PUBLIC_BASE_URL}/proof-pack/request",
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
+            "bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+            "bundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "bundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
+            "bundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
             "packHeader": "X-AxonGate-Pack",
             "defaultPack": DEFAULT_PROOF_PACK,
@@ -1610,6 +1709,16 @@ def build_proof_pack_resource() -> dict[str, Any]:
                 }
                 for pack, price in PROOF_PACK_PRICING_USDC.items()
             },
+            "bundlePricing": {
+                bundle: {
+                    "amount": str(usdc_units(price)),
+                    "price": f"${price}",
+                    "currency": "USDC",
+                    "sourceLimit": proof_bundle_source_limit(bundle),
+                    "policy": proof_bundle_policy(bundle),
+                }
+                for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
+            },
         },
         "inputSchema": {
             "type": "http",
@@ -1618,6 +1727,58 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "body": build_proof_pack_input_schema(),
         },
         "outputSchema": build_proof_pack_output_schema(),
+        "discoverable": True,
+    }
+
+
+def build_proof_bundle_resource() -> dict[str, Any]:
+    """Build the unpaid Proof Bundle resource object used by discovery endpoints."""
+    return {
+        "resource": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
+        "type": "http",
+        "x402Version": 2,
+        "method": "GET",
+        "accepts": [],
+        "lastUpdated": int(time.time()),
+        "metadata": {
+            "provider": "AxonGate",
+            "basename": "axongate.base.eth",
+            "category": "evidence-reports",
+            "service": "AxonGate Proof Bundles",
+            "description": "No-spend quote and lead capture for multi-source evidence bundles aimed at agent builders.",
+            "tags": ["proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture"],
+            "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+            "quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "quoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
+            "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
+            "operatorLeads": f"{PUBLIC_BASE_URL}/operator/leads",
+            "defaultBundle": DEFAULT_PROOF_BUNDLE,
+            "paymentLinkConfigured": any(bool(url) for url in PROOF_BUNDLE_PAYMENT_URLS.values()),
+            "pricing": {
+                bundle: {
+                    "amount": str(usdc_units(price)),
+                    "price": f"${price}",
+                    "currency": "USDC",
+                    "sourceLimit": proof_bundle_source_limit(bundle),
+                    "policy": proof_bundle_policy(bundle),
+                }
+                for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
+            },
+        },
+        "inputSchema": {
+            "type": "http",
+            "method": "GET",
+            "query": {
+                "target_urls": "newline, comma, or space separated public HTTP/HTTPS URLs",
+                "question": "optional evidence objective",
+                "bundle": list(PROOF_BUNDLE_PRICING_USDC.keys()),
+                "source": "optional attribution source",
+            },
+        },
+        "outputSchema": {
+            "type": "object",
+            "required": ["status", "supplier_spend", "target_urls", "bundle", "amount_units", "next_steps"],
+        },
         "discoverable": True,
     }
 
@@ -1692,6 +1853,10 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+        "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
+        "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1707,6 +1872,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "resources": [
             f"{PUBLIC_BASE_URL}/v1/x402/access",
             f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+            f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         ],
         "tiers": {
             tier: {
@@ -1725,6 +1891,16 @@ def build_x402_public_discovery() -> dict[str, Any]:
                 "cachePolicy": proof_pack_cache_policy(pack),
             }
             for pack, price in PROOF_PACK_PRICING_USDC.items()
+        },
+        "proofBundles": {
+            bundle: {
+                "price": f"${price}",
+                "amount": str(usdc_units(price)),
+                "currency": "USDC",
+                "sourceLimit": proof_bundle_source_limit(bundle),
+                "policy": proof_bundle_policy(bundle),
+            }
+            for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
         },
     }
     return payload
@@ -1777,6 +1953,8 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Proof-Pack-Quote-Page": f"{PUBLIC_BASE_URL}/proof-pack/quote",
         "X-AxonGate-Proof-Pack-Quote": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
         "X-AxonGate-Proof-Pack-Request": f"{PUBLIC_BASE_URL}/proof-pack/request",
+        "X-AxonGate-Proof-Bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+        "X-AxonGate-Proof-Bundle-Quote": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "X-AxonGate-Demo": f"{PUBLIC_BASE_URL}/demo",
         "X-AxonGate-Buyer-Example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
         "Link": (
@@ -1790,6 +1968,8 @@ def buyer_guidance_headers() -> dict[str, str]:
             f'<{PUBLIC_BASE_URL}/proof-pack/quote>; rel="proof-pack-quote-page", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/quote>; rel="proof-pack-quote", '
             f'<{PUBLIC_BASE_URL}/proof-pack/request>; rel="proof-pack-request", '
+            f'<{PUBLIC_BASE_URL}/proof-pack/bundle>; rel="proof-bundle", '
+            f'<{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote>; rel="proof-bundle-quote", '
             f'<{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs>; rel="example"'
         ),
     }
@@ -1892,6 +2072,10 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
+        "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+        "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
+        "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "paymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
         "tierQueryParam": "tier",
@@ -1923,6 +2107,15 @@ def build_openapi_payment_info() -> dict[str, Any]:
                 "cache_policy": proof_pack_cache_policy(pack),
             }
             for pack, price in PROOF_PACK_PRICING_USDC.items()
+        },
+        "proofBundles": {
+            bundle: {
+                "amount": str(usdc_units(price)),
+                "price_usdc": float(price),
+                "source_limit": proof_bundle_source_limit(bundle),
+                "policy": proof_bundle_policy(bundle),
+            }
+            for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
         },
         "challengeDiscovery": f"{PUBLIC_BASE_URL}/.well-known/x402",
         "bazaarDiscovery": f"{PUBLIC_BASE_URL}/discovery/resources",
@@ -4203,6 +4396,167 @@ def proof_pack_quote_page_url(target_url: str, question: str, pack: str, source:
     )
 
 
+def proof_bundle_question(value: Optional[str]) -> str:
+    cleaned = clean_lead_text(value, 600)
+    return cleaned or "Which source-backed claims should this bundle establish?"
+
+
+def split_bundle_target_urls(value: Any) -> list[str]:
+    """Accept newline, comma, space, or list-style target URLs for bundle forms and APIs."""
+    raw_items: list[str] = []
+    if isinstance(value, (list, tuple, set)):
+        for item in value:
+            raw_items.extend(split_bundle_target_urls(item))
+    else:
+        raw = str(value or "").strip()
+        if raw:
+            raw_items.extend(part.strip() for part in re.split(r"[\s,]+", raw) if part.strip())
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in raw_items:
+        key = item.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+    return deduped[:50]
+
+
+def proof_bundle_target_query(target_urls: list[str]) -> str:
+    return url_quote("\n".join(target_urls), safe="")
+
+
+def proof_bundle_quote_page_url(target_urls: list[str], question: str, bundle: str, source: str) -> str:
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_source = normalize_attribution_source(source)
+    return (
+        f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote?"
+        f"target_urls={proof_bundle_target_query(target_urls)}"
+        f"&question={url_quote(question, safe='')}"
+        f"&bundle={url_quote(normalized_bundle, safe='')}"
+        f"&source={url_quote(normalized_source, safe='')}"
+    )
+
+
+def proof_bundle_request_page_url(target_urls: list[str], question: str, bundle: str, source: str) -> str:
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_source = normalize_attribution_source(source)
+    return (
+        f"{PUBLIC_BASE_URL}/proof-pack/bundle?"
+        f"target_urls={proof_bundle_target_query(target_urls)}"
+        f"&question={url_quote(question, safe='')}"
+        f"&bundle={url_quote(normalized_bundle, safe='')}"
+        f"&source={url_quote(normalized_source, safe='')}"
+    )
+
+
+async def validate_proof_bundle_targets(target_urls: list[str], bundle: str) -> list[str]:
+    normalized_bundle = normalize_proof_bundle(bundle)
+    limit = proof_bundle_source_limit(normalized_bundle)
+    if not target_urls:
+        raise PaymentValidationError("Add at least one public target URL for the Proof Bundle.")
+    if len(target_urls) > limit:
+        raise PaymentValidationError(f"{normalized_bundle} bundles accept up to {limit} source URLs.")
+
+    normalized_targets: list[str] = []
+    seen: set[str] = set()
+    for target_url in target_urls:
+        normalized_target = await assert_public_target_url(target_url)
+        if normalized_target in seen:
+            continue
+        seen.add(normalized_target)
+        normalized_targets.append(normalized_target)
+
+    if not normalized_targets:
+        raise PaymentValidationError("Add at least one public target URL for the Proof Bundle.")
+    return normalized_targets
+
+
+async def proof_bundle_cache_profiles(target_urls: list[str]) -> list[dict[str, Any]]:
+    profiles: list[dict[str, Any]] = []
+    for target_url in target_urls:
+        starter_available = await get_cache_candidate_for_tier(target_url, STARTER_TIER, False) is not None
+        basic_available = await get_cache_candidate_for_tier(target_url, "basic", False) is not None
+        profiles.append(
+            {
+                "target_url": target_url,
+                "cached_source_available": bool(starter_available or basic_available),
+                "starter_sample_available": starter_available,
+                "basic_cache_available": basic_available,
+            }
+        )
+    return profiles
+
+
+async def build_proof_bundle_quote(
+    target_urls: list[str],
+    question: Optional[str] = None,
+    bundle: Optional[str] = None,
+    source: str = "proof-bundle",
+) -> dict[str, Any]:
+    """Return no-spend pricing and next steps for a multi-source Proof Bundle."""
+    normalized_source = normalize_attribution_source(source)
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_targets = await validate_proof_bundle_targets(target_urls, normalized_bundle)
+    normalized_question = proof_bundle_question(question)
+    source_profiles = await proof_bundle_cache_profiles(normalized_targets)
+    cached_sources_count = sum(1 for profile in source_profiles if profile["cached_source_available"])
+    selected_price = price_for_proof_bundle(normalized_bundle)
+    quote_page = proof_bundle_quote_page_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
+    request_page = proof_bundle_request_page_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
+    quote_api = (
+        f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote?"
+        f"target_urls={proof_bundle_target_query(normalized_targets)}"
+        f"&question={url_quote(normalized_question, safe='')}"
+        f"&bundle={url_quote(normalized_bundle, safe='')}"
+        f"&source={url_quote(normalized_source, safe='')}"
+    )
+    payment_url = proof_bundle_payment_url(normalized_bundle)
+
+    bundles: dict[str, dict[str, Any]] = {}
+    for bundle_name, price in PROOF_BUNDLE_PRICING_USDC.items():
+        bundle_quote_page = proof_bundle_quote_page_url(normalized_targets, normalized_question, bundle_name, normalized_source)
+        bundle_request_page = proof_bundle_request_page_url(normalized_targets, normalized_question, bundle_name, normalized_source)
+        bundles[bundle_name] = {
+            "price_usdc": float(price),
+            "amount_units": str(usdc_units(price)),
+            "source_limit": proof_bundle_source_limit(bundle_name),
+            "policy": proof_bundle_policy(bundle_name),
+            "payment_url": proof_bundle_payment_url(bundle_name) or bundle_request_page,
+            "quote_page": bundle_quote_page,
+            "request_page": bundle_request_page,
+        }
+
+    return {
+        "status": "proof_bundle_quote",
+        "supplier_spend": False,
+        "target_urls": normalized_targets,
+        "target_count": len(normalized_targets),
+        "question": normalized_question,
+        "source": normalized_source,
+        "bundle": normalized_bundle,
+        "price_usdc": float(selected_price),
+        "amount_units": str(usdc_units(selected_price)),
+        "source_limit": proof_bundle_source_limit(normalized_bundle),
+        "cached_sources_count": cached_sources_count,
+        "source_profiles": source_profiles,
+        "bundles": bundles,
+        "next_steps": {
+            "bundle_page": public_url("/proof-pack/bundle"),
+            "quote_page": quote_page,
+            "quote_api": quote_api,
+            "request_page": request_page,
+            "payment_url": payment_url or request_page,
+            "payment_link_configured": bool(payment_url),
+            "single_source_proof_pack_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+            "single_source_quote_api": public_url("/v1/proof-pack/quote"),
+            "operator_leads": public_url("/operator/leads"),
+            "note": "Proof Bundles are captured as higher-value leads in v1; single-source Proof Packs remain x402-paid immediately.",
+        },
+    }
+
+
 async def store_proof_pack_lead(lead: dict[str, Any]) -> str:
     """Store a Proof Pack lead in Redis with an in-memory fallback."""
     payload = json.dumps(lead, separators=(",", ":"), sort_keys=True)
@@ -4249,7 +4603,10 @@ async def proof_pack_leads_public_snapshot() -> dict[str, Any]:
     if latest:
         snapshot["latest"] = {
             "created_at": latest.get("created_at"),
+            "product": latest.get("product") or "proof_pack",
             "pack": latest.get("pack"),
+            "bundle": latest.get("bundle"),
+            "target_count": latest.get("target_count") or (len(latest.get("target_urls") or []) if latest.get("target_urls") else 1),
             "source": latest.get("source"),
             "amount_units": latest.get("amount_units"),
             "has_contact": bool(latest.get("contact")),
@@ -4333,13 +4690,16 @@ async def durable_proof_pack_leads(limit: int = 50) -> list[dict[str, Any]]:
 
 def proof_pack_lead_stats(leads: list[dict[str, Any]]) -> dict[str, Any]:
     """Summarize private lead rows without changing the stored records."""
+    by_product: dict[str, int] = {}
     by_pack: dict[str, int] = {}
     by_source: dict[str, int] = {}
     latest_created_at = 0
     total_value_usdc = Decimal("0")
     for lead in leads:
+        product = str(lead.get("product") or "proof_pack")
         pack = str(lead.get("pack") or "unknown")
         source = normalize_attribution_source(str(lead.get("source") or "direct"))
+        by_product[product] = by_product.get(product, 0) + 1
         by_pack[pack] = by_pack.get(pack, 0) + 1
         by_source[source] = by_source.get(source, 0) + 1
         try:
@@ -4353,6 +4713,7 @@ def proof_pack_lead_stats(leads: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "retained": len(leads),
         "latest_created_at": latest_created_at or None,
+        "by_product": dict(sorted(by_product.items())),
         "by_pack": dict(sorted(by_pack.items())),
         "by_source": dict(sorted(by_source.items())),
         "indicative_value_usdc": float(total_value_usdc),
@@ -4372,18 +4733,23 @@ async def send_proof_pack_lead_notification(lead: dict[str, Any]) -> None:
     if not PROOF_PACK_LEAD_WEBHOOK_URL:
         return
 
+    product = str(lead.get("product") or "proof_pack")
     payload = {
         "agent": "AxonGate",
-        "event": "proof_pack_lead_received",
+        "event": "proof_bundle_lead_received" if product == "proof_bundle" else "proof_pack_lead_received",
         "public_base_url": PUBLIC_BASE_URL,
         "timestamp": int(time.time()),
         "lead": {
             "id": lead.get("id"),
             "created_at": lead.get("created_at"),
+            "product": product,
             "contact": lead.get("contact"),
             "target_url": lead.get("target_url"),
+            "target_urls": lead.get("target_urls"),
+            "target_count": lead.get("target_count"),
             "question": lead.get("question"),
             "pack": lead.get("pack"),
+            "bundle": lead.get("bundle"),
             "use_case": lead.get("use_case"),
             "budget_usdc": lead.get("budget_usdc"),
             "notes": lead.get("notes"),
@@ -4395,6 +4761,8 @@ async def send_proof_pack_lead_notification(lead: dict[str, Any]) -> None:
             "operator_leads": f"{PUBLIC_BASE_URL}/operator/leads",
             "preview_page": lead.get("preview_page"),
             "quote_page": lead.get("quote_page"),
+            "request_page": lead.get("request_page"),
+            "payment_url": lead.get("payment_url"),
             "payment_probe_url": lead.get("payment_probe_url"),
             "paid_endpoint": lead.get("paid_endpoint"),
             "buyer_command": lead.get("buyer_command"),
@@ -4419,6 +4787,7 @@ def proof_pack_lead_public_response(lead: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "received",
         "lead_id": lead["id"],
+        "product": lead.get("product") or "proof_pack",
         "target_url": lead["target_url"],
         "question": lead["question"],
         "pack": lead["pack"],
@@ -4505,6 +4874,107 @@ async def create_proof_pack_lead(payload: ProofPackLeadRequest | dict[str, Any],
     lead["storage_backend"] = await store_proof_pack_lead(lead)
     inc_metric("proof_pack_leads_total")
     inc_attribution("proof_pack_leads", source)
+    schedule_background(send_proof_pack_lead_notification(lead))
+    return lead
+
+
+def proof_bundle_lead_public_response(lead: dict[str, Any]) -> dict[str, Any]:
+    """Return the bundle lead acknowledgement without echoing contact details."""
+    return {
+        "status": "received",
+        "lead_id": lead["id"],
+        "product": "proof_bundle",
+        "target_urls": lead["target_urls"],
+        "target_count": lead["target_count"],
+        "question": lead["question"],
+        "bundle": lead["bundle"],
+        "price_usdc": lead["price_usdc"],
+        "amount_units": lead["amount_units"],
+        "source": lead["source"],
+        "contact_received": bool(lead.get("contact")),
+        "next_steps": {
+            "bundle_page": public_url("/proof-pack/bundle"),
+            "quote_page": lead["quote_page"],
+            "quote_api": lead["quote_api"],
+            "request_page": lead["request_page"],
+            "payment_url": lead["payment_url"],
+            "payment_link_configured": lead["payment_link_configured"],
+            "operator_leads": public_url("/operator/leads"),
+            "single_source_proof_pack_endpoint": lead["paid_endpoint"],
+        },
+    }
+
+
+async def create_proof_bundle_lead(payload: ProofBundleLeadRequest | dict[str, Any], request: Request) -> dict[str, Any]:
+    """Validate and store buyer intent for a multi-source Proof Bundle."""
+    if isinstance(payload, BaseModel):
+        raw = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    else:
+        raw = dict(payload)
+
+    contact = clean_lead_text(str(raw.get("contact") or ""), 180)
+    if len(contact) < 3:
+        raise PaymentValidationError("Add an email, handle, or reply path so we can follow up.")
+
+    normalized_bundle = normalize_proof_bundle(str(raw.get("bundle") or DEFAULT_PROOF_BUNDLE))
+    raw_targets = split_bundle_target_urls(raw.get("target_urls") or raw.get("target_url"))
+    normalized_targets = await validate_proof_bundle_targets(raw_targets, normalized_bundle)
+    for normalized_target in normalized_targets:
+        await enforce_rate_limit(
+            "proof_bundle_lead_target_domain",
+            target_domain_identifier(normalized_target),
+            RATE_LIMIT_TARGET_DOMAIN,
+        )
+
+    question = proof_bundle_question(raw.get("question"))
+    source = normalize_attribution_source(str(raw.get("source") or attribution_source_from_request(request)))
+    quote = await build_proof_bundle_quote(normalized_targets, question, normalized_bundle, source)
+    created_at = int(time.time())
+    lead_id = stable_hash(
+        json.dumps(
+            {
+                "created_at": created_at,
+                "contact": contact,
+                "target_urls": normalized_targets,
+                "question": question,
+                "nonce": secrets.token_hex(4),
+            },
+            sort_keys=True,
+        )
+    )[:16]
+
+    lead = {
+        "id": lead_id,
+        "created_at": created_at,
+        "product": "proof_bundle",
+        "contact": contact,
+        "target_url": normalized_targets[0],
+        "target_urls": normalized_targets,
+        "target_count": len(normalized_targets),
+        "question": question,
+        "bundle": normalized_bundle,
+        "pack": normalized_bundle,
+        "use_case": clean_lead_text(raw.get("use_case"), 240),
+        "budget_usdc": clean_lead_text(raw.get("budget_usdc"), 120),
+        "notes": clean_lead_text(raw.get("notes"), 500),
+        "source": source,
+        "price_usdc": quote["price_usdc"],
+        "amount_units": quote["amount_units"],
+        "request_page": quote["next_steps"]["request_page"],
+        "quote_page": quote["next_steps"]["quote_page"],
+        "quote_api": quote["next_steps"]["quote_api"],
+        "payment_url": quote["next_steps"]["payment_url"],
+        "payment_link_configured": quote["next_steps"]["payment_link_configured"],
+        "paid_endpoint": quote["next_steps"]["single_source_proof_pack_endpoint"],
+        "buyer_command": (
+            "Proof Bundle request captured. Use the payment URL when configured, "
+            "or run single-source Proof Packs through the x402 endpoint for immediate paid delivery."
+        ),
+        "source_profiles": quote["source_profiles"],
+    }
+    lead["storage_backend"] = await store_proof_pack_lead(lead)
+    inc_metric("proof_bundle_leads_total")
+    inc_attribution("proof_bundle_leads", source)
     schedule_background(send_proof_pack_lead_notification(lead))
     return lead
 
@@ -5183,6 +5653,421 @@ def build_proof_pack_request_html(
 </html>"""
 
 
+def bundle_targets_text(value: Any) -> str:
+    return "\n".join(split_bundle_target_urls(value))
+
+
+def build_proof_bundle_html(
+    values: Optional[dict[str, Any]] = None,
+    submitted: Optional[dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> str:
+    """Render the higher-ticket Proof Bundle demand-capture page."""
+    values = values or {}
+    public = html.escape(PUBLIC_BASE_URL)
+    try:
+        bundle = normalize_proof_bundle(str(values.get("bundle") or DEFAULT_PROOF_BUNDLE))
+    except PaymentValidationError:
+        bundle = DEFAULT_PROOF_BUNDLE
+    source = normalize_attribution_source(str(values.get("source") or "proof-bundle"))
+    default_targets = "\n".join(
+        [
+            "https://www.iana.org/domains/reserved",
+            "https://example.com",
+            "https://example.org",
+        ]
+    )
+    target_urls = bundle_targets_text(values.get("target_urls") or values.get("target_url") or default_targets)
+    question = clean_lead_text(values.get("question") or "Which claims can our agent safely cite across these sources?", 600)
+    contact = clean_lead_text(values.get("contact"), 180)
+    use_case = clean_lead_text(values.get("use_case"), 240)
+    budget_usdc = clean_lead_text(values.get("budget_usdc"), 120)
+    notes = clean_lead_text(values.get("notes"), 500)
+    price = price_for_proof_bundle(bundle)
+    amount_units = str(usdc_units(price))
+    quote_url = html.escape(
+        f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote?"
+        f"target_urls={url_quote(target_urls, safe='')}"
+        f"&question={url_quote(question, safe='')}"
+        f"&bundle={url_quote(bundle, safe='')}"
+        f"&source={url_quote(source, safe='')}"
+    )
+    payment_url = html.escape(proof_bundle_payment_url(bundle) or quote_url)
+    bundle_options = "\n".join(
+        f'<option value="{html.escape(bundle_name)}"{" selected" if bundle_name == bundle else ""}>{html.escape(bundle_name)}</option>'
+        for bundle_name in PROOF_BUNDLE_PRICING_USDC
+    )
+    bundle_rows = "\n".join(
+        "<tr>"
+        f"<td><code>{html.escape(bundle_name)}</code></td>"
+        f"<td>{html.escape(str(price_usdc))} USDC</td>"
+        f"<td>{html.escape(str(usdc_units(price_usdc)))}</td>"
+        f"<td>{html.escape(str(proof_bundle_source_limit(bundle_name)))}</td>"
+        f"<td>{html.escape(proof_bundle_policy(bundle_name))}</td>"
+        "</tr>"
+        for bundle_name, price_usdc in PROOF_BUNDLE_PRICING_USDC.items()
+    )
+    api_example = html.escape(
+        json.dumps(
+            {
+                "contact": contact or "builder@example.com",
+                "target_urls": split_bundle_target_urls(target_urls),
+                "question": question,
+                "bundle": bundle,
+                "use_case": use_case or "Agent launch due diligence",
+                "budget_usdc": budget_usdc or "20/month",
+                "source": source,
+                "notes": notes,
+            },
+            indent=2,
+        )
+    )
+    error_html = (
+        f'<div class="notice error"><strong>Request not saved</strong><br>{html.escape(error)}</div>'
+        if error
+        else ""
+    )
+    success_html = ""
+    if submitted:
+        steps = submitted.get("next_steps", {})
+        success_html = f"""
+    <div class="notice success">
+      <strong>Request received</strong><br>
+      Bundle lead <code>{html.escape(str(submitted.get("lead_id")))}</code> was stored privately for follow-up.
+      <div class="cta">
+        <a href="{html.escape(str(steps.get("quote_page", quote_url)))}">Open Quote</a>
+        <a href="{html.escape(str(steps.get("payment_url", payment_url)))}">Payment Link</a>
+      </div>
+    </div>"""
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Proof Bundles</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+      --good: #7ee787;
+      --bad: #ff9b9b;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 1080px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.1rem, 4vw, 3.5rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 38px 0 12px; font-size: 1.28rem; }}
+    p, label, td, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    form {{ display: grid; gap: 13px; margin: 24px 0; }}
+    .row {{ display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    label {{ display: grid; gap: 6px; font-size: .9rem; }}
+    input, select, textarea {{
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 11px 12px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }}
+    textarea {{ min-height: 122px; resize: vertical; }}
+    button {{
+      justify-self: start;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 11px 14px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+    }}
+    .summary {{ max-width: 820px; font-size: 1.08rem; }}
+    .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
+    .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0; }}
+    .box, .notice {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
+    .success {{ border-color: color-mix(in srgb, var(--good), var(--line)); }}
+    .error {{ border-color: color-mix(in srgb, var(--bad), var(--line)); }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ display: inline-block; max-width: 100%; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; overflow-x: auto; white-space: pre; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--text); }}
+    td {{ overflow-wrap: anywhere; }}
+    .table-wrap {{ max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
+    .table-wrap table {{ min-width: 560px; border: 0; }}
+    @media (max-width: 760px) {{
+      .row {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AxonGate Proof Bundles</h1>
+    <p class="summary">Multi-source evidence bundles for agent builders who need more than one cited page. This is the higher-value path: validate source sets, quote the bundle, capture buyer intent, then convert into paid Proof Pack work or an external subscription/payment link.</p>
+    <nav class="links" aria-label="Proof Bundle links">
+      <a href="{public}/proof-pack">Proof Packs</a>
+      <a href="{public}/proof-pack/bundle/quote">Bundle Quote</a>
+      <a href="{public}/proof-pack/sample">Sample Report</a>
+      <a href="{public}/proof-pack/preview">Mini Preview</a>
+      <a href="{public}/operator/leads">Private Leads</a>
+      <a href="{public}/docs">Docs</a>
+    </nav>
+    {error_html}
+    {success_html}
+    <div class="cta">
+      <a href="{quote_url}">Quote Bundle</a>
+      <a href="{payment_url}">Payment Link</a>
+      <a href="{public}/proof-pack/request">Single-Source Request</a>
+    </div>
+    <div class="grid">
+      <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
+      <div class="box"><strong>Indicative Price</strong><br>{html.escape(str(price))} USDC<br><code>{html.escape(amount_units)}</code> units</div>
+      <div class="box"><strong>Source Limit</strong><br>{html.escape(str(proof_bundle_source_limit(bundle)))} public URLs</div>
+      <div class="box"><strong>Delivery Shape</strong><br>Captured lead now; x402 batch delivery next.</div>
+    </div>
+    <form method="get" action="/proof-pack/bundle/quote" accept-charset="utf-8">
+      <input type="hidden" name="source" value="{html.escape(source)}">
+      <label>Source URLs
+        <textarea name="target_urls" required>{html.escape(target_urls)}</textarea>
+      </label>
+      <div class="row">
+        <label>Question
+          <input name="question" value="{html.escape(question)}">
+        </label>
+        <label>Bundle
+          <select name="bundle" aria-label="Proof Bundle">{bundle_options}</select>
+        </label>
+      </div>
+      <button type="submit">Quote Bundle</button>
+    </form>
+    <form method="post" action="/proof-pack/bundle/request" accept-charset="utf-8">
+      <input type="hidden" name="source" value="{html.escape(source)}">
+      <label>Contact
+        <input name="contact" value="{html.escape(contact)}" placeholder="email, Telegram, X, or wallet note" required>
+      </label>
+      <label>Source URLs
+        <textarea name="target_urls" required>{html.escape(target_urls)}</textarea>
+      </label>
+      <div class="row">
+        <label>Question
+          <input name="question" value="{html.escape(question)}">
+        </label>
+        <label>Bundle
+          <select name="bundle" aria-label="Proof Bundle">{bundle_options}</select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Use Case
+          <input name="use_case" value="{html.escape(use_case)}" placeholder="agent eval, launch audit, vendor check">
+        </label>
+        <label>Budget
+          <input name="budget_usdc" value="{html.escape(budget_usdc)}" placeholder="bundle now, 20/month, team plan">
+        </label>
+      </div>
+      <label>Notes
+        <textarea name="notes">{html.escape(notes)}</textarea>
+      </label>
+      <button type="submit">Request Bundle</button>
+    </form>
+    <h2>Bundle Pricing</h2>
+    <table>
+      <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th></tr></thead>
+      <tbody>{bundle_rows}</tbody>
+    </table>
+    <h2>JSON Lead API</h2>
+    <pre>curl -X POST {public}/v1/proof-pack/bundle/leads \\
+  -H "Content-Type: application/json" \\
+  -d '{api_example}'</pre>
+  </main>
+</body>
+</html>"""
+
+
+def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
+    """Render a no-spend Proof Bundle quote page."""
+    public = html.escape(PUBLIC_BASE_URL)
+    bundle = str(quote["bundle"])
+    target_text = "\n".join(str(target) for target in quote["target_urls"])
+    question = str(quote["question"])
+    source = str(quote["source"])
+    bundle_options = "\n".join(
+        f'<option value="{html.escape(bundle_name)}"{" selected" if bundle_name == bundle else ""}>{html.escape(bundle_name)}</option>'
+        for bundle_name in PROOF_BUNDLE_PRICING_USDC
+    )
+    source_rows = "\n".join(
+        "<tr>"
+        f"<td><a href=\"{html.escape(str(profile['target_url']))}\">{html.escape(str(profile['target_url']))}</a></td>"
+        f"<td>{'yes' if profile['cached_source_available'] else 'no'}</td>"
+        f"<td>{'yes' if profile['starter_sample_available'] else 'no'}</td>"
+        "</tr>"
+        for profile in quote["source_profiles"]
+    )
+    bundle_rows = "\n".join(
+        "<tr>"
+        f"<td><code>{html.escape(bundle_name)}</code></td>"
+        f"<td>{html.escape(str(info['price_usdc']))} USDC</td>"
+        f"<td>{html.escape(str(info['amount_units']))}</td>"
+        f"<td>{html.escape(str(info['source_limit']))}</td>"
+        f"<td>{html.escape(str(info['policy']))}</td>"
+        f"<td><a href=\"{html.escape(str(info['quote_page']))}\">Quote</a></td>"
+        "</tr>"
+        for bundle_name, info in quote["bundles"].items()
+    )
+    request_page = html.escape(str(quote["next_steps"]["request_page"]))
+    quote_api = html.escape(str(quote["next_steps"]["quote_api"]))
+    payment_url = html.escape(str(quote["next_steps"]["payment_url"]))
+    single_source_endpoint = html.escape(str(quote["next_steps"]["single_source_proof_pack_endpoint"]))
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Proof Bundle Quote</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 1080px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.05rem, 4vw, 3.4rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 38px 0 12px; font-size: 1.25rem; }}
+    p, label, td {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    form {{ display: grid; gap: 12px; margin: 24px 0; }}
+    .row {{ display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 170px auto; align-items: end; }}
+    label {{ display: grid; gap: 6px; font-size: .9rem; }}
+    input, select, textarea {{
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 11px 12px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }}
+    textarea {{ min-height: 118px; resize: vertical; }}
+    button {{
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      padding: 11px 14px;
+      background: transparent;
+      color: var(--text);
+      font: inherit;
+      cursor: pointer;
+    }}
+    .summary {{ max-width: 820px; font-size: 1.06rem; }}
+    .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
+    .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0; }}
+    .box {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ display: inline-block; max-width: 100%; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; overflow-x: auto; white-space: pre; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--text); }}
+    td {{ overflow-wrap: anywhere; }}
+    .table-wrap {{ max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
+    .table-wrap table {{ min-width: 560px; border: 0; }}
+    @media (max-width: 760px) {{
+      .row {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Proof Bundle Quote</h1>
+    <p class="summary">A supplier-free quote for a multi-source evidence bundle. It validates public URLs, checks reusable source material, and returns exact USDC units before any paid work happens.</p>
+    <nav class="links" aria-label="Proof Bundle quote links">
+      <a href="{public}/proof-pack/bundle">Proof Bundles</a>
+      <a href="{request_page}">Request Bundle</a>
+      <a href="{quote_api}">Open JSON Quote</a>
+      <a href="{public}/proof-pack">Proof Packs</a>
+      <a href="{public}/operator/leads">Private Leads</a>
+      <a href="{public}/docs">Docs</a>
+    </nav>
+    <form method="get" action="/proof-pack/bundle/quote">
+      <input type="hidden" name="source" value="{html.escape(source)}">
+      <label>Source URLs
+        <textarea name="target_urls" required>{html.escape(target_text)}</textarea>
+      </label>
+      <div class="row">
+        <label>Question
+          <input name="question" value="{html.escape(question)}">
+        </label>
+        <label>Bundle
+          <select name="bundle" aria-label="Proof Bundle">{bundle_options}</select>
+        </label>
+        <button type="submit">Quote</button>
+      </div>
+    </form>
+    <div class="cta">
+      <a href="{request_page}">Request Bundle</a>
+      <a href="{payment_url}">Payment Link</a>
+      <a href="{quote_api}">JSON Quote</a>
+    </div>
+    <div class="grid">
+      <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
+      <div class="box"><strong>Price</strong><br>{html.escape(str(quote["price_usdc"]))} USDC<br><code>{html.escape(str(quote["amount_units"]))}</code> units</div>
+      <div class="box"><strong>Sources</strong><br>{html.escape(str(quote["target_count"]))} of {html.escape(str(quote["source_limit"]))}</div>
+      <div class="box"><strong>Cached Sources</strong><br>{html.escape(str(quote["cached_sources_count"]))}</div>
+    </div>
+    <h2>Payment Link</h2>
+    <pre>{payment_url}</pre>
+    <h2>Immediate Single-Source Endpoint</h2>
+    <pre>POST {single_source_endpoint}?pack=standard</pre>
+    <h2>Source Checks</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>URL</th><th>Cached</th><th>Starter Sample</th></tr></thead>
+      <tbody>{source_rows}</tbody>
+    </table>
+    </div>
+    <h2>Bundles</h2>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th><th>Quote</th></tr></thead>
+      <tbody>{bundle_rows}</tbody>
+    </table>
+    </div>
+  </main>
+</body>
+</html>"""
+
+
 def build_proof_pack_html() -> str:
     """Render the human-facing Proof Pack product page."""
     public = html.escape(PUBLIC_BASE_URL)
@@ -5191,6 +6076,10 @@ def build_proof_pack_html() -> str:
     quote_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard")
     preview_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&pack=quick")
     request_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick")
+    bundle_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/bundle?source=proof-pack")
+    bundle_quote_url = html.escape(
+        f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout"
+    )
     sample_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/sample")
     sample_api_url = html.escape(f"{PUBLIC_BASE_URL}/v1/proof-pack/sample")
     request_json = html.escape(json.dumps(build_proof_pack_request_example(DEFAULT_PROOF_PACK), indent=2))
@@ -5257,6 +6146,7 @@ def build_proof_pack_html() -> str:
       <a href="{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard">Quote API</a>
       <a href="{preview_url}">Mini Preview</a>
       <a href="{request_url}">Request Report</a>
+      <a href="{bundle_url}">Proof Bundles</a>
       <a href="{sample_url}">Sample Report</a>
       <a href="{sample_api_url}">Sample JSON</a>
       <a href="{public}/docs">Docs</a>
@@ -5270,6 +6160,7 @@ def build_proof_pack_html() -> str:
       <a href="{preview_url}">Try Mini Preview</a>
       <a href="{quote_url}">Get Quote</a>
       <a href="{request_url}">Request Proof Pack</a>
+      <a href="{bundle_quote_url}">Quote Bundle</a>
       <a href="{pro_url}">Proof Pro</a>
       <a href="{team_url}">Proof Team</a>
     </div>
@@ -5289,6 +6180,10 @@ def build_proof_pack_html() -> str:
 
     <h2>Quote</h2>
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;question=What%20does%20this%20source%20establish%3F&amp;pack=standard&amp;source=docs"</pre>
+
+    <h2>Proof Bundles</h2>
+    <p>When a buyer has several sources or wants an agent-launch evidence set, route them to Proof Bundles instead of a single Proof Pack. Bundles quote at higher values and capture demand before batch delivery is automated.</p>
+    <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
 
     <h2>No-Spend Sample</h2>
     <pre>curl "{sample_api_url}?source=docs"</pre>
@@ -5470,6 +6365,10 @@ def build_llms_txt() -> str:
         f"- {pack}: {price} USDC, {proof_pack_cache_policy(pack)}"
         for pack, price in PROOF_PACK_PRICING_USDC.items()
     )
+    proof_bundle_lines = "\n".join(
+        f"- {bundle}: {price} USDC, {proof_bundle_policy(bundle)}"
+        for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
+    )
     proof_pack_request_example = json.dumps(
         build_proof_pack_request_example(DEFAULT_PROOF_PACK),
         indent=2,
@@ -5498,6 +6397,10 @@ Proof Pack quote API: {public_url("/v1/proof-pack/quote")}
 Proof Pack request page: {public_url("/proof-pack/request")}
 Proof Pack lead API: {public_url("/v1/proof-pack/leads")}
 Proof Pack x402 endpoint: {public_url("/v1/x402/proof-pack")}
+Proof Bundle page: {public_url("/proof-pack/bundle")}
+Proof Bundle quote page: {public_url("/proof-pack/bundle/quote")}
+Proof Bundle quote API: {public_url("/v1/proof-pack/bundle/quote")}
+Proof Bundle lead API: {public_url("/v1/proof-pack/bundle/leads")}
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
@@ -5574,6 +6477,15 @@ Body example:
 Proof Pack prices:
 {proof_pack_lines}
 
+Proof Bundle quote and lead capture:
+GET {public_url("/proof-pack/bundle")}
+GET {public_url("/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
+GET {public_url("/v1/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
+POST {public_url("/v1/proof-pack/bundle/leads")}
+
+Proof Bundle prices:
+{proof_bundle_lines}
+
 Successful Proof Pack response shape:
 - status: success
 - target_url, question, pack
@@ -5629,6 +6541,15 @@ def build_docs_html() -> str:
         "</tr>"
         for pack, price in PROOF_PACK_PRICING_USDC.items()
     )
+    proof_bundle_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(bundle)}</td>"
+        f"<td>{html.escape(str(price))} USDC</td>"
+        f"<td>{html.escape(str(proof_bundle_source_limit(bundle)))}</td>"
+        f"<td>{html.escape(proof_bundle_policy(bundle))}</td>"
+        "</tr>"
+        for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
+    )
     proof_request_json = html.escape(json.dumps(build_proof_pack_request_example(DEFAULT_PROOF_PACK), indent=2))
     proof_lead_json = html.escape(
         json.dumps(
@@ -5650,6 +6571,24 @@ def build_docs_html() -> str:
   -H "PAYMENT-SIGNATURE: <x402-payment-proof>" \\
   -H "X-AxonGate-Pack: standard" \\
   -d '{{"target_url":"https://example.com/source","question":"What does this source establish?","pack":"standard","force_refresh":false}}'"""
+    )
+    proof_bundle_lead_json = html.escape(
+        json.dumps(
+            {
+                "contact": "builder@example.com",
+                "target_urls": [
+                    "https://www.iana.org/domains/reserved",
+                    "https://example.com",
+                    "https://example.org",
+                ],
+                "question": "Which claims can our agent safely cite across these sources?",
+                "bundle": DEFAULT_PROOF_BUNDLE,
+                "use_case": "Agent launch due diligence",
+                "budget_usdc": "20/month",
+                "source": "docs",
+            },
+            indent=2,
+        )
     )
 
     return f"""<!doctype html>
@@ -5737,6 +6676,8 @@ def build_docs_html() -> str:
       <a href="{public}/proof-pack/preview">Proof Preview</a>
       <a href="{public}/proof-pack/quote">Proof Quote</a>
       <a href="{public}/proof-pack/request">Proof Request</a>
+      <a href="{public}/proof-pack/bundle">Proof Bundles</a>
+      <a href="{public}/proof-pack/bundle/quote">Bundle Quote</a>
       <a href="{public}/demo">Demo</a>
       <a href="{public}/openapi.json">OpenAPI JSON</a>
       <a href="{public}/swagger">Swagger UI</a>
@@ -5783,6 +6724,18 @@ def build_docs_html() -> str:
     <pre>curl -H "X-AxonGate-Operator-Token: &lt;token&gt;" "{public}/v1/operator/leads?limit=25"</pre>
     <pre>{proof_request_json}</pre>
     <pre>{proof_curl_example}</pre>
+
+    <h2>Proof Bundles</h2>
+    <p>Proof Bundles are higher-ticket multi-source evidence requests for buyers who need a cited source set rather than one page. The v1 path is no-spend quote and lead capture, with external payment links when configured; immediate paid delivery still uses single-source x402 Proof Packs.</p>
+    <table>
+      <thead><tr><th>Bundle</th><th>Price</th><th>Sources</th><th>Policy</th></tr></thead>
+      <tbody>{proof_bundle_rows}</tbody>
+    </table>
+    <p>Human bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
+    <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
+    <pre>curl -X POST "{public}/v1/proof-pack/bundle/leads" \\
+  -H "Content-Type: application/json" \\
+  -d '{proof_bundle_lead_json}'</pre>
 
     <h2>Standard x402 Flow</h2>
     <ol>
@@ -5864,6 +6817,8 @@ def build_operator_dashboard_html(
             card("Proof Previews", count(metric("proof_pack_previews_total")), f'{count(metric("proof_pack_preview_cache_hits_total"))} cache hits'),
             card("Proof Quotes", count(metric("proof_pack_quotes_total")), "No-spend report quotes"),
             card("Proof Leads", count(metric("proof_pack_leads_total")), "Request capture submits"),
+            card("Bundle Quotes", count(metric("proof_bundle_quotes_total")), "Multi-source quote interest"),
+            card("Bundle Leads", count(metric("proof_bundle_leads_total")), "Higher-ticket demand capture"),
             card("Proof Requests", count(metric("proof_pack_requests_total")), "Paid Proof Pack posts"),
             card("Proof Delivered", count(metric("proof_pack_delivery_success_total")), "Citation reports delivered"),
             card("Cache Hits", count(metric("cache_hits_total")), f'{count(metric("cache_misses_total"))} misses'),
@@ -5949,6 +6904,9 @@ def build_operator_dashboard_html(
             f"<tr><td>Proof Pack Preview</td><td>{count(metric('discovery_proof_pack_preview_hits_total'))}</td></tr>",
             f"<tr><td>Proof Pack Quote</td><td>{count(metric('discovery_proof_pack_quote_hits_total'))}</td></tr>",
             f"<tr><td>Proof Pack Request</td><td>{count(metric('discovery_proof_pack_request_hits_total'))}</td></tr>",
+            f"<tr><td>Proof Bundle</td><td>{count(metric('discovery_proof_bundle_hits_total'))}</td></tr>",
+            f"<tr><td>Proof Bundle Quote</td><td>{count(metric('discovery_proof_bundle_quote_hits_total'))}</td></tr>",
+            f"<tr><td>Proof Bundle Request</td><td>{count(metric('discovery_proof_bundle_request_hits_total'))}</td></tr>",
             f"<tr><td>Demo</td><td>{count(metric('discovery_demo_hits_total'))}</td></tr>",
             f"<tr><td>Agent Cards</td><td>{count(metric('discovery_agent_card_hits_total'))}</td></tr>",
             f"<tr><td>Manifest</td><td>{count(metric('discovery_manifest_hits_total'))}</td></tr>",
@@ -5991,6 +6949,16 @@ def build_operator_dashboard_html(
         f"<td>{html.escape(proof_pack_cache_policy(pack))}</td>"
         "</tr>"
         for pack, price in PROOF_PACK_PRICING_USDC.items()
+    )
+    proof_bundle_rows = "\n".join(
+        "<tr>"
+        f"<td>{html.escape(bundle)}</td>"
+        f"<td>{html.escape(str(price))} USDC</td>"
+        f"<td>{html.escape(str(usdc_units(price)))}</td>"
+        f"<td>{html.escape(str(proof_bundle_source_limit(bundle)))}</td>"
+        f"<td>{html.escape(proof_bundle_policy(bundle))}</td>"
+        "</tr>"
+        for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
     )
     alert_text = ", ".join(triggered_alerts) if triggered_alerts else "No active alerts"
 
@@ -6071,6 +7039,7 @@ def build_operator_dashboard_html(
         <a href="{public}/operator/leads">Private Leads</a>
         <a href="{public}/paid-test">Paid Test</a>
         <a href="{public}/docs">Docs</a>
+        <a href="{public}/proof-pack/bundle">Bundles</a>
         <a href="{public}/demo">Demo</a>
       </nav>
     </header>
@@ -6118,6 +7087,12 @@ def build_operator_dashboard_html(
       <tbody>{proof_pack_rows}</tbody>
     </table>
 
+    <h2>Proof Bundle Pricing</h2>
+    <table>
+      <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th></tr></thead>
+      <tbody>{proof_bundle_rows}</tbody>
+    </table>
+
     <p class="notice"><strong>Alert state:</strong> <span class="{'warn' if triggered_alerts else 'ok'}">{html.escape(alert_text)}</span></p>
   </main>
 </body>
@@ -6143,6 +7118,10 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
         f"<tr><td>{esc(pack)}</td><td>{esc(count)}</td></tr>"
         for pack, count in stats.get("by_pack", {}).items()
     ) or '<tr><td colspan="2">No retained leads.</td></tr>'
+    product_rows = "\n".join(
+        f"<tr><td>{esc(product)}</td><td>{esc(count)}</td></tr>"
+        for product, count in stats.get("by_product", {}).items()
+    ) or '<tr><td colspan="2">No retained leads.</td></tr>'
     source_rows = "\n".join(
         f"<tr><td>{esc(source)}</td><td>{esc(count)}</td></tr>"
         for source, count in stats.get("by_source", {}).items()
@@ -6150,20 +7129,34 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
 
     lead_rows = []
     for lead in leads:
+        product = str(lead.get("product") or "proof_pack")
         quote_page = esc(lead.get("quote_page"))
         preview_page = esc(lead.get("preview_page"))
+        request_page = esc(lead.get("request_page"))
+        payment_url = esc(lead.get("payment_url"))
         probe_url = esc(lead.get("payment_probe_url"))
         paid_endpoint = esc(lead.get("paid_endpoint"))
         buyer_command = esc(lead.get("buyer_command"))
+        target_urls = lead.get("target_urls") if isinstance(lead.get("target_urls"), list) else []
+        if target_urls:
+            target_links = "<br>".join(
+                f'<a href="{esc(target)}">{esc(target)}</a>'
+                for target in target_urls[:5]
+            )
+            remaining = len(target_urls) - 5
+            if remaining > 0:
+                target_links += f"<br><small>+{remaining} more</small>"
+        else:
+            target_links = f'<a href="{esc(lead.get("target_url"))}">{esc(lead.get("target_url"))}</a>'
         lead_rows.append(
             "<tr>"
             f"<td><code>{esc(lead.get('id'))}</code><br>{esc(lead_created_at_label(lead.get('created_at')))}</td>"
             f"<td>{esc(lead.get('contact'))}</td>"
-            f"<td><code>{esc(lead.get('pack'))}</code><br>{esc(lead.get('price_usdc'))} USDC<br><code>{esc(lead.get('amount_units'))}</code></td>"
+            f"<td><code>{esc(product)}</code><br><code>{esc(lead.get('bundle') or lead.get('pack'))}</code><br>{esc(lead.get('price_usdc'))} USDC<br><code>{esc(lead.get('amount_units'))}</code></td>"
             f"<td>{esc(lead.get('source'))}</td>"
-            f"<td><a href=\"{esc(lead.get('target_url'))}\">{esc(lead.get('target_url'))}</a><br><small>{esc(lead.get('question'))}</small></td>"
+            f"<td>{target_links}<br><small>{esc(lead.get('question'))}</small></td>"
             f"<td>{esc(lead.get('use_case'))}<br><small>{esc(lead.get('budget_usdc'))}</small><br><small>{esc(lead.get('notes'))}</small></td>"
-            f"<td><a href=\"{preview_page}\">Preview</a><br><a href=\"{quote_page}\">Quote</a><br><a href=\"{probe_url}\">Probe</a><br><code>{paid_endpoint}</code></td>"
+            f"<td><a href=\"{preview_page}\">Preview</a><br><a href=\"{quote_page}\">Quote</a><br><a href=\"{request_page}\">Request</a><br><a href=\"{payment_url}\">Payment</a><br><a href=\"{probe_url}\">Probe</a><br><code>{paid_endpoint}</code></td>"
             f"<td><pre>{buyer_command}</pre></td>"
             "</tr>"
         )
@@ -6270,9 +7263,16 @@ def build_operator_leads_html(leads: list[dict[str, Any]], stats: dict[str, Any]
 
     <div class="split">
       <section>
+        <h2>By Product</h2>
+        <table><thead><tr><th>Product</th><th>Leads</th></tr></thead><tbody>{product_rows}</tbody></table>
+      </section>
+      <section>
         <h2>By Pack</h2>
         <table><thead><tr><th>Pack</th><th>Leads</th></tr></thead><tbody>{pack_rows}</tbody></table>
       </section>
+    </div>
+
+    <div class="split">
       <section>
         <h2>By Source</h2>
         <table><thead><tr><th>Source</th><th>Leads</th></tr></thead><tbody>{source_rows}</tbody></table>
@@ -6450,6 +7450,7 @@ npm run paid:buyer -- \\
       <a href="{public}/proof-pack/sample">Proof Sample</a>
       <a href="{public}/proof-pack/preview">Proof Preview</a>
       <a href="{public}/proof-pack/quote">Proof Quote</a>
+      <a href="{public}/proof-pack/bundle">Proof Bundles</a>
       <a href="{public}/docs">Docs</a>
       <a href="{public}/operator">Operator</a>
       <a href="{github}/blob/main/examples/paid_buyer.mjs">Buyer Script</a>
@@ -6861,9 +7862,13 @@ def build_sitemap_xml() -> str:
         ("/proof-pack/preview", "0.9"),
         ("/proof-pack/quote", "0.9"),
         ("/proof-pack/request", "0.9"),
+        ("/proof-pack/bundle", "0.9"),
+        ("/proof-pack/bundle/quote", "0.9"),
         ("/v1/proof-pack/sample", "0.85"),
         ("/v1/proof-pack/preview", "0.85"),
         ("/v1/proof-pack/quote", "0.85"),
+        ("/v1/proof-pack/bundle/quote", "0.85"),
+        ("/v1/proof-pack/bundle/leads", "0.75"),
         ("/v1/x402/proof-pack", "0.85"),
         ("/demo", "0.9"),
         ("/llms.txt", "0.8"),
@@ -6965,6 +7970,120 @@ async def proof_pack_page(request: Request):
     """Serve the Proof Pack product page for human buyers and agent builders."""
     inc_discovery_hit("discovery_proof_pack_hits_total", attribution_source_from_request(request))
     return build_proof_pack_html()
+
+
+@app.get("/proof-pack/bundle", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate Proof Bundle product page")
+async def proof_bundle_page(
+    request: Request,
+    target_urls: Optional[str] = None,
+    target_url: Optional[str] = None,
+    question: Optional[str] = None,
+    bundle: str = DEFAULT_PROOF_BUNDLE,
+    contact: Optional[str] = None,
+    use_case: Optional[str] = None,
+    budget_usdc: Optional[str] = None,
+    notes: Optional[str] = None,
+):
+    """Serve the higher-ticket multi-source Proof Bundle page."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_proof_bundle_hits_total", source)
+    return build_proof_bundle_html(
+        {
+            "contact": contact,
+            "target_urls": target_urls or target_url,
+            "question": question,
+            "bundle": bundle,
+            "use_case": use_case,
+            "budget_usdc": budget_usdc,
+            "source": source,
+            "notes": notes,
+        }
+    )
+
+
+@app.get("/proof-pack/bundle/quote", response_class=HTMLResponse, tags=["discovery"], summary="Human Proof Bundle quote page")
+async def proof_bundle_quote_page(
+    request: Request,
+    target_urls: str = "https://www.iana.org/domains/reserved\nhttps://example.com\nhttps://example.org",
+    question: Optional[str] = None,
+    bundle: str = DEFAULT_PROOF_BUNDLE,
+):
+    """Serve a no-spend multi-source bundle quote page for human buyers."""
+    source = attribution_source_from_request(request)
+    inc_metric("proof_bundle_quotes_total")
+    inc_attribution("proof_bundle_quotes", source)
+    inc_discovery_hit("discovery_proof_bundle_quote_hits_total", source)
+    try:
+        await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        quote = await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    return build_proof_bundle_quote_html(quote)
+
+
+@app.post("/proof-pack/bundle/request", response_class=HTMLResponse, tags=["discovery"], summary="Submit a Proof Bundle request")
+async def proof_bundle_request_submit(request: Request):
+    """Store a human-submitted Proof Bundle request without payment or supplier work."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_proof_bundle_request_hits_total", source)
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    try:
+        await enforce_rate_limit("proof_bundle_lead_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        if content_type == "application/json":
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise PaymentValidationError("JSON request body must be an object.")
+        else:
+            payload = parse_urlencoded_payload(await request.body())
+        payload.setdefault("source", source)
+        lead = await create_proof_bundle_lead(payload, request)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except (json.JSONDecodeError, PaymentValidationError) as exc:
+        inc_metric("proof_bundle_lead_errors_total")
+        detail = exc.detail if isinstance(exc, PaymentValidationError) else "JSON request body is invalid."
+        return HTMLResponse(build_proof_bundle_html(payload if "payload" in locals() else {}, error=detail), status_code=400)
+
+    public_response = proof_bundle_lead_public_response(lead)
+    return build_proof_bundle_html(lead, submitted=public_response)
+
+
+@app.get("/v1/proof-pack/bundle/quote", tags=["discovery"], summary="Supplier-free Proof Bundle quote")
+async def proof_bundle_quote_api(
+    request: Request,
+    target_urls: str = "https://www.iana.org/domains/reserved\nhttps://example.com\nhttps://example.org",
+    question: Optional[str] = None,
+    bundle: str = DEFAULT_PROOF_BUNDLE,
+):
+    """Return no-spend Proof Bundle pricing and buyer next steps for public targets."""
+    source = attribution_source_from_request(request)
+    inc_metric("proof_bundle_quotes_total")
+    inc_attribution("proof_bundle_quotes", source)
+    inc_discovery_hit("discovery_proof_bundle_quote_hits_total", source)
+    try:
+        await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        return await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
+@app.post("/v1/proof-pack/bundle/leads", tags=["discovery"], summary="No-spend Proof Bundle lead capture")
+async def proof_bundle_lead_api(request: Request, lead_request: ProofBundleLeadRequest):
+    """Store a multi-source Proof Bundle lead and return quote-ready next steps without spending."""
+    inc_discovery_hit("discovery_proof_bundle_request_hits_total", attribution_source_from_request(request))
+    try:
+        await enforce_rate_limit("proof_bundle_lead_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        lead = await create_proof_bundle_lead(lead_request, request)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        inc_metric("proof_bundle_lead_errors_total")
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    return proof_bundle_lead_public_response(lead)
 
 
 @app.get("/proof-pack/sample", response_class=HTMLResponse, tags=["discovery"], summary="No-spend Proof Pack sample page")
@@ -7223,6 +8342,10 @@ async def root(request: Request):
         "proof_pack_request": f"{PUBLIC_BASE_URL}/proof-pack/request",
         "proof_pack_leads_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "proof_pack_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        "proof_bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+        "proof_bundle_quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proof_bundle_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
+        "proof_bundle_leads_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llms_txt": f"{PUBLIC_BASE_URL}/llms.txt",
         "robots": f"{PUBLIC_BASE_URL}/robots.txt",
@@ -7285,7 +8408,7 @@ async def discovery_resources(request: Request, type: Optional[str] = None, limi
     if type not in (None, "http"):
         items: list[dict[str, Any]] = []
     else:
-        items = [build_x402_resource(), build_proof_pack_resource()]
+        items = [build_x402_resource(), build_proof_pack_resource(), build_proof_bundle_resource()]
 
     bounded_limit = max(1, min(limit, 100))
     start = max(offset, 0)
@@ -7382,6 +8505,14 @@ async def metrics_snapshot():
         },
         "pricing": {tier: float(price) for tier, price in TIER_PRICING_USDC.items()},
         "proof_pack_pricing": {pack: float(price) for pack, price in PROOF_PACK_PRICING_USDC.items()},
+        "proof_bundle_pricing": {
+            bundle: {
+                "price_usdc": float(price),
+                "amount_units": str(usdc_units(price)),
+                "source_limit": proof_bundle_source_limit(bundle),
+            }
+            for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
+        },
     }
 
 
@@ -8207,6 +9338,13 @@ def custom_openapi() -> dict[str, Any]:
         if isinstance(pack_property, dict):
             pack_property["enum"] = list(PROOF_PACK_PRICING_USDC.keys())
             pack_property["default"] = PROOF_PACK_SAMPLE_PACK
+
+    proof_bundle_lead_schema = schema.get("components", {}).get("schemas", {}).get("ProofBundleLeadRequest")
+    if isinstance(proof_bundle_lead_schema, dict):
+        bundle_property = proof_bundle_lead_schema.get("properties", {}).get("bundle")
+        if isinstance(bundle_property, dict):
+            bundle_property["enum"] = list(PROOF_BUNDLE_PRICING_USDC.keys())
+            bundle_property["default"] = DEFAULT_PROOF_BUNDLE
 
     schema["x-payment-info"] = payment_info
     app.openapi_schema = schema

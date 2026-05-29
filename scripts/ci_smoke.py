@@ -48,6 +48,8 @@ async def main() -> None:
             "/proof-pack/preview",
             "/proof-pack/quote",
             "/proof-pack/request",
+            "/proof-pack/bundle",
+            "/proof-pack/bundle/quote",
             "/v1/proof-pack/sample",
             "/v1/proof-pack/preview",
             "/demo",
@@ -215,6 +217,49 @@ async def main() -> None:
         assert form_lead.status_code == 200, f"Proof Pack request form returned {form_lead.status_code}"
         assert "Request received" in form_lead.text, "Proof Pack request form should acknowledge submit"
 
+        bundle_query = urlencode(
+            {
+                "target_urls": "https://www.iana.org/domains/reserved\nhttps://example.com",
+                "bundle": "scout",
+                "source": "ci",
+            }
+        )
+        proof_bundle_quote = (await client.get(f"/v1/proof-pack/bundle/quote?{bundle_query}")).json()
+        assert proof_bundle_quote["status"] == "proof_bundle_quote", "Proof Bundle quote returned wrong status"
+        assert proof_bundle_quote["supplier_spend"] is False, "Proof Bundle quote should not spend supplier budget"
+        assert proof_bundle_quote["target_count"] == 2, "Proof Bundle quote should preserve target count"
+        assert proof_bundle_quote["amount_units"] == "2000000", "scout Proof Bundle should cost 2.00 USDC"
+        assert proof_bundle_quote["source_limit"] == 3, "scout Proof Bundle source limit mismatch"
+        assert "bundle_page" in proof_bundle_quote["next_steps"], "Proof Bundle quote missing bundle page"
+
+        proof_bundle_page = await client.get(f"/proof-pack/bundle/quote?{bundle_query}")
+        assert proof_bundle_page.status_code == 200, "Proof Bundle quote page should render"
+        assert "Proof Bundle Quote" in proof_bundle_page.text, "Proof Bundle quote page missing heading"
+        assert "Request Bundle" in proof_bundle_page.text, "Proof Bundle quote page missing request CTA"
+        assert "POST https://api.axongate.one/v1/x402/proof-pack?pack=standard" in proof_bundle_page.text, (
+            "Proof Bundle quote should keep immediate x402 fallback in a scroll-safe block"
+        )
+
+        bundle_lead_payload = {
+            "contact": "codex-bundle@example.invalid",
+            "target_urls": ["https://www.iana.org/domains/reserved", "https://example.com"],
+            "question": "Which claims can our agent cite across these sources?",
+            "bundle": "scout",
+            "use_case": "CI multi-source smoke test",
+            "budget_usdc": "20/month",
+            "source": "ci",
+            "notes": "No-spend bundle lead capture check.",
+        }
+        proof_bundle_lead = await client.post("/v1/proof-pack/bundle/leads", json=bundle_lead_payload)
+        assert proof_bundle_lead.status_code == 200, f"Proof Bundle lead API returned {proof_bundle_lead.status_code}"
+        proof_bundle_lead_json = proof_bundle_lead.json()
+        assert proof_bundle_lead_json["status"] == "received", "Proof Bundle lead API returned wrong status"
+        assert proof_bundle_lead_json["product"] == "proof_bundle", "Proof Bundle lead response should mark product"
+        assert proof_bundle_lead_json["target_count"] == 2, "Proof Bundle lead target count mismatch"
+        assert proof_bundle_lead_json["amount_units"] == "2000000", "Proof Bundle lead should preserve scout price"
+        assert proof_bundle_lead_json["contact_received"] is True, "Proof Bundle lead should acknowledge contact privately"
+        assert "contact" not in proof_bundle_lead_json, "Proof Bundle lead response must not echo contact"
+
         operator_leads_unauthorized = await client.get("/operator/leads")
         assert operator_leads_unauthorized.status_code == 401, "operator leads should require a token"
 
@@ -222,6 +267,7 @@ async def main() -> None:
         assert operator_leads_page.status_code == 200, "operator leads page should accept operator token"
         assert "Proof Pack Leads" in operator_leads_page.text, "operator leads page missing heading"
         assert "codex-test@example.invalid" in operator_leads_page.text, "operator leads page should show private contact"
+        assert "codex-bundle@example.invalid" in operator_leads_page.text, "operator leads page should show bundle contact"
         assert "Buyer Command" in operator_leads_page.text, "operator leads page missing conversion next step"
 
         operator_leads_api = await client.get(
@@ -231,11 +277,18 @@ async def main() -> None:
         assert operator_leads_api.status_code == 200, "operator leads API should accept operator token header"
         operator_leads_json = operator_leads_api.json()
         assert operator_leads_json["status"] == "ok", "operator leads API returned wrong status"
-        assert operator_leads_json["stats"]["retained"] >= 2, "operator leads API should retain smoke leads"
+        assert operator_leads_json["stats"]["retained"] >= 3, "operator leads API should retain smoke leads"
+        assert operator_leads_json["stats"]["by_product"].get("proof_bundle", 0) >= 1, (
+            "operator leads API should summarize Proof Bundle leads"
+        )
         assert any(
             lead.get("contact") == "codex-test@example.invalid"
             for lead in operator_leads_json["leads"]
         ), "operator leads API should include private contact"
+        assert any(
+            lead.get("contact") == "codex-bundle@example.invalid" and lead.get("product") == "proof_bundle"
+            for lead in operator_leads_json["leads"]
+        ), "operator leads API should include private bundle contact"
 
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
@@ -340,12 +393,15 @@ async def main() -> None:
         assert "proofPackQuote" in x402_discovery["metadata"], "Proof Pack quote page missing from public discovery"
         assert "proofPackRequest" in x402_discovery["metadata"], "Proof Pack request page missing from public discovery"
         assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
+        assert "proofBundleQuote" in x402_discovery["metadata"], "Proof Bundle quote missing from public discovery"
+        assert "proofBundles" in x402_discovery["metadata"], "Proof Bundle pricing missing from public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})
         assert schemas.get("AccessRequest", {}).get("examples"), "AccessRequest examples missing"
         assert schemas.get("ProofPackRequest", {}).get("examples"), "ProofPackRequest examples missing"
         assert schemas.get("ProofPackLeadRequest", {}).get("examples"), "ProofPackLeadRequest examples missing"
+        assert schemas.get("ProofBundleLeadRequest", {}).get("examples"), "ProofBundleLeadRequest examples missing"
         post_operation = openapi.get("paths", {}).get("/v1/x402/access", {}).get("post", {})
         assert post_operation.get("x-payment-info"), "OpenAPI payment extension missing from paid endpoint"
         proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
@@ -373,6 +429,11 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("proof_pack_previews", 0) >= 3, "Proof Pack previews missing from funnel"
         assert metrics["metrics"].get("proof_pack_leads_total", 0) >= 2, "Proof Pack leads should be counted"
         assert metrics["conversion_funnel"].get("proof_pack_leads", 0) >= 2, "Proof Pack leads missing from funnel"
+        assert metrics["metrics"].get("proof_bundle_quotes_total", 0) >= 2, "Proof Bundle quotes should be counted"
+        assert metrics["conversion_funnel"].get("proof_bundle_quotes", 0) >= 2, "Proof Bundle quotes missing from funnel"
+        assert metrics["metrics"].get("proof_bundle_leads_total", 0) >= 1, "Proof Bundle leads should be counted"
+        assert metrics["conversion_funnel"].get("proof_bundle_leads", 0) >= 1, "Proof Bundle leads missing from funnel"
+        assert "proof_bundle_pricing" in metrics, "Proof Bundle pricing missing from metrics"
         assert "proof_pack_leads" in metrics, "Proof Pack lead storage snapshot missing from metrics"
         assert metrics["operator"]["private_leads_enabled"] is True, "operator private leads should be enabled in CI"
         assert "operator_auth_failures_total" in metrics["metrics"], "operator auth failures metric missing"
