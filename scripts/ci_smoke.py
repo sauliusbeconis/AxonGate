@@ -541,6 +541,38 @@ async def main() -> None:
         no_email_recovery_json = no_email_recovery.json()
         assert no_email_recovery_json["status"] == "ready", "No-email recovered delivery should be ready"
 
+        pending_recovery_lead = {
+            "id": "stripe_ci_pending_recovery",
+            "created_at": int(time.time()),
+            "product": "proof_bundle",
+            "contact": "stripe-session:cs_ci_pending_recovery",
+            "target_url": "not-a-public-url",
+            "target_urls": ["not-a-public-url"],
+            "target_count": 1,
+            "question": "Recover the single pending paid bundle.",
+            "bundle": "scout",
+            "pack": "scout",
+            "source": "stripe",
+            "status": "paid",
+            "stripe": {
+                "session_id": "cs_ci_pending_recovery",
+                "payment_status": "paid",
+            },
+        }
+        await gateway.store_proof_pack_lead(pending_recovery_lead)
+        pending_recovery = await client.get(
+            "/v1/proof-pack/bundle/recover",
+            params={
+                "email": "buyer-entered@example.invalid",
+                "target_url": "https://submitted.example.invalid/not-stored",
+            },
+        )
+        assert pending_recovery.status_code == 200, "Single pending Stripe bundle should recover as a rescue path"
+        pending_recovery_json = pending_recovery.json()
+        assert pending_recovery_json["lead_id"] == "stripe_ci_pending_recovery", (
+            "Pending recovery should return the single unresolved Stripe lead"
+        )
+
         duplicate_stripe_webhook = await client.post(
             "/v1/stripe/webhook",
             content=stripe_payload,

@@ -4735,6 +4735,17 @@ def proof_bundle_lead_recovery_targets(lead: dict[str, Any]) -> set[str]:
     return targets
 
 
+def is_pending_stripe_bundle_recovery_candidate(lead: dict[str, Any]) -> bool:
+    """Return true for a paid Stripe bundle that still needs customer recovery."""
+    if str(lead.get("product") or "") != "proof_bundle":
+        return False
+    if normalize_lead_status(lead.get("status") or "new") != "paid":
+        return False
+    if isinstance(lead.get("proof_bundle_report"), dict):
+        return False
+    return isinstance(lead.get("stripe"), dict)
+
+
 async def find_stored_proof_bundle_lead_for_recovery(email: str, target_url: str) -> Optional[dict[str, Any]]:
     """Find a paid Proof Bundle lead by checkout email and one submitted source URL."""
     normalized_email = normalize_recovery_email(email)
@@ -4764,6 +4775,14 @@ async def find_stored_proof_bundle_lead_for_recovery(email: str, target_url: str
     no_email_matches = [lead for lead in paid_target_matches if not proof_bundle_lead_recovery_emails(lead)]
     if len(no_email_matches) == 1:
         return no_email_matches[0]
+
+    single_pending_stripe_match = [
+        lead
+        for lead in leads
+        if is_pending_stripe_bundle_recovery_candidate(lead)
+    ]
+    if len(single_pending_stripe_match) == 1:
+        return single_pending_stripe_match[0]
     return None
 
 
@@ -5282,7 +5301,7 @@ def build_proof_bundle_recovery_html(email: str = "", target_url: str = "", erro
     {nav}
     <section class="panel">
       <h1>Recover Proof Bundle Delivery</h1>
-      <p>Enter the email used at Stripe checkout and one target URL from the purchase. If Stripe passed a different email or no real email address, AxonGate can still recover the matching paid bundle when the target URL identifies one paid order.</p>
+      <p>Enter the email used at Stripe checkout and one target URL from the purchase. If Stripe passed a different email or malformed target data, AxonGate can still recover a single pending paid bundle.</p>
       {error_html}
       <form action="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}" method="get">
         <label>
