@@ -326,6 +326,18 @@ async def main() -> None:
             "operator status API should persist fulfillment URL"
         )
 
+        await gateway.set_cached_markdown(
+            "https://www.iana.org/domains/reserved",
+            "basic",
+            gateway.STARTER_SAMPLE_MARKDOWN,
+            3600,
+        )
+        await gateway.set_cached_markdown(
+            "https://example.com",
+            "basic",
+            "# Example Domain\n\nExample Domain is reserved for illustrative examples in documents.",
+            3600,
+        )
         stripe_event = {
             "id": "evt_ci_axongate_checkout_paid",
             "object": "event",
@@ -377,6 +389,24 @@ async def main() -> None:
         assert stripe_webhook_json["status"] == "fulfilled", "Stripe webhook should fulfill paid checkout"
         assert stripe_webhook_json["bundle"] == "scout", "Stripe webhook should preserve bundle metadata"
         assert stripe_webhook_json["lead_status"] == "paid", "Stripe webhook should mark lead paid"
+        assert "/proof-pack/bundle/delivery" in stripe_webhook_json["delivery_url"], (
+            "Stripe webhook should return a customer delivery URL"
+        )
+
+        stripe_delivery = await client.get(
+            "/v1/proof-pack/bundle/delivery?session_id=cs_ci_axongate_paid"
+        )
+        assert stripe_delivery.status_code == 200, "Stripe delivery JSON should resolve by session ID"
+        stripe_delivery_json = stripe_delivery.json()
+        assert stripe_delivery_json["status"] == "ready", "Stripe delivery should generate a ready report"
+        assert stripe_delivery_json["lead_status"] == "fulfilled", "Stripe delivery should mark lead fulfilled"
+        assert stripe_delivery_json["report"]["successful_sources"] >= 1, "Stripe delivery report should include sources"
+
+        stripe_delivery_page = await client.get(
+            "/proof-pack/bundle/delivery?session_id=cs_ci_axongate_paid"
+        )
+        assert stripe_delivery_page.status_code == 200, "Stripe delivery page should render"
+        assert "Proof Bundle Delivery" in stripe_delivery_page.text, "Stripe delivery page missing heading"
 
         duplicate_stripe_webhook = await client.post(
             "/v1/stripe/webhook",
@@ -411,7 +441,7 @@ async def main() -> None:
             None,
         )
         assert stripe_lead, "Stripe webhook should create an operator lead"
-        assert stripe_lead["status"] == "paid", "Stripe-created lead should be paid"
+        assert stripe_lead["status"] == "fulfilled", "Stripe-created lead should be auto-fulfilled"
         assert stripe_lead["stripe"]["session_id"] == "cs_ci_axongate_paid", "Stripe lead should retain session ID"
 
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
@@ -559,6 +589,12 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("proof_bundle_leads", 0) >= 1, "Proof Bundle leads missing from funnel"
         assert metrics["metrics"].get("proof_bundle_paid_total", 0) >= 2, "Proof Bundle paid updates should be counted"
         assert metrics["conversion_funnel"].get("proof_bundle_paid", 0) >= 2, "Proof Bundle paid missing from funnel"
+        assert metrics["metrics"].get("proof_bundle_fulfilled_total", 0) >= 1, (
+            "Proof Bundle fulfilled updates should be counted"
+        )
+        assert metrics["metrics"].get("proof_bundle_auto_fulfillment_success_total", 0) >= 1, (
+            "Proof Bundle auto fulfillment should be counted"
+        )
         assert metrics["metrics"].get("stripe_webhook_payment_succeeded_total", 0) >= 1, (
             "Stripe webhook success should be counted"
         )
