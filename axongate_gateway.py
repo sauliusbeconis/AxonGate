@@ -4786,6 +4786,30 @@ async def find_stored_proof_bundle_lead_for_recovery(email: str, target_url: str
     return None
 
 
+async def apply_recovery_target_override(lead: dict[str, Any], target_url: str) -> dict[str, Any]:
+    """Use the customer-submitted recovery URL when Stripe stored malformed target data."""
+    if not is_pending_stripe_bundle_recovery_candidate(lead):
+        return lead
+    normalized_target = normalize_recovery_url(target_url)
+    if not normalized_target or normalized_target in proof_bundle_lead_recovery_targets(lead):
+        return lead
+    try:
+        safe_target = validate_target_url(clean_lead_text(target_url, 2048))
+    except PaymentValidationError:
+        return lead
+    updated = await update_stored_proof_pack_lead(
+        str(lead.get("id") or ""),
+        {
+            "target_url": safe_target,
+            "target_urls": [safe_target],
+            "target_urls_raw": safe_target,
+            "target_count": 1,
+            "delivery_note": "Payment recovered with the customer-submitted target URL.",
+        },
+    )
+    return updated or lead
+
+
 async def build_stripe_proof_bundle_lead(event: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
     """Convert a paid Stripe Checkout Session into AxonGate's operator lead shape."""
     metadata = stripe_session_metadata(session)
@@ -9908,6 +9932,7 @@ async def proof_bundle_recovery_page(request: Request, email: str = "", target_u
             build_proof_bundle_recovery_html(email, target_url, "No paid Proof Bundle matched that email and target URL yet."),
             status_code=404,
         )
+    lead = await apply_recovery_target_override(lead, target_url)
     lead = await ensure_proof_bundle_delivery_ready(lead)
     return build_proof_bundle_delivery_html(lead)
 
@@ -9921,6 +9946,7 @@ async def proof_bundle_recovery_api(request: Request, email: str = "", target_ur
     lead = await find_stored_proof_bundle_lead_for_recovery(email, target_url)
     if not lead:
         raise HTTPException(status_code=404, detail="No paid Proof Bundle matched that email and target URL.")
+    lead = await apply_recovery_target_override(lead, target_url)
     lead = await ensure_proof_bundle_delivery_ready(lead)
     return build_proof_bundle_delivery_payload(lead)
 

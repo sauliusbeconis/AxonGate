@@ -541,6 +541,13 @@ async def main() -> None:
         no_email_recovery_json = no_email_recovery.json()
         assert no_email_recovery_json["status"] == "ready", "No-email recovered delivery should be ready"
 
+        pending_recovery_target = "https://example.com/pending-recovered-target"
+        await gateway.set_cached_markdown(
+            pending_recovery_target,
+            "basic",
+            "# Pending Recovery\n\nThis source is cached for a recovered pending Stripe bundle.",
+            3600,
+        )
         pending_recovery_lead = {
             "id": "stripe_ci_pending_recovery",
             "created_at": int(time.time()),
@@ -564,13 +571,17 @@ async def main() -> None:
             "/v1/proof-pack/bundle/recover",
             params={
                 "email": "buyer-entered@example.invalid",
-                "target_url": "https://submitted.example.invalid/not-stored",
+                "target_url": pending_recovery_target,
             },
         )
         assert pending_recovery.status_code == 200, "Single pending Stripe bundle should recover as a rescue path"
         pending_recovery_json = pending_recovery.json()
         assert pending_recovery_json["lead_id"] == "stripe_ci_pending_recovery", (
             "Pending recovery should return the single unresolved Stripe lead"
+        )
+        assert pending_recovery_json["status"] == "ready", "Pending recovery should use the submitted target URL"
+        assert pending_recovery_json["report"]["source_reports"][0]["target_url"] == pending_recovery_target, (
+            "Pending recovery report should use the customer-submitted target URL"
         )
 
         duplicate_stripe_webhook = await client.post(
