@@ -4758,6 +4758,9 @@ async def find_stored_proof_bundle_lead_for_recovery(email: str, target_url: str
         if exact_match:
             return exact_match
 
+    if len(paid_target_matches) == 1:
+        return paid_target_matches[0]
+
     no_email_matches = [lead for lead in paid_target_matches if not proof_bundle_lead_recovery_emails(lead)]
     if len(no_email_matches) == 1:
         return no_email_matches[0]
@@ -5279,7 +5282,7 @@ def build_proof_bundle_recovery_html(email: str = "", target_url: str = "", erro
     {nav}
     <section class="panel">
       <h1>Recover Proof Bundle Delivery</h1>
-      <p>Enter the email used at Stripe checkout and one target URL from the purchase. If Stripe did not pass AxonGate a real email address, the target URL can still recover the matching paid bundle.</p>
+      <p>Enter the email used at Stripe checkout and one target URL from the purchase. If Stripe passed a different email or no real email address, AxonGate can still recover the matching paid bundle when the target URL identifies one paid order.</p>
       {error_html}
       <form action="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}" method="get">
         <label>

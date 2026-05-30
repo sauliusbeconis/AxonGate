@@ -433,6 +433,68 @@ async def main() -> None:
         )
         assert missing_recovery.status_code == 404, "Recovery should reject unmatched target URLs"
 
+        mismatch_target = "https://example.com/mismatched-email-recovery"
+        await gateway.set_cached_markdown(
+            mismatch_target,
+            "basic",
+            "# Mismatched Email Recovery\n\nThis source is cached for a paid bundle recovery test.",
+            3600,
+        )
+        mismatched_email_stripe_event = {
+            "id": "evt_ci_axongate_checkout_mismatched_email",
+            "object": "event",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_ci_axongate_mismatched_email",
+                    "object": "checkout.session",
+                    "payment_status": "paid",
+                    "currency": "usd",
+                    "amount_total": 200,
+                    "payment_link": "plink_ci_scout",
+                    "payment_intent": "pi_ci_axongate_mismatched_email",
+                    "metadata": {"bundle": "scout", "source": "ci-stripe"},
+                    "customer_details": {
+                        "email": "recorded-buyer@example.invalid",
+                        "name": "Recorded Buyer",
+                    },
+                    "custom_fields": [
+                        {
+                            "key": "target_urls",
+                            "label": {"type": "custom", "custom": "Target URLs"},
+                            "type": "text",
+                            "text": {"value": mismatch_target},
+                        },
+                    ],
+                }
+            },
+        }
+        mismatched_email_payload = json.dumps(
+            mismatched_email_stripe_event,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        mismatched_email_webhook = await client.post(
+            "/v1/stripe/webhook",
+            content=mismatched_email_payload,
+            headers={
+                "Stripe-Signature": stripe_signature(mismatched_email_payload, gateway.STRIPE_WEBHOOK_SECRET),
+                "content-type": "application/json",
+            },
+        )
+        assert mismatched_email_webhook.status_code == 200, "Mismatched-email Stripe webhook should be accepted"
+        mismatched_email_recovery = await client.get(
+            "/v1/proof-pack/bundle/recover",
+            params={
+                "email": "wrong-buyer@example.invalid",
+                "target_url": mismatch_target,
+            },
+        )
+        assert mismatched_email_recovery.status_code == 200, "Unique paid target should recover despite email mismatch"
+        assert mismatched_email_recovery.json()["lead_id"] == mismatched_email_webhook.json()["lead_id"], (
+            "Mismatched email recovery should return the unique paid target lead"
+        )
+
         no_email_stripe_event = {
             "id": "evt_ci_axongate_checkout_no_email",
             "object": "event",
