@@ -408,6 +408,31 @@ async def main() -> None:
         assert stripe_delivery_page.status_code == 200, "Stripe delivery page should render"
         assert "Proof Bundle Delivery" in stripe_delivery_page.text, "Stripe delivery page missing heading"
 
+        recovery_form = await client.get("/proof-pack/bundle/recover")
+        assert recovery_form.status_code == 200, "Proof Bundle recovery form should render"
+        assert "Recover Proof Bundle Delivery" in recovery_form.text, "Proof Bundle recovery form missing heading"
+
+        recovered_delivery = await client.get(
+            "/v1/proof-pack/bundle/recover",
+            params={
+                "email": "stripe-buyer@example.invalid",
+                "target_url": "https://example.com",
+            },
+        )
+        assert recovered_delivery.status_code == 200, "Stripe delivery should recover by email and target URL"
+        recovered_delivery_json = recovered_delivery.json()
+        assert recovered_delivery_json["status"] == "ready", "Recovered delivery should be ready"
+        assert recovered_delivery_json["lead_id"] == stripe_delivery_json["lead_id"], "Recovered delivery should match paid lead"
+
+        missing_recovery = await client.get(
+            "/v1/proof-pack/bundle/recover",
+            params={
+                "email": "stripe-buyer@example.invalid",
+                "target_url": "https://missing.example.invalid",
+            },
+        )
+        assert missing_recovery.status_code == 404, "Recovery should reject unmatched target URLs"
+
         duplicate_stripe_webhook = await client.post(
             "/v1/stripe/webhook",
             content=stripe_payload,
@@ -591,6 +616,12 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("proof_bundle_paid", 0) >= 2, "Proof Bundle paid missing from funnel"
         assert metrics["metrics"].get("proof_bundle_fulfilled_total", 0) >= 1, (
             "Proof Bundle fulfilled updates should be counted"
+        )
+        assert metrics["metrics"].get("proof_bundle_recovery_requests_total", 0) >= 3, (
+            "Proof Bundle recovery requests should be counted"
+        )
+        assert metrics["conversion_funnel"].get("proof_bundle_recovery_requests", 0) >= 3, (
+            "Proof Bundle recovery requests missing from funnel"
         )
         assert metrics["metrics"].get("proof_bundle_auto_fulfillment_success_total", 0) >= 1, (
             "Proof Bundle auto fulfillment should be counted"

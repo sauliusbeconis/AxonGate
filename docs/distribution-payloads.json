@@ -12,6 +12,8 @@
   "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay",
   "proof_bundle_delivery": "https://api.axongate.one/proof-pack/bundle/delivery",
   "proof_bundle_delivery_api": "https://api.axongate.one/v1/proof-pack/bundle/delivery",
+  "proof_bundle_recovery": "https://api.axongate.one/proof-pack/bundle/recover",
+  "proof_bundle_recovery_api": "https://api.axongate.one/v1/proof-pack/bundle/recover",
   "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
   "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
   "operator_lead_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",

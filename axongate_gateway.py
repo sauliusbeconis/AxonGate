@@ -399,6 +399,7 @@ metrics: dict[str, int] = {
     "proof_bundle_paid_total": 0,
     "proof_bundle_fulfilled_total": 0,
     "proof_bundle_delivery_requests_total": 0,
+    "proof_bundle_recovery_requests_total": 0,
     "proof_bundle_auto_fulfillment_started_total": 0,
     "proof_bundle_auto_fulfillment_success_total": 0,
     "proof_bundle_auto_fulfillment_errors_total": 0,
@@ -1011,6 +1012,7 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_bundle_paid": values.get("proof_bundle_paid_total", 0),
         "proof_bundle_fulfilled": values.get("proof_bundle_fulfilled_total", 0),
         "proof_bundle_delivery_requests": values.get("proof_bundle_delivery_requests_total", 0),
+        "proof_bundle_recovery_requests": values.get("proof_bundle_recovery_requests_total", 0),
         "proof_bundle_auto_fulfillment_success": values.get("proof_bundle_auto_fulfillment_success_total", 0),
         "proof_pack_requests": values.get("proof_pack_requests_total", 0),
         "proof_pack_llm_success": values.get("proof_pack_llm_success_total", 0),
@@ -1671,6 +1673,8 @@ def build_x402_resource() -> dict[str, Any]:
             "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "proofBundleDelivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
             "proofBundleDeliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
+            "proofBundleRecovery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover",
+            "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
             "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
@@ -1804,8 +1808,12 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
             "checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
+            "delivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
+            "recovery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover",
             "quoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
+            "deliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
+            "recoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
             "operatorLeads": f"{PUBLIC_BASE_URL}/operator/leads",
             "operatorStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
             "defaultBundle": DEFAULT_PROOF_BUNDLE,
@@ -1915,6 +1923,8 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proofBundleDelivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
         "proofBundleDeliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
+        "proofBundleRecovery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover",
+        "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
@@ -2139,6 +2149,8 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proofBundleDelivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
         "proofBundleDeliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
+        "proofBundleRecovery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover",
+        "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
@@ -4430,6 +4442,22 @@ def clean_lead_text(value: Optional[str], max_chars: int = 400) -> str:
     return cleaned[:max_chars]
 
 
+def normalize_recovery_email(value: Any) -> str:
+    """Normalize checkout email for paid delivery recovery matching."""
+    return clean_lead_text(str(value or ""), 180).lower()
+
+
+def normalize_recovery_url(value: Any) -> str:
+    """Normalize a public target URL for recovery matching without changing meaning."""
+    cleaned = clean_lead_text(str(value or ""), 2048)
+    if not cleaned:
+        return ""
+    parsed = urlparse(cleaned)
+    if parsed.scheme and parsed.netloc:
+        return parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower(), fragment="").geturl().rstrip("/")
+    return cleaned.rstrip("/").lower()
+
+
 def parse_urlencoded_payload(body: bytes) -> dict[str, str]:
     """Parse a small HTML form body without requiring python-multipart."""
     try:
@@ -4677,6 +4705,51 @@ async def find_stored_proof_bundle_lead_by_session(session_id: str) -> Optional[
             for lead in leads
             if str((lead.get("stripe") or {}).get("session_id") or "") == normalized_session_id
             and str(lead.get("product") or "") == "proof_bundle"
+        ),
+        None,
+    )
+
+
+def proof_bundle_lead_recovery_emails(lead: dict[str, Any]) -> set[str]:
+    """Return normalized buyer emails that may identify a paid bundle lead."""
+    stripe = lead.get("stripe") if isinstance(lead.get("stripe"), dict) else {}
+    candidates = {
+        lead.get("contact"),
+        stripe.get("customer_email"),
+        ((stripe.get("customer_details") or {}).get("email") if isinstance(stripe.get("customer_details"), dict) else ""),
+    }
+    return {normalized for item in candidates if (normalized := normalize_recovery_email(item))}
+
+
+def proof_bundle_lead_recovery_targets(lead: dict[str, Any]) -> set[str]:
+    """Return normalized target URLs that can be used to recover a paid bundle."""
+    targets: set[str] = set()
+    for target in lead.get("target_urls") or []:
+        normalized = normalize_recovery_url(target)
+        if normalized:
+            targets.add(normalized)
+    target_url = normalize_recovery_url(lead.get("target_url"))
+    if target_url:
+        targets.add(target_url)
+    return targets
+
+
+async def find_stored_proof_bundle_lead_for_recovery(email: str, target_url: str) -> Optional[dict[str, Any]]:
+    """Find a paid Proof Bundle lead by checkout email and one submitted source URL."""
+    normalized_email = normalize_recovery_email(email)
+    normalized_target = normalize_recovery_url(target_url)
+    if not normalized_email or not normalized_target:
+        return None
+
+    leads = await durable_proof_pack_leads(PROOF_PACK_LEADS_MEMORY_MAX)
+    return next(
+        (
+            lead
+            for lead in leads
+            if str(lead.get("product") or "") == "proof_bundle"
+            and normalize_lead_status(lead.get("status") or "new") in {"paid", "fulfilled"}
+            and normalized_email in proof_bundle_lead_recovery_emails(lead)
+            and normalized_target in proof_bundle_lead_recovery_targets(lead)
         ),
         None,
     )
@@ -5152,6 +5225,65 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
   <main>
     {nav}
     {content}
+  </main>
+</body>
+</html>"""
+
+
+def build_proof_bundle_recovery_html(email: str = "", target_url: str = "", error: str = "") -> str:
+    nav = site_nav_html("Bundles")
+    error_html = f'<p class="notice">{html.escape(error)}</p>' if error else ""
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recover AxonGate Proof Bundle Delivery</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); line-height: 1.55; }}
+    main {{ max-width: 900px; margin: 0 auto; padding: 34px 18px 64px; }}
+    h1 {{ margin: 0 0 10px; font-size: clamp(2rem, 4vw, 3rem); line-height: 1.05; }}
+    p {{ color: var(--muted); max-width: 72ch; }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .panel {{ border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: clamp(18px, 3vw, 28px); margin: 0 0 16px; }}
+    label {{ display: grid; gap: 7px; margin: 0 0 14px; color: var(--text); font-weight: 700; }}
+    input {{ width: 100%; min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: #0a0d13; color: var(--text); padding: 10px 12px; font: inherit; }}
+    .button, button {{ display: inline-flex; align-items: center; justify-content: center; min-height: 42px; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--accent), var(--panel) 78%); color: var(--text); padding: 10px 14px; font: inherit; font-weight: 700; cursor: pointer; }}
+    .notice {{ border: 1px solid color-mix(in srgb, #f6c177, var(--line) 45%); border-radius: 8px; padding: 11px 12px; background: color-mix(in srgb, #f6c177, var(--panel) 88%); color: var(--text); }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="panel">
+      <h1>Recover Proof Bundle Delivery</h1>
+      <p>Enter the email used at Stripe checkout and one target URL from the purchase. AxonGate will find the paid bundle and generate the cited report if it is not ready yet.</p>
+      {error_html}
+      <form action="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}" method="get">
+        <label>
+          Checkout email
+          <input type="email" name="email" value="{html.escape(email, quote=True)}" autocomplete="email" required>
+        </label>
+        <label>
+          Target URL
+          <input type="url" name="target_url" value="{html.escape(target_url, quote=True)}" placeholder="https://example.com" required>
+        </label>
+        <button type="submit">Recover delivery</button>
+      </form>
+    </section>
   </main>
 </body>
 </html>"""
@@ -6238,6 +6370,7 @@ def site_nav_html(active: str = "") -> str:
             ("Sample Report", public_url("/proof-pack/sample")),
             ("Proof Quote", public_url("/proof-pack/quote")),
             ("Request", public_url("/proof-pack/request")),
+            ("Recover Bundle", public_url("/proof-pack/bundle/recover")),
             ("Operator", public_url("/operator")),
             ("Discovery", public_url("/discovery/resources")),
         ]
@@ -7740,6 +7873,8 @@ Proof Bundle quote API: {public_url("/v1/proof-pack/bundle/quote")}
 Proof Bundle lead API: {public_url("/v1/proof-pack/bundle/leads")}
 Proof Bundle delivery page: {public_url("/proof-pack/bundle/delivery")}?session_id={{CHECKOUT_SESSION_ID}}
 Proof Bundle delivery API: {public_url("/v1/proof-pack/bundle/delivery")}?session_id={{CHECKOUT_SESSION_ID}}
+Proof Bundle recovery page: {public_url("/proof-pack/bundle/recover")}
+Proof Bundle recovery API: {public_url("/v1/proof-pack/bundle/recover")}?email=<checkout-email>&target_url=<submitted-url>
 Stripe Proof Bundle fulfillment webhook: {public_url("/v1/stripe/webhook")}
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
@@ -7823,6 +7958,8 @@ GET {public_url("/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls
 GET {public_url("/proof-pack/bundle/pay")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 GET {public_url("/proof-pack/bundle/delivery")}?session_id={{CHECKOUT_SESSION_ID}}
 GET {public_url("/v1/proof-pack/bundle/delivery")}?session_id={{CHECKOUT_SESSION_ID}}
+GET {public_url("/proof-pack/bundle/recover")}
+GET {public_url("/v1/proof-pack/bundle/recover")}?email=<checkout-email>&target_url=<submitted-url>
 GET {public_url("/v1/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 POST {public_url("/v1/proof-pack/bundle/leads")}
 POST {public_url("/v1/operator/leads/<lead_id>/status")} (private operator token required; statuses: {", ".join(PROOF_BUNDLE_LEAD_STATUSES)})
@@ -8114,7 +8251,7 @@ def build_docs_html() -> str:
     <p>Human bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
     <p>Tracked checkout route: <code>{public}/proof-pack/bundle/pay</code>. Configure payment URLs with <code>AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL</code>, <code>AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL</code>, and <code>AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL</code>.</p>
     <p>Stripe fulfillment webhook: <code>{public}/v1/stripe/webhook</code>. Configure Stripe to send <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, and <code>checkout.session.async_payment_failed</code>, then set <code>AXONGATE_STRIPE_WEBHOOK_SECRET</code> from the Stripe signing secret.</p>
-    <p>Stripe Payment Links should redirect after payment to <code>{public}/proof-pack/bundle/delivery?session_id={{CHECKOUT_SESSION_ID}}</code>. The webhook still handles fulfillment if the buyer closes Stripe before redirecting.</p>
+    <p>Stripe Payment Links should redirect after payment to <code>{public}/proof-pack/bundle/delivery?session_id={{CHECKOUT_SESSION_ID}}</code>. The webhook still handles fulfillment if the buyer closes Stripe before redirecting, and buyers can recover delivery at <code>{public}/proof-pack/bundle/recover</code> with their checkout email and one submitted target URL.</p>
     <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
     <pre>curl -X POST "{public}/v1/proof-pack/bundle/leads" \\
   -H "Content-Type: application/json" \\
@@ -9346,6 +9483,7 @@ def build_sitemap_xml() -> str:
         ("/proof-pack/bundle", "0.9"),
         ("/proof-pack/bundle/quote", "0.9"),
         ("/proof-pack/bundle/pay", "0.8"),
+        ("/proof-pack/bundle/recover", "0.8"),
         ("/v1/proof-pack/sample", "0.85"),
         ("/v1/proof-pack/preview", "0.85"),
         ("/v1/proof-pack/quote", "0.85"),
@@ -9709,6 +9847,53 @@ async def resolve_paid_bundle_delivery_lead(lead_id: str = "", session_id: str =
     return None
 
 
+async def ensure_proof_bundle_delivery_ready(lead: dict[str, Any]) -> dict[str, Any]:
+    """Generate a paid bundle report synchronously when possible."""
+    if not isinstance(lead.get("proof_bundle_report"), dict) and normalize_lead_status(lead.get("status") or "new") == "paid":
+        try:
+            generated = await asyncio.wait_for(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")), timeout=25)
+            if generated:
+                return generated
+        except asyncio.TimeoutError:
+            schedule_background(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")))
+    return await find_stored_proof_pack_lead(str(lead.get("id") or "")) or lead
+
+
+@app.get("/proof-pack/bundle/recover", response_class=HTMLResponse, tags=["discovery"], summary="Recover Proof Bundle delivery")
+async def proof_bundle_recovery_page(request: Request, email: str = "", target_url: str = ""):
+    """Recover a paid Proof Bundle delivery without a Stripe Checkout Session redirect."""
+    inc_metric("proof_bundle_recovery_requests_total")
+    if not email and not target_url:
+        return build_proof_bundle_recovery_html()
+    if not email or not target_url:
+        return HTMLResponse(
+            build_proof_bundle_recovery_html(email, target_url, "Enter both the Stripe checkout email and one target URL from the purchase."),
+            status_code=400,
+        )
+
+    lead = await find_stored_proof_bundle_lead_for_recovery(email, target_url)
+    if not lead:
+        return HTMLResponse(
+            build_proof_bundle_recovery_html(email, target_url, "No paid Proof Bundle matched that email and target URL yet."),
+            status_code=404,
+        )
+    lead = await ensure_proof_bundle_delivery_ready(lead)
+    return build_proof_bundle_delivery_html(lead)
+
+
+@app.get("/v1/proof-pack/bundle/recover", tags=["discovery"], summary="Recover Proof Bundle delivery JSON")
+async def proof_bundle_recovery_api(request: Request, email: str = "", target_url: str = ""):
+    """Recover a paid Proof Bundle delivery by checkout email and one target URL."""
+    inc_metric("proof_bundle_recovery_requests_total")
+    if not email or not target_url:
+        raise HTTPException(status_code=400, detail="email and target_url are required.")
+    lead = await find_stored_proof_bundle_lead_for_recovery(email, target_url)
+    if not lead:
+        raise HTTPException(status_code=404, detail="No paid Proof Bundle matched that email and target URL.")
+    lead = await ensure_proof_bundle_delivery_ready(lead)
+    return build_proof_bundle_delivery_payload(lead)
+
+
 @app.get("/proof-pack/bundle/delivery", response_class=HTMLResponse, tags=["discovery"], summary="Proof Bundle delivery page")
 async def proof_bundle_delivery_page(request: Request, lead_id: str = "", session_id: str = ""):
     """Serve the customer-facing Proof Bundle delivery page after Stripe checkout."""
@@ -9719,12 +9904,7 @@ async def proof_bundle_delivery_page(request: Request, lead_id: str = "", sessio
             build_proof_bundle_delivery_html(None, error="Delivery was not found. If payment just completed, refresh this page in a moment."),
             status_code=404,
         )
-    if not isinstance(lead.get("proof_bundle_report"), dict) and normalize_lead_status(lead.get("status") or "new") == "paid":
-        try:
-            lead = await asyncio.wait_for(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")), timeout=25)
-        except asyncio.TimeoutError:
-            schedule_background(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")))
-        lead = lead or await resolve_paid_bundle_delivery_lead(lead_id, session_id)
+    lead = await ensure_proof_bundle_delivery_ready(lead)
     return build_proof_bundle_delivery_html(lead)
 
 
@@ -9735,12 +9915,7 @@ async def proof_bundle_delivery_api(request: Request, lead_id: str = "", session
     lead = await resolve_paid_bundle_delivery_lead(lead_id, session_id)
     if not lead:
         raise HTTPException(status_code=404, detail="Delivery was not found. If payment just completed, retry shortly.")
-    if not isinstance(lead.get("proof_bundle_report"), dict) and normalize_lead_status(lead.get("status") or "new") == "paid":
-        try:
-            lead = await asyncio.wait_for(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")), timeout=25)
-        except asyncio.TimeoutError:
-            schedule_background(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")))
-        lead = lead or await resolve_paid_bundle_delivery_lead(lead_id, session_id)
+    lead = await ensure_proof_bundle_delivery_ready(lead)
     return build_proof_bundle_delivery_payload(lead)
 
 
@@ -10020,6 +10195,8 @@ async def root(request: Request):
         "proof_bundle_checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proof_bundle_delivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
         "proof_bundle_delivery_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
+        "proof_bundle_recovery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover",
+        "proof_bundle_recovery_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proof_bundle_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proof_bundle_leads_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "demo": f"{PUBLIC_BASE_URL}/demo",

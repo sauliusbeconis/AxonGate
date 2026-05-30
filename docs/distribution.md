@@ -54,6 +54,7 @@ Stripe Proof Bundle fulfillment:
 ```text
 Webhook URL: https://api.axongate.one/v1/stripe/webhook
 Post-payment redirect URL: https://api.axongate.one/proof-pack/bundle/delivery?session_id={CHECKOUT_SESSION_ID}
+Delivery recovery URL: https://api.axongate.one/proof-pack/bundle/recover
 Required env: AXONGATE_STRIPE_WEBHOOK_SECRET=whsec_...
 Events: checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed
 ```
@@ -62,6 +63,8 @@ The webhook verifies Stripe signatures, dedupes event IDs, creates or updates a
 paid Proof Bundle lead from Checkout custom fields, generates the cited delivery
 report, and increments the paid and fulfilled bundle funnel metrics. The redirect
 page lets buyers retrieve the report immediately by Stripe Checkout Session ID.
+If Stripe shows a confirmation page instead of redirecting, buyers can recover a
+paid report with their checkout email and one submitted target URL.
 
 ## Current Status
 
