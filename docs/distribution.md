@@ -64,7 +64,9 @@ paid Proof Bundle lead from Checkout custom fields, generates the cited delivery
 report, and increments the paid and fulfilled bundle funnel metrics. The redirect
 page lets buyers retrieve the report immediately by Stripe Checkout Session ID.
 If Stripe shows a confirmation page instead of redirecting, buyers can recover a
-paid report with their checkout email and one submitted target URL.
+paid report with their checkout email and one submitted target URL. If Stripe
+does not pass a real customer email, recovery can still match the paid bundle by
+submitted target URL when the stored lead has no email address.
 
 ## Current Status
 

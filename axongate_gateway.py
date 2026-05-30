@@ -4444,7 +4444,8 @@ def clean_lead_text(value: Optional[str], max_chars: int = 400) -> str:
 
 def normalize_recovery_email(value: Any) -> str:
     """Normalize checkout email for paid delivery recovery matching."""
-    return clean_lead_text(str(value or ""), 180).lower()
+    normalized = clean_lead_text(str(value or ""), 180).lower()
+    return normalized if "@" in normalized else ""
 
 
 def normalize_recovery_url(value: Any) -> str:
@@ -4738,21 +4739,29 @@ async def find_stored_proof_bundle_lead_for_recovery(email: str, target_url: str
     """Find a paid Proof Bundle lead by checkout email and one submitted source URL."""
     normalized_email = normalize_recovery_email(email)
     normalized_target = normalize_recovery_url(target_url)
-    if not normalized_email or not normalized_target:
+    if not normalized_target:
         return None
 
     leads = await durable_proof_pack_leads(PROOF_PACK_LEADS_MEMORY_MAX)
-    return next(
-        (
-            lead
-            for lead in leads
-            if str(lead.get("product") or "") == "proof_bundle"
-            and normalize_lead_status(lead.get("status") or "new") in {"paid", "fulfilled"}
-            and normalized_email in proof_bundle_lead_recovery_emails(lead)
-            and normalized_target in proof_bundle_lead_recovery_targets(lead)
-        ),
-        None,
-    )
+    paid_target_matches = [
+        lead
+        for lead in leads
+        if str(lead.get("product") or "") == "proof_bundle"
+        and normalize_lead_status(lead.get("status") or "new") in {"paid", "fulfilled"}
+        and normalized_target in proof_bundle_lead_recovery_targets(lead)
+    ]
+    if normalized_email:
+        exact_match = next(
+            (lead for lead in paid_target_matches if normalized_email in proof_bundle_lead_recovery_emails(lead)),
+            None,
+        )
+        if exact_match:
+            return exact_match
+
+    no_email_matches = [lead for lead in paid_target_matches if not proof_bundle_lead_recovery_emails(lead)]
+    if len(no_email_matches) == 1:
+        return no_email_matches[0]
+    return None
 
 
 async def build_stripe_proof_bundle_lead(event: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
@@ -5270,7 +5279,7 @@ def build_proof_bundle_recovery_html(email: str = "", target_url: str = "", erro
     {nav}
     <section class="panel">
       <h1>Recover Proof Bundle Delivery</h1>
-      <p>Enter the email used at Stripe checkout and one target URL from the purchase. AxonGate will find the paid bundle and generate the cited report if it is not ready yet.</p>
+      <p>Enter the email used at Stripe checkout and one target URL from the purchase. If Stripe did not pass AxonGate a real email address, the target URL can still recover the matching paid bundle.</p>
       {error_html}
       <form action="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}" method="get">
         <label>

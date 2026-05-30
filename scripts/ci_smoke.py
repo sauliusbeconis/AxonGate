@@ -433,6 +433,52 @@ async def main() -> None:
         )
         assert missing_recovery.status_code == 404, "Recovery should reject unmatched target URLs"
 
+        no_email_stripe_event = {
+            "id": "evt_ci_axongate_checkout_no_email",
+            "object": "event",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_ci_axongate_no_email",
+                    "object": "checkout.session",
+                    "payment_status": "paid",
+                    "currency": "usd",
+                    "amount_total": 200,
+                    "payment_link": "plink_ci_scout",
+                    "payment_intent": "pi_ci_axongate_no_email",
+                    "metadata": {"bundle": "scout", "source": "ci-stripe"},
+                    "custom_fields": [
+                        {
+                            "key": "target_urls",
+                            "label": {"type": "custom", "custom": "Target URLs"},
+                            "type": "text",
+                            "text": {"value": "https://example.com"},
+                        },
+                    ],
+                }
+            },
+        }
+        no_email_payload = json.dumps(no_email_stripe_event, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        no_email_webhook = await client.post(
+            "/v1/stripe/webhook",
+            content=no_email_payload,
+            headers={
+                "Stripe-Signature": stripe_signature(no_email_payload, gateway.STRIPE_WEBHOOK_SECRET),
+                "content-type": "application/json",
+            },
+        )
+        assert no_email_webhook.status_code == 200, "No-email Stripe webhook should be accepted"
+        no_email_recovery = await client.get(
+            "/v1/proof-pack/bundle/recover",
+            params={
+                "email": "buyer-entered@example.invalid",
+                "target_url": "https://example.com",
+            },
+        )
+        assert no_email_recovery.status_code == 200, "No-email Stripe delivery should recover by target URL"
+        no_email_recovery_json = no_email_recovery.json()
+        assert no_email_recovery_json["status"] == "ready", "No-email recovered delivery should be ready"
+
         duplicate_stripe_webhook = await client.post(
             "/v1/stripe/webhook",
             content=stripe_payload,
