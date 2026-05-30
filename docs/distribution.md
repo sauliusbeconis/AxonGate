@@ -49,6 +49,18 @@ Set `AXONGATE_OPERATOR_TOKEN` to enable raw contact access and
 `AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL` to notify an external inbox or workflow
 whenever a request is captured.
 
+Stripe Proof Bundle fulfillment:
+
+```text
+Webhook URL: https://api.axongate.one/v1/stripe/webhook
+Required env: AXONGATE_STRIPE_WEBHOOK_SECRET=whsec_...
+Events: checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed
+```
+
+The webhook verifies Stripe signatures, dedupes event IDs, creates or updates a
+paid Proof Bundle lead from Checkout custom fields, and increments the paid
+bundle funnel metrics.
+
 ## Current Status
 
 | Target | Status | Action |

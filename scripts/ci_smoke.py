@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -20,6 +23,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import axongate_gateway as gateway
 
 gateway.OPERATOR_TOKEN = "ci-operator-token"
+gateway.STRIPE_WEBHOOK_SECRET = "whsec_ci_smoke"
+
+
+def stripe_signature(payload: bytes, secret: str) -> str:
+    timestamp = int(time.time())
+    signed_payload = f"{timestamp}.".encode("utf-8") + payload
+    digest = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    return f"t={timestamp},v1={digest}"
 
 
 async def main() -> None:
@@ -315,6 +326,94 @@ async def main() -> None:
             "operator status API should persist fulfillment URL"
         )
 
+        stripe_event = {
+            "id": "evt_ci_axongate_checkout_paid",
+            "object": "event",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_ci_axongate_paid",
+                    "object": "checkout.session",
+                    "payment_status": "paid",
+                    "currency": "usd",
+                    "amount_total": 200,
+                    "payment_link": "plink_ci_scout",
+                    "payment_intent": "pi_ci_axongate",
+                    "metadata": {"bundle": "scout", "source": "ci-stripe"},
+                    "customer_details": {
+                        "email": "stripe-buyer@example.invalid",
+                        "name": "Stripe Buyer",
+                    },
+                    "custom_fields": [
+                        {
+                            "key": "target_urls",
+                            "label": {"type": "custom", "custom": "Target URLs"},
+                            "type": "text",
+                            "text": {
+                                "value": "https://www.iana.org/domains/reserved\nhttps://example.com"
+                            },
+                        },
+                        {
+                            "key": "question_or_claim_to_verify",
+                            "label": {"type": "custom", "custom": "Question or claim to verify"},
+                            "type": "text",
+                            "text": {"value": "Can these sources support the claim?"},
+                        },
+                    ],
+                }
+            },
+        }
+        stripe_payload = json.dumps(stripe_event, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        stripe_webhook = await client.post(
+            "/v1/stripe/webhook",
+            content=stripe_payload,
+            headers={
+                "Stripe-Signature": stripe_signature(stripe_payload, gateway.STRIPE_WEBHOOK_SECRET),
+                "content-type": "application/json",
+            },
+        )
+        assert stripe_webhook.status_code == 200, f"Stripe webhook returned {stripe_webhook.status_code}"
+        stripe_webhook_json = stripe_webhook.json()
+        assert stripe_webhook_json["status"] == "fulfilled", "Stripe webhook should fulfill paid checkout"
+        assert stripe_webhook_json["bundle"] == "scout", "Stripe webhook should preserve bundle metadata"
+        assert stripe_webhook_json["lead_status"] == "paid", "Stripe webhook should mark lead paid"
+
+        duplicate_stripe_webhook = await client.post(
+            "/v1/stripe/webhook",
+            content=stripe_payload,
+            headers={
+                "Stripe-Signature": stripe_signature(stripe_payload, gateway.STRIPE_WEBHOOK_SECRET),
+                "content-type": "application/json",
+            },
+        )
+        assert duplicate_stripe_webhook.status_code == 200, "Duplicate Stripe event should be acknowledged"
+        assert duplicate_stripe_webhook.json()["status"] == "duplicate", "Duplicate Stripe event should not refill"
+
+        bad_stripe_webhook = await client.post(
+            "/v1/stripe/webhook",
+            content=stripe_payload,
+            headers={"Stripe-Signature": "t=1,v1=bad", "content-type": "application/json"},
+        )
+        assert bad_stripe_webhook.status_code == 400, "Invalid Stripe signature should be rejected"
+
+        operator_leads_after_stripe = (
+            await client.get(
+                "/v1/operator/leads?limit=20",
+                headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+            )
+        ).json()
+        stripe_lead = next(
+            (
+                lead
+                for lead in operator_leads_after_stripe["leads"]
+                if lead.get("contact") == "stripe-buyer@example.invalid"
+            ),
+            None,
+        )
+        assert stripe_lead, "Stripe webhook should create an operator lead"
+        assert stripe_lead["status"] == "paid", "Stripe-created lead should be paid"
+        assert stripe_lead["stripe"]["session_id"] == "cs_ci_axongate_paid", "Stripe lead should retain session ID"
+
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
         assert proof_sample["supplier_spend"] is False, "Proof Pack sample should not spend supplier budget"
@@ -458,8 +557,20 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("proof_bundle_quotes", 0) >= 2, "Proof Bundle quotes missing from funnel"
         assert metrics["metrics"].get("proof_bundle_leads_total", 0) >= 1, "Proof Bundle leads should be counted"
         assert metrics["conversion_funnel"].get("proof_bundle_leads", 0) >= 1, "Proof Bundle leads missing from funnel"
+        assert metrics["metrics"].get("proof_bundle_paid_total", 0) >= 2, "Proof Bundle paid updates should be counted"
+        assert metrics["conversion_funnel"].get("proof_bundle_paid", 0) >= 2, "Proof Bundle paid missing from funnel"
+        assert metrics["metrics"].get("stripe_webhook_payment_succeeded_total", 0) >= 1, (
+            "Stripe webhook success should be counted"
+        )
+        assert metrics["metrics"].get("stripe_webhook_duplicate_events_total", 0) >= 1, (
+            "Stripe duplicate event should be counted"
+        )
+        assert metrics["metrics"].get("stripe_webhook_signature_failures_total", 0) >= 1, (
+            "Stripe signature failures should be counted"
+        )
         assert "proof_bundle_pricing" in metrics, "Proof Bundle pricing missing from metrics"
         assert "proof_pack_leads" in metrics, "Proof Pack lead storage snapshot missing from metrics"
+        assert metrics["stripe"]["webhook_enabled"] is True, "Stripe webhook should be enabled in CI"
         assert metrics["operator"]["private_leads_enabled"] is True, "operator private leads should be enabled in CI"
         assert "operator_auth_failures_total" in metrics["metrics"], "operator auth failures metric missing"
 

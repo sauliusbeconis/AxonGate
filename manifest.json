@@ -185,6 +185,7 @@
     "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
     "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
     "operator_lead_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",
+    "stripe_webhook": "https://api.axongate.one/v1/stripe/webhook",
     "demo": "https://api.axongate.one/demo",
     "llms_txt": "https://api.axongate.one/llms.txt",
     "robots": "https://api.axongate.one/robots.txt",
@@ -394,6 +395,7 @@
       "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
       "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
       "operator_lead_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",
+      "stripe_webhook": "https://api.axongate.one/v1/stripe/webhook",
       "private_operator_leads": "https://api.axongate.one/operator/leads",
       "sitemap": "https://api.axongate.one/sitemap.xml"
     },

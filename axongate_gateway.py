@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import hmac
 import html
 import ipaddress
 import inspect
@@ -190,6 +191,8 @@ ATTRIBUTION_FUNNEL_STAGES = (
     "proof_bundle_quotes",
     "proof_bundle_leads",
     "proof_bundle_payment_clicks",
+    "proof_bundle_paid",
+    "proof_bundle_fulfilled",
     "proof_pack_requests",
     "proof_pack_delivery_success",
 )
@@ -244,6 +247,10 @@ PROOF_BUNDLE_PAYMENT_URLS = {
     "audit": os.getenv("AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL", "").strip(),
 }
 PROOF_BUNDLE_LEAD_STATUSES = ("new", "contacted", "paid", "fulfilled", "lost")
+STRIPE_WEBHOOK_SECRET = os.getenv("AXONGATE_STRIPE_WEBHOOK_SECRET", "").strip()
+STRIPE_WEBHOOK_TOLERANCE_SECONDS = int(os.getenv("AXONGATE_STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300"))
+STRIPE_EVENTS_REDIS_KEY = os.getenv("AXONGATE_STRIPE_EVENTS_REDIS_KEY", "axongate:stripe_events")
+STRIPE_EVENTS_RETENTION_SECONDS = int(os.getenv("AXONGATE_STRIPE_EVENTS_RETENTION_SECONDS", str(30 * 24 * 60 * 60)))
 LLM_ENABLED = os.getenv("AXONGATE_LLM_ENABLED", "false").lower() in {"1", "true", "yes"}
 LLM_API_KEY = os.getenv("AXONGATE_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 LLM_BASE_URL = os.getenv("AXONGATE_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -306,6 +313,8 @@ attribution_counts: dict[str, int] = {}
 attribution_events: dict[str, tuple[int, str, str]] = {}
 proof_pack_leads: list[dict[str, Any]] = []
 proof_pack_leads_lock = asyncio.Lock()
+processed_stripe_events: set[str] = set()
+processed_stripe_events_lock = asyncio.Lock()
 metrics: dict[str, int] = {
     "requests_total": 0,
     "legacy_access_requests_total": 0,
@@ -389,6 +398,16 @@ metrics: dict[str, int] = {
     "proof_bundle_status_updates_total": 0,
     "proof_bundle_paid_total": 0,
     "proof_bundle_fulfilled_total": 0,
+    "stripe_webhook_events_total": 0,
+    "stripe_webhook_verified_total": 0,
+    "stripe_webhook_signature_failures_total": 0,
+    "stripe_webhook_misconfigured_total": 0,
+    "stripe_webhook_duplicate_events_total": 0,
+    "stripe_webhook_unsupported_events_total": 0,
+    "stripe_webhook_payment_succeeded_total": 0,
+    "stripe_webhook_payment_failed_total": 0,
+    "stripe_webhook_pending_payment_total": 0,
+    "stripe_webhook_fulfillment_errors_total": 0,
     "proof_pack_requests_total": 0,
     "proof_pack_llm_success_total": 0,
     "proof_pack_llm_fallback_total": 0,
@@ -1647,6 +1666,7 @@ def build_x402_resource() -> dict[str, Any]:
             "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
+            "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1888,6 +1908,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
+        "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -2109,6 +2130,7 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
+        "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
         "paymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
         "tierQueryParam": "tier",
@@ -4405,6 +4427,356 @@ def parse_urlencoded_payload(body: bytes) -> dict[str, str]:
     return {key: values[-1] if values else "" for key, values in parse_qs(decoded, keep_blank_values=True).items()}
 
 
+def normalize_form_key(value: Any) -> str:
+    """Turn third-party form labels into stable, low-cardinality keys."""
+    return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+
+def stripe_signature_values(signature_header: Optional[str]) -> tuple[int, list[str]]:
+    """Extract Stripe timestamp and v1 signatures from a Stripe-Signature header."""
+    if not signature_header:
+        raise PaymentValidationError("Missing Stripe-Signature header.")
+
+    timestamp: Optional[int] = None
+    signatures: list[str] = []
+    for item in signature_header.split(","):
+        key, _, value = item.strip().partition("=")
+        if key == "t":
+            try:
+                timestamp = int(value)
+            except ValueError as exc:
+                raise PaymentValidationError("Invalid Stripe webhook timestamp.") from exc
+        elif key == "v1" and value:
+            signatures.append(value)
+
+    if timestamp is None or not signatures:
+        raise PaymentValidationError("Stripe webhook signature is incomplete.")
+    return timestamp, signatures
+
+
+def verify_stripe_webhook_payload(raw_body: bytes, signature_header: Optional[str], secret: str) -> dict[str, Any]:
+    """Verify a Stripe webhook event using the signed raw request body."""
+    if not secret:
+        raise PaymentValidationError("Stripe webhook secret is not configured.")
+
+    timestamp, signatures = stripe_signature_values(signature_header)
+    if STRIPE_WEBHOOK_TOLERANCE_SECONDS > 0 and abs(int(time.time()) - timestamp) > STRIPE_WEBHOOK_TOLERANCE_SECONDS:
+        raise PaymentValidationError("Stripe webhook timestamp is outside the allowed tolerance.")
+
+    signed_payload = f"{timestamp}.".encode("utf-8") + raw_body
+    expected = hmac.new(secret.encode("utf-8"), signed_payload, hashlib.sha256).hexdigest()
+    if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
+        raise PaymentValidationError("Stripe webhook signature verification failed.")
+
+    try:
+        event = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PaymentValidationError("Stripe webhook body must be valid UTF-8 JSON.") from exc
+    if not isinstance(event, dict):
+        raise PaymentValidationError("Stripe webhook body must be a JSON object.")
+    return event
+
+
+async def mark_stripe_event_processed(event_id: str) -> bool:
+    """Return True only the first time a Stripe event ID is observed."""
+    normalized = str(event_id or "").strip()
+    if not normalized:
+        return False
+
+    if redis_client and METRICS_PERSISTENCE_ENABLED:
+        try:
+            added = await redis_client.sadd(STRIPE_EVENTS_REDIS_KEY, normalized)
+            await redis_client.expire(STRIPE_EVENTS_REDIS_KEY, STRIPE_EVENTS_RETENTION_SECONDS)
+            return int(added or 0) == 1
+        except Exception as exc:
+            print(f"[STRIPE_WEBHOOK] Redis event dedupe failed: {exc}")
+
+    async with processed_stripe_events_lock:
+        if normalized in processed_stripe_events:
+            return False
+        processed_stripe_events.add(normalized)
+        if len(processed_stripe_events) > PROOF_PACK_LEADS_MEMORY_MAX * 10:
+            for old_event_id in list(processed_stripe_events)[:PROOF_PACK_LEADS_MEMORY_MAX]:
+                processed_stripe_events.discard(old_event_id)
+        return True
+
+
+async def stripe_event_already_processed(event_id: str) -> bool:
+    """Check whether a Stripe event was already handled without mutating state."""
+    normalized = str(event_id or "").strip()
+    if not normalized:
+        return False
+
+    if redis_client and METRICS_PERSISTENCE_ENABLED:
+        try:
+            return bool(await redis_client.sismember(STRIPE_EVENTS_REDIS_KEY, normalized))
+        except Exception as exc:
+            print(f"[STRIPE_WEBHOOK] Redis event lookup failed: {exc}")
+
+    async with processed_stripe_events_lock:
+        return normalized in processed_stripe_events
+
+
+def stripe_event_object(event: dict[str, Any]) -> dict[str, Any]:
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    obj = data.get("object") if isinstance(data.get("object"), dict) else {}
+    if not obj:
+        raise PaymentValidationError("Stripe webhook event is missing data.object.")
+    return obj
+
+
+def stripe_session_metadata(session: dict[str, Any]) -> dict[str, str]:
+    metadata = session.get("metadata") if isinstance(session.get("metadata"), dict) else {}
+    return {normalize_form_key(key): str(value) for key, value in metadata.items() if value is not None}
+
+
+def stripe_custom_field_value(field: dict[str, Any]) -> str:
+    field_type = str(field.get("type") or "").strip().lower()
+    typed_value = field.get(field_type) if field_type else None
+    if isinstance(typed_value, dict):
+        value = typed_value.get("value")
+        if value is not None:
+            return str(value)
+    for fallback_type in ("text", "numeric", "dropdown"):
+        fallback_value = field.get(fallback_type)
+        if isinstance(fallback_value, dict) and fallback_value.get("value") is not None:
+            return str(fallback_value.get("value"))
+    return ""
+
+
+def stripe_custom_field_label(field: dict[str, Any]) -> str:
+    label = field.get("label")
+    if isinstance(label, dict):
+        return str(label.get("custom") or label.get("type") or "")
+    return str(label or "")
+
+
+def stripe_checkout_custom_fields(session: dict[str, Any]) -> dict[str, str]:
+    """Return Stripe Checkout custom fields keyed by both configured key and human label."""
+    fields: dict[str, str] = {}
+    raw_fields = session.get("custom_fields") if isinstance(session.get("custom_fields"), list) else []
+    for raw_field in raw_fields:
+        if not isinstance(raw_field, dict):
+            continue
+        value = clean_lead_text(stripe_custom_field_value(raw_field), 4000)
+        if not value:
+            continue
+        keys = {
+            normalize_form_key(raw_field.get("key")),
+            normalize_form_key(stripe_custom_field_label(raw_field)),
+        }
+        label_key = normalize_form_key(stripe_custom_field_label(raw_field))
+        if "target" in label_key and "url" in label_key:
+            keys.add("target_urls")
+        if "question" in label_key or "claim" in label_key or "verify" in label_key:
+            keys.add("question")
+        for key in keys:
+            if key:
+                fields[key] = value
+    return fields
+
+
+def stripe_session_amount_cents(session: dict[str, Any]) -> int:
+    try:
+        return int(session.get("amount_total") or session.get("amount_subtotal") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def infer_stripe_bundle(session: dict[str, Any], metadata: dict[str, str], custom_fields: dict[str, str]) -> tuple[str, str]:
+    """Infer the purchased bundle from metadata first, then unique configured prices."""
+    for key in ("bundle", "axon_bundle", "proof_bundle", "pack"):
+        candidate = metadata.get(key) or custom_fields.get(key)
+        if candidate:
+            try:
+                return normalize_proof_bundle(candidate), f"metadata:{key}"
+            except PaymentValidationError:
+                pass
+
+    currency = str(session.get("currency") or "").strip().lower()
+    amount_cents = stripe_session_amount_cents(session)
+    if currency in {"usd", "usdc"} and amount_cents > 0:
+        matches = [
+            bundle
+            for bundle, price in PROOF_BUNDLE_PRICING_USDC.items()
+            if int((price * Decimal("100")).to_integral_value()) == amount_cents
+        ]
+        if len(matches) == 1:
+            return matches[0], "amount_total"
+
+    return DEFAULT_PROOF_BUNDLE, "default"
+
+
+def stripe_session_contact(session: dict[str, Any]) -> tuple[str, str, str]:
+    details = session.get("customer_details") if isinstance(session.get("customer_details"), dict) else {}
+    email = clean_lead_text(str(details.get("email") or session.get("customer_email") or ""), 180)
+    name = clean_lead_text(str(details.get("name") or ""), 180)
+    if email and name:
+        return email, email, name
+    if email:
+        return email, email, name
+    if name:
+        return name, email, name
+    customer = clean_lead_text(str(session.get("customer") or ""), 180)
+    session_id = clean_lead_text(str(session.get("id") or ""), 180)
+    return customer or f"stripe-session:{session_id}", email, name
+
+
+def stripe_checkout_paid(event_type: str, session: dict[str, Any]) -> bool:
+    payment_status = str(session.get("payment_status") or "").strip().lower()
+    if event_type == "checkout.session.async_payment_succeeded":
+        return True
+    return payment_status in {"paid", "no_payment_required"}
+
+
+async def find_stored_proof_pack_lead(lead_id: str) -> Optional[dict[str, Any]]:
+    normalized_id = str(lead_id or "").strip()
+    if not normalized_id:
+        return None
+    return next(
+        (lead for lead in await durable_proof_pack_leads(PROOF_PACK_LEADS_MEMORY_MAX) if str(lead.get("id") or "") == normalized_id),
+        None,
+    )
+
+
+async def build_stripe_proof_bundle_lead(event: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+    """Convert a paid Stripe Checkout Session into AxonGate's operator lead shape."""
+    metadata = stripe_session_metadata(session)
+    custom_fields = stripe_checkout_custom_fields(session)
+    bundle, bundle_source = infer_stripe_bundle(session, metadata, custom_fields)
+    source = normalize_attribution_source(metadata.get("source") or metadata.get("utm_source") or "stripe")
+    question = proof_bundle_question(
+        custom_fields.get("question")
+        or custom_fields.get("question_or_claim_to_verify")
+        or custom_fields.get("claim_to_verify")
+        or metadata.get("question")
+    )
+    target_text = (
+        custom_fields.get("target_urls")
+        or custom_fields.get("target_url")
+        or custom_fields.get("urls")
+        or metadata.get("target_urls")
+        or metadata.get("target_url")
+        or ""
+    )
+    raw_targets = split_bundle_target_urls(target_text)
+    normalized_targets: list[str] = []
+    quote: Optional[dict[str, Any]] = None
+    validation_note = ""
+    try:
+        normalized_targets = await validate_proof_bundle_targets(raw_targets, bundle)
+        quote = await build_proof_bundle_quote(normalized_targets, question, bundle, source)
+    except PaymentValidationError as exc:
+        validation_note = f" Target URL validation needs follow-up: {exc.detail}"
+        normalized_targets = raw_targets[: proof_bundle_source_limit(bundle)]
+
+    link_targets = [target for target in normalized_targets if str(target).startswith(("http://", "https://"))]
+    if quote:
+        request_page = quote["next_steps"]["request_page"]
+        quote_page = quote["next_steps"]["quote_page"]
+        quote_api = quote["next_steps"]["quote_api"]
+        checkout_url = quote["next_steps"]["checkout_url"]
+        payment_url = quote["next_steps"]["payment_url"]
+        source_profiles = quote["source_profiles"]
+    else:
+        query_targets = link_targets
+        request_page = proof_bundle_request_page_url(query_targets, question, bundle, source) if query_targets else (
+            f"{PUBLIC_BASE_URL}/proof-pack/bundle?bundle={url_quote(bundle, safe='')}&source={url_quote(source, safe='')}"
+        )
+        quote_page = proof_bundle_quote_page_url(query_targets, question, bundle, source) if query_targets else ""
+        quote_api = ""
+        checkout_url = proof_bundle_checkout_url(query_targets, question, bundle, source) if query_targets else ""
+        payment_url = checkout_url
+        source_profiles = []
+
+    session_id = clean_lead_text(str(session.get("id") or event.get("id") or ""), 120)
+    lead_id = f"stripe_{stable_hash(session_id)[:12]}"
+    contact, customer_email, customer_name = stripe_session_contact(session)
+    price = price_for_proof_bundle(bundle)
+    amount_cents = stripe_session_amount_cents(session)
+    currency = clean_lead_text(str(session.get("currency") or "usd").lower(), 16)
+    payment_link = clean_lead_text(str(session.get("payment_link") or ""), 120)
+    payment_intent = clean_lead_text(str(session.get("payment_intent") or ""), 120)
+    notes = clean_lead_text(
+        (
+            f"Stripe checkout payment received. Bundle inferred from {bundle_source}. "
+            f"Session {session_id}; payment intent {payment_intent or 'n/a'}."
+            f"{validation_note}"
+        ),
+        500,
+    )
+    created_at = int(time.time())
+    target_urls = normalized_targets or raw_targets
+
+    return {
+        "id": lead_id,
+        "created_at": created_at,
+        "product": "proof_bundle",
+        "contact": contact,
+        "target_url": target_urls[0] if target_urls else "",
+        "target_urls": target_urls,
+        "target_urls_raw": target_text,
+        "target_count": len(target_urls),
+        "question": question,
+        "bundle": bundle,
+        "pack": bundle,
+        "use_case": "Stripe checkout purchase",
+        "budget_usdc": "",
+        "notes": notes,
+        "source": source,
+        "price_usdc": float(price),
+        "amount_units": str(usdc_units(price)),
+        "request_page": request_page,
+        "quote_page": quote_page,
+        "quote_api": quote_api,
+        "checkout_url": checkout_url,
+        "payment_url": payment_url,
+        "payment_link_configured": bool(proof_bundle_payment_url(bundle)),
+        "paid_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack=standard&source={source}",
+        "buyer_command": "Stripe payment received. Fulfill this Proof Bundle from the operator inbox.",
+        "source_profiles": source_profiles,
+        "stripe": {
+            "event_id": event.get("id"),
+            "event_type": event.get("type"),
+            "session_id": session_id,
+            "payment_status": session.get("payment_status"),
+            "payment_link": payment_link,
+            "payment_intent": payment_intent,
+            "amount_total": amount_cents,
+            "currency": currency,
+            "customer_email": customer_email,
+            "customer_name": customer_name,
+            "bundle_inference": bundle_source,
+            "custom_fields": custom_fields,
+        },
+    }
+
+
+async def fulfill_stripe_checkout_session(event: dict[str, Any], session: dict[str, Any]) -> dict[str, Any]:
+    """Create or update a paid Proof Bundle lead from a verified Stripe session."""
+    candidate = await build_stripe_proof_bundle_lead(event, session)
+    existing = await find_stored_proof_pack_lead(candidate["id"])
+    if existing:
+        merged = dict(candidate)
+        merged["created_at"] = existing.get("created_at") or candidate["created_at"]
+        merged["status"] = existing.get("status") or "new"
+        merged["status_history"] = existing.get("status_history")
+        merged["fulfillment_url"] = existing.get("fulfillment_url")
+        merged["delivery_note"] = existing.get("delivery_note")
+        await update_stored_proof_pack_lead(candidate["id"], merged)
+    else:
+        candidate["storage_backend"] = await store_proof_pack_lead(candidate)
+        inc_metric("proof_bundle_leads_total")
+        inc_attribution("proof_bundle_leads", candidate["source"])
+
+    updated = await update_proof_pack_lead_status(
+        candidate["id"],
+        "paid",
+        note=f"Stripe {event.get('type')} verified for session {candidate['stripe']['session_id']}.",
+    )
+    return updated or candidate
+
+
 def proof_pack_request_page_url(target_url: str, question: str, pack: str, source: str) -> str:
     normalized_pack = normalize_proof_pack(pack)
     normalized_source = normalize_attribution_source(source)
@@ -4844,6 +5216,10 @@ async def update_proof_pack_lead_status(
     existing = next((lead for lead in await durable_proof_pack_leads(PROOF_PACK_LEADS_MEMORY_MAX) if lead.get("id") == lead_id), None)
     if not existing:
         return None
+    try:
+        previous_status = normalize_lead_status(existing.get("status") or "new")
+    except PaymentValidationError:
+        previous_status = "new"
     history = existing.get("status_history") if isinstance(existing.get("status_history"), list) else []
     history = list(history)[-20:]
     history.append(
@@ -4868,10 +5244,13 @@ async def update_proof_pack_lead_status(
     if updated:
         inc_metric("proof_bundle_status_updates_total")
         if str(updated.get("product") or "") == "proof_bundle":
-            if normalized_status == "paid":
+            source = normalize_attribution_source(str(updated.get("source") or "direct"))
+            if normalized_status == "paid" and previous_status not in {"paid", "fulfilled"}:
                 inc_metric("proof_bundle_paid_total")
-            if normalized_status == "fulfilled":
+                inc_attribution("proof_bundle_paid", source)
+            if normalized_status == "fulfilled" and previous_status != "fulfilled":
                 inc_metric("proof_bundle_fulfilled_total")
+                inc_attribution("proof_bundle_fulfilled", source)
     return updated
 
 
@@ -6979,6 +7358,7 @@ Proof Bundle page: {public_url("/proof-pack/bundle")}
 Proof Bundle quote page: {public_url("/proof-pack/bundle/quote")}
 Proof Bundle quote API: {public_url("/v1/proof-pack/bundle/quote")}
 Proof Bundle lead API: {public_url("/v1/proof-pack/bundle/leads")}
+Stripe Proof Bundle fulfillment webhook: {public_url("/v1/stripe/webhook")}
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
@@ -7062,9 +7442,15 @@ GET {public_url("/proof-pack/bundle/pay")}?target_urls=<newline-separated-urls>&
 GET {public_url("/v1/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 POST {public_url("/v1/proof-pack/bundle/leads")}
 POST {public_url("/v1/operator/leads/<lead_id>/status")} (private operator token required; statuses: {", ".join(PROOF_BUNDLE_LEAD_STATUSES)})
+POST {public_url("/v1/stripe/webhook")} (Stripe-signed Checkout events; set AXONGATE_STRIPE_WEBHOOK_SECRET)
 
 Proof Bundle prices:
 {proof_bundle_lines}
+
+Stripe events:
+- checkout.session.completed
+- checkout.session.async_payment_succeeded
+- checkout.session.async_payment_failed
 
 Successful Proof Pack response shape:
 - status: success
@@ -7343,6 +7729,7 @@ def build_docs_html() -> str:
     </div>
     <p>Human bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
     <p>Tracked checkout route: <code>{public}/proof-pack/bundle/pay</code>. Configure payment URLs with <code>AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL</code>, <code>AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL</code>, and <code>AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL</code>.</p>
+    <p>Stripe fulfillment webhook: <code>{public}/v1/stripe/webhook</code>. Configure Stripe to send <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, and <code>checkout.session.async_payment_failed</code>, then set <code>AXONGATE_STRIPE_WEBHOOK_SECRET</code> from the Stripe signing secret.</p>
     <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
     <pre>curl -X POST "{public}/v1/proof-pack/bundle/leads" \\
   -H "Content-Type: application/json" \\
@@ -8631,6 +9018,76 @@ async def operator_dashboard(request: Request):
     return build_operator_dashboard_html(metric_values, attribution, rolling_attribution, triggered_alerts)
 
 
+@app.post("/v1/stripe/webhook", tags=["operations"], summary="Stripe Checkout fulfillment webhook")
+async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Header(None, alias="Stripe-Signature")):
+    """Accept verified Stripe Checkout events and create paid Proof Bundle leads."""
+    inc_metric("stripe_webhook_events_total")
+    if not STRIPE_WEBHOOK_SECRET:
+        inc_metric("stripe_webhook_misconfigured_total")
+        raise HTTPException(
+            status_code=503,
+            detail="Stripe webhook secret is not configured. Set AXONGATE_STRIPE_WEBHOOK_SECRET.",
+        )
+
+    raw_body = await request.body()
+    try:
+        event = verify_stripe_webhook_payload(raw_body, stripe_signature, STRIPE_WEBHOOK_SECRET)
+    except PaymentValidationError as exc:
+        inc_metric("stripe_webhook_signature_failures_total")
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+    event_id = clean_lead_text(str(event.get("id") or ""), 120)
+    event_type = clean_lead_text(str(event.get("type") or ""), 120)
+    if not event_id or not event_type:
+        inc_metric("stripe_webhook_fulfillment_errors_total")
+        raise HTTPException(status_code=400, detail="Stripe event must include id and type.")
+
+    if await stripe_event_already_processed(event_id):
+        inc_metric("stripe_webhook_duplicate_events_total")
+        return {"status": "duplicate", "event_id": event_id, "event_type": event_type}
+
+    inc_metric("stripe_webhook_verified_total")
+
+    if event_type == "checkout.session.async_payment_failed":
+        inc_metric("stripe_webhook_payment_failed_total")
+        await mark_stripe_event_processed(event_id)
+        return {"status": "payment_failed", "event_id": event_id, "event_type": event_type}
+
+    if event_type not in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
+        inc_metric("stripe_webhook_unsupported_events_total")
+        await mark_stripe_event_processed(event_id)
+        return {"status": "ignored", "event_id": event_id, "event_type": event_type}
+
+    try:
+        session = stripe_event_object(event)
+        if not stripe_checkout_paid(event_type, session):
+            inc_metric("stripe_webhook_pending_payment_total")
+            await mark_stripe_event_processed(event_id)
+            return {
+                "status": "pending_payment",
+                "event_id": event_id,
+                "event_type": event_type,
+                "payment_status": session.get("payment_status"),
+            }
+        lead = await fulfill_stripe_checkout_session(event, session)
+    except Exception as exc:
+        inc_metric("stripe_webhook_fulfillment_errors_total")
+        print(f"[STRIPE_WEBHOOK] Fulfillment failed for {event_id}: {exc}")
+        raise HTTPException(status_code=500, detail="Stripe webhook fulfillment failed.") from exc
+
+    inc_metric("stripe_webhook_payment_succeeded_total")
+    await mark_stripe_event_processed(event_id)
+    return {
+        "status": "fulfilled",
+        "event_id": event_id,
+        "event_type": event_type,
+        "lead_id": lead.get("id"),
+        "bundle": lead.get("bundle"),
+        "lead_status": lead.get("status"),
+        "operator_leads": public_url("/operator/leads"),
+    }
+
+
 @app.get("/operator/leads", response_class=HTMLResponse, tags=["operations"], summary="Private Proof Pack lead inbox")
 async def operator_leads_page(request: Request, limit: int = 50):
     """Serve a token-protected operator inbox with raw Proof Pack lead contact data."""
@@ -9249,6 +9706,13 @@ async def metrics_snapshot():
             "private_leads_enabled": bool(OPERATOR_TOKEN),
             "lead_webhook_enabled": bool(PROOF_PACK_LEAD_WEBHOOK_URL),
             "operator_token_header": "X-AxonGate-Operator-Token",
+        },
+        "stripe": {
+            "webhook_enabled": bool(STRIPE_WEBHOOK_SECRET),
+            "webhook_endpoint": public_url("/v1/stripe/webhook"),
+            "events_redis_key": STRIPE_EVENTS_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
+            "event_retention_seconds": STRIPE_EVENTS_RETENTION_SECONDS,
+            "signature_tolerance_seconds": STRIPE_WEBHOOK_TOLERANCE_SECONDS,
         },
         "cache": {
             "backend": "redis" if redis_client else "memory",
