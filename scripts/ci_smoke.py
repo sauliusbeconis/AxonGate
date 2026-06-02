@@ -67,6 +67,17 @@ def stripe_signature(payload: bytes, secret: str) -> str:
 async def main() -> None:
     manifest_path = Path(__file__).resolve().parents[1] / "manifest.json"
     json.loads(manifest_path.read_text(encoding="utf-8"))
+    resend_request = httpx.Request("POST", "https://api.resend.com/emails")
+    resend_response = httpx.Response(
+        403,
+        json={"message": "Sender reports@axongate.one is not verified."},
+        request=resend_request,
+    )
+    resend_error = httpx.HTTPStatusError("Resend rejected email", request=resend_request, response=resend_response)
+    resend_detail, resend_status = gateway.describe_email_delivery_exception(resend_error)
+    assert resend_status == 403, "email diagnostic should preserve provider status code"
+    assert "HTTP 403" in resend_detail, "email diagnostic should include HTTP status"
+    assert "reports@axongate.one" not in resend_detail, "email diagnostic should redact email addresses"
 
     transport = httpx.ASGITransport(app=gateway.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
@@ -835,6 +846,8 @@ async def main() -> None:
         assert "proof_pack_leads" in metrics, "Proof Pack lead storage snapshot missing from metrics"
         assert metrics["email_delivery"]["enabled"] is True, "email delivery should be enabled in CI"
         assert metrics["email_delivery"]["resend_api_key_configured"] is True, "email delivery key should be configured in CI"
+        assert "last_error" in metrics["email_delivery"], "email delivery should expose last sanitized error"
+        assert metrics["email_delivery"]["last_error"] == "", "successful CI email should clear last email error"
         assert metrics["stripe"]["webhook_enabled"] is True, "Stripe webhook should be enabled in CI"
         assert metrics["operator"]["private_leads_enabled"] is True, "operator private leads should be enabled in CI"
         assert "operator_auth_failures_total" in metrics["metrics"], "operator auth failures metric missing"

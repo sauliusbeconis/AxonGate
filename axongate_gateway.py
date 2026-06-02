@@ -258,6 +258,9 @@ EMAIL_REPLY_TO = os.getenv("AXONGATE_EMAIL_REPLY_TO", "").strip()
 RESEND_API_KEY = os.getenv("AXONGATE_RESEND_API_KEY", "").strip()
 RESEND_API_URL = os.getenv("AXONGATE_RESEND_API_URL", "https://api.resend.com/emails").strip()
 RESEND_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_RESEND_TIMEOUT_SECONDS", "10"))
+email_delivery_last_error = ""
+email_delivery_last_error_at = 0
+email_delivery_last_status_code: Optional[int] = None
 LLM_ENABLED = os.getenv("AXONGATE_LLM_ENABLED", "false").lower() in {"1", "true", "yes"}
 LLM_API_KEY = os.getenv("AXONGATE_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 LLM_BASE_URL = os.getenv("AXONGATE_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -5289,6 +5292,54 @@ async def send_resend_email(payload: dict[str, Any]) -> dict[str, Any]:
         return parsed if isinstance(parsed, dict) else {}
 
 
+def sanitize_email_delivery_error(value: Any, limit: int = 360) -> str:
+    """Return a compact email-provider error without addresses or secrets."""
+    text = clean_lead_text(str(value or ""), limit * 2)
+    text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[email]", text)
+    text = text.replace(RESEND_API_KEY, "[redacted]") if RESEND_API_KEY else text
+    return text[:limit]
+
+
+def describe_email_delivery_exception(exc: Exception) -> tuple[str, Optional[int]]:
+    """Extract a useful, sanitized provider error from httpx exceptions."""
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if response is not None:
+        detail = ""
+        try:
+            parsed = response.json()
+        except Exception:
+            parsed = None
+        if isinstance(parsed, dict):
+            parts = []
+            for key in ("name", "message", "error", "code", "status"):
+                value = parsed.get(key)
+                if value:
+                    parts.append(f"{key}={value}")
+            detail = "; ".join(parts)
+        if not detail:
+            detail = getattr(response, "text", "") or str(response)
+        prefix = f"HTTP {status_code}" if status_code else "HTTP error"
+        return sanitize_email_delivery_error(f"{prefix}: {detail}"), status_code
+    return sanitize_email_delivery_error(exc), status_code
+
+
+def record_email_delivery_error(detail: str, status_code: Optional[int] = None) -> None:
+    """Remember the latest provider error for operator diagnostics."""
+    global email_delivery_last_error, email_delivery_last_error_at, email_delivery_last_status_code
+    email_delivery_last_error = sanitize_email_delivery_error(detail)
+    email_delivery_last_error_at = int(time.time())
+    email_delivery_last_status_code = status_code
+
+
+def clear_email_delivery_error() -> None:
+    """Clear the last provider error after a confirmed successful send."""
+    global email_delivery_last_error, email_delivery_last_error_at, email_delivery_last_status_code
+    email_delivery_last_error = ""
+    email_delivery_last_error_at = 0
+    email_delivery_last_status_code = None
+
+
 async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dict[str, Any]]:
     """Email a fulfilled Proof Bundle report link when delivery email is configured."""
     if not isinstance(lead.get("proof_bundle_report"), dict):
@@ -5304,10 +5355,12 @@ async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dic
         inc_metric("proof_bundle_delivery_email_missing_recipient_total")
         return lead
     if EMAIL_PROVIDER != "resend" or not RESEND_API_KEY or not EMAIL_FROM:
+        detail = "Email delivery is enabled but Resend is not fully configured."
         inc_metric("proof_bundle_delivery_email_errors_total")
+        record_email_delivery_error(detail)
         await update_stored_proof_pack_lead(
             str(lead.get("id") or ""),
-            {"delivery_email_error": "Email delivery is enabled but Resend is not fully configured."},
+            {"delivery_email_error": detail},
         )
         return lead
 
@@ -5326,12 +5379,14 @@ async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dic
     try:
         result = await send_resend_email(resend_payload)
     except Exception as exc:
+        detail, status_code = describe_email_delivery_exception(exc)
         inc_metric("proof_bundle_delivery_email_errors_total")
+        record_email_delivery_error(detail, status_code)
         await update_stored_proof_pack_lead(
             str(lead.get("id") or ""),
-            {"delivery_email_error": str(getattr(exc, "response", None) or exc)[:260]},
+            {"delivery_email_error": detail},
         )
-        print(f"[PROOF_BUNDLE_EMAIL] Delivery email failed for {lead.get('id')}: {exc}")
+        print(f"[PROOF_BUNDLE_EMAIL] Delivery email failed for {lead.get('id')}: {detail}")
         return await find_stored_proof_pack_lead(str(lead.get("id") or "")) or lead
 
     updates = {
@@ -5342,6 +5397,7 @@ async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dic
         "delivery_email_error": "",
     }
     inc_metric("proof_bundle_delivery_email_success_total")
+    clear_email_delivery_error()
     return await update_stored_proof_pack_lead(str(lead.get("id") or ""), updates)
 
 
@@ -10574,6 +10630,9 @@ async def metrics_snapshot():
             "from_configured": bool(EMAIL_FROM),
             "reply_to_configured": bool(EMAIL_REPLY_TO),
             "resend_api_key_configured": bool(RESEND_API_KEY),
+            "last_error": email_delivery_last_error,
+            "last_error_at": email_delivery_last_error_at,
+            "last_status_code": email_delivery_last_status_code,
         },
         "cache": {
             "backend": "redis" if redis_client else "memory",
