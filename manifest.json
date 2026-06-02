@@ -14,9 +14,9 @@
     "status": "active"
   },
   "service": {
-    "name": "The Clean Context Broker",
+    "name": "AI Source Trust Layer",
     "category": "Data & Context",
-    "description": "High-fidelity Web-to-Markdown Context Broker and Proof Pack service that returns clean Markdown or citation-backed evidence reports for RAG pipelines, autonomous research agents, and LLM inference.",
+    "description": "Evidence trust layer for AI agents. AxonGate checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions; clean Markdown extraction remains available as a supporting endpoint.",
     "capabilities": [
       "web_scraping",
       "html_to_markdown",
@@ -46,6 +46,9 @@
       "starter_sample_pricing",
       "proof_pack_evidence_reports",
       "citation_backed_reports",
+      "source_trust_checks",
+      "claim_support_decisions",
+      "weak_evidence_detection",
       "proof_pack_sample_preview",
       "proof_pack_mini_preview",
       "proof_pack_lead_capture",

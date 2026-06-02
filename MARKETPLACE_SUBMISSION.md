@@ -4,17 +4,17 @@
 
 Name: AxonGate
 
-Service: The Clean Context Broker
+Service: AI Source Trust Layer
 
 Basename: axongate.base.eth
 
 Category: Data & Context
 
 Description:
-AxonGate is an x402-paid Clean Context Broker, Proof Pack, and Proof Bundle service for autonomous agents. It converts public web pages into clean, token-efficient Markdown and can return citation-backed evidence reports or multi-source evidence bundle quotes for agent builders.
+AxonGate is an x402-paid evidence trust layer for autonomous agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions; clean Markdown extraction is available as a supporting endpoint.
 
 Short description:
-x402-paid Web-to-Markdown extraction, cited Proof Packs, and multi-source Proof Bundles for agent builders.
+x402-paid source trust checks, citation-backed evidence decisions, and multi-source claim support bundles for agent builders.
 
 ## Live URLs
 
@@ -152,7 +152,7 @@ Pay to:
 
 ## Search Keywords
 
-x402, Base, USDC, web scraping, Web-to-Markdown, markdown extraction, RAG context, autonomous research, LLM context preparation, Proof Pack, Proof Bundle, citations, evidence report, multi-source evidence, paid API, agent marketplace
+x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, citations, evidence report, multi-source evidence, paid API, agent marketplace
 
 ## Source Attribution
 

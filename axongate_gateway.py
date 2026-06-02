@@ -80,7 +80,7 @@ load_dotenv()
 
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
-    description="x402-paid Clean Context Broker for Web-to-Markdown extraction on Base.",
+    description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
     version="1.3.0",
     docs_url="/swagger",
     redoc_url="/redoc",
@@ -1663,9 +1663,9 @@ def build_x402_resource() -> dict[str, Any]:
             "provider": "AxonGate",
             "basename": "axongate.base.eth",
             "category": "data-context",
-            "service": "The Clean Context Broker",
-            "description": "x402-paid Web-to-Markdown extraction for RAG and autonomous research agents.",
-            "tags": ["x402", "base", "usdc", "web-to-markdown", "rag", "context-broker"],
+            "service": "AxonGate Context Endpoint",
+            "description": "Supporting x402 endpoint for clean web context. AxonGate's flagship product is the source trust check at /proof-pack.",
+            "tags": ["x402", "base", "usdc", "source-trust", "web-to-markdown", "rag", "context-broker"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
             "docs": f"{PUBLIC_BASE_URL}/docs",
@@ -1747,9 +1747,9 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "provider": "AxonGate",
             "basename": "axongate.base.eth",
             "category": "evidence-reports",
-            "service": "AxonGate Proof Packs",
-            "description": "Paid, citation-backed evidence reports for agent builders and RAG evaluators.",
-            "tags": ["x402", "base", "usdc", "proof-pack", "citations", "agent-builders", "evidence"],
+            "service": "AxonGate Source Trust Check",
+            "description": "Paid evidence trust decision for agent builders: supported, weak, unsupported, and citation-ready source findings.",
+            "tags": ["x402", "base", "usdc", "source-trust", "proof-pack", "citations", "agent-builders", "evidence"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
             "sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
@@ -1818,9 +1818,9 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "provider": "AxonGate",
             "basename": "axongate.base.eth",
             "category": "evidence-reports",
-            "service": "AxonGate Proof Bundles",
-            "description": "No-spend quote, tracked checkout, and operator pipeline for multi-source evidence bundles aimed at agent builders.",
-            "tags": ["proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
+            "service": "AxonGate Evidence Bundles",
+            "description": "No-spend quote, tracked checkout, and delivery pipeline for multi-source claim support checks aimed at agent builders.",
+            "tags": ["source-trust", "proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
             "checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
@@ -1877,7 +1877,7 @@ def build_payment_required_payload(error: str, tier: Optional[str] = None) -> di
         "error": error,
         "resource": {
             "url": f"{PUBLIC_BASE_URL}/v1/x402/access",
-            "description": "AxonGate Clean Context Broker: paid Web-to-Markdown extraction.",
+            "description": "AxonGate context endpoint: paid clean Markdown extraction supporting the source trust layer.",
             "mimeType": "application/json",
         },
         "accepts": build_x402_accepts(normalized_tier),
@@ -1896,7 +1896,7 @@ def build_proof_pack_payment_required_payload(error: str, pack: Optional[str] = 
         "error": error,
         "resource": {
             "url": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
-            "description": "AxonGate Proof Pack: citation-backed evidence report.",
+            "description": "AxonGate Source Trust Check: citation-backed decision on whether a source is safe to cite.",
             "mimeType": "application/json",
         },
         "accepts": build_proof_pack_x402_accepts(normalized_pack),
@@ -1909,10 +1909,11 @@ def build_proof_pack_payment_required_payload(error: str, pack: Optional[str] = 
 
 def build_x402_public_discovery() -> dict[str, Any]:
     """Return x402 discovery with official extensions and metadata."""
-    payload = build_payment_required_payload("Payment required to access AxonGate Clean Context Broker")
+    payload = build_payment_required_payload("Payment required to access AxonGate source trust and context endpoints")
     payload["metadata"] = {
         "provider": "AxonGate",
-        "service": "The Clean Context Broker",
+        "service": "AI Source Trust Layer",
+        "description": "Checks whether public web evidence is safe for AI agents to cite or act on; clean context extraction is available as a supporting endpoint.",
         "basename": "axongate.base.eth",
         "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
         "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
@@ -7290,14 +7291,19 @@ def ui_link(label: str, href: Any, *, class_name: str = "button secondary", curr
 def site_nav_html(active: str = "") -> str:
     """Render the compact shared top navigation."""
     nav_items = [
-        ("Proof Packs", public_url("/proof-pack")),
-        ("Bundles", public_url("/proof-pack/bundle")),
-        ("Docs", public_url("/docs")),
-        ("Quickstart", public_url("/quickstart")),
+        ("Trust Check", public_url("/proof-pack"), "Proof Packs"),
+        ("Evidence Bundles", public_url("/proof-pack/bundle"), "Bundles"),
+        ("Docs", public_url("/docs"), "Docs"),
+        ("Quickstart", public_url("/quickstart"), "Quickstart"),
     ]
     nav_links = "\n        ".join(
-        ui_link(label, href, class_name="", current=label.lower() == active.lower())
-        for label, href in nav_items
+        ui_link(
+            label,
+            href,
+            class_name="",
+            current=label.lower() == active.lower() or key.lower() == active.lower(),
+        )
+        for label, href, key in nav_items
     )
     more_links = "\n          ".join(
         ui_link(label, href, class_name="")
@@ -7312,7 +7318,7 @@ def site_nav_html(active: str = "") -> str:
     )
     return f"""
     <nav class="site-nav" aria-label="Main navigation">
-      <a class="brand" href="{html.escape(public_url('/proof-pack'), quote=True)}">AxonGate<small>proof and context gateway</small></a>
+      <a class="brand" href="{html.escape(public_url('/proof-pack'), quote=True)}">AxonGate<small>agent evidence trust layer</small></a>
       <div class="nav-core">
         {nav_links}
         <details class="ui-menu">
@@ -8146,7 +8152,7 @@ def build_proof_bundle_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AxonGate Proof Bundles</title>
+  <title>AxonGate Multi-Source Evidence Check</title>
   <style>
     :root {{
       color-scheme: light dark;
@@ -8198,6 +8204,9 @@ def build_proof_bundle_html(
       cursor: pointer;
     }}
     .summary {{ max-width: 820px; font-size: 1.08rem; }}
+    .decision-grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0; }}
+    .decision-card {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
+    .decision-card strong {{ display: block; color: var(--text); margin-bottom: 4px; }}
     .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
     .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
     .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0; }}
@@ -8211,6 +8220,7 @@ def build_proof_bundle_html(
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
     th {{ color: var(--text); }}
     td {{ overflow-wrap: anywhere; }}
+    .eyebrow {{ margin: 0 0 8px; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; }}
     .table-wrap {{ max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
     .table-wrap table {{ min-width: 560px; border: 0; }}
     @media (max-width: 760px) {{
@@ -8222,8 +8232,14 @@ def build_proof_bundle_html(
 <body>
   <main>
     {nav}
-    <h1>AxonGate Proof Bundles</h1>
-    <p class="summary">Multi-source evidence bundles for agent builders who need a cited source set, not just one page. Validate the sources, quote the bundle, capture buyer intent, then convert that demand into paid Proof Pack work or a configured payment path.</p>
+    <p class="eyebrow">Multi-source trust decision</p>
+    <h1>Can these sources actually prove the claim?</h1>
+    <p class="summary">Use AxonGate when one URL is not enough. Evidence Bundles check a set of public sources, flag weak or noisy pages, and deliver a cited trust decision your agent can use before launch, RAG ingestion, or customer-facing citations.</p>
+    <div class="decision-grid">
+      <div class="decision-card"><strong>Claim support</strong><p>Does the source set support, partially support, or fail to support the buyer question?</p></div>
+      <div class="decision-card"><strong>Evidence quality</strong><p>Which pages are substantive, and which are mostly boilerplate or navigation?</p></div>
+      <div class="decision-card"><strong>Agent-safe output</strong><p>Return cited findings, risks, source hashes, PDF, and JSON for downstream workflows.</p></div>
+    </div>
     {error_html}
     {success_html}
     {actions}
@@ -8481,6 +8497,7 @@ def build_proof_pack_html() -> str:
     )
     sample_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/sample")
     sample_api_url = html.escape(f"{PUBLIC_BASE_URL}/v1/proof-pack/sample")
+    hero_quote_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/quote")
     request_json = html.escape(json.dumps(build_proof_pack_request_example(DEFAULT_PROOF_PACK), indent=2))
     response_json = html.escape(json.dumps(build_proof_pack_response_example(DEFAULT_PROOF_PACK), indent=2))
     pack_rows = "\n".join(
@@ -8516,7 +8533,7 @@ def build_proof_pack_html() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AxonGate Proof Packs</title>
+  <title>AxonGate Source Trust Check</title>
   <style>
     :root {{
       color-scheme: light dark;
@@ -8543,6 +8560,65 @@ def build_proof_pack_html() -> str:
     a {{ color: var(--accent); text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
     .summary {{ max-width: 800px; font-size: 1.08rem; }}
+    .trust-hero {{
+      display: grid;
+      gap: 22px;
+      margin: 0 0 28px;
+      padding: clamp(22px, 4vw, 34px);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--panel), var(--bg) 14%);
+    }}
+    .eyebrow {{
+      margin: 0;
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }}
+    .trust-form {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr) auto;
+      align-items: end;
+    }}
+    .trust-form label {{
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: .9rem;
+    }}
+    .trust-form input {{
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+    }}
+    .decision-grid {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin: 20px 0;
+    }}
+    .decision-card {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--panel);
+    }}
+    .decision-card strong {{ display: block; margin-bottom: 4px; color: var(--text); }}
+    .contrast {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin: 24px 0 8px;
+    }}
+    .contrast .box {{ border-left: 5px solid var(--line); }}
+    .contrast .box:last-child {{ border-left-color: var(--accent); }}
+    .proof-name {{ color: var(--muted); font-size: .95rem; }}
     .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
     .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
     .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }}
@@ -8552,20 +8628,58 @@ def build_proof_pack_html() -> str:
     pre {{ overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
     table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; }}
+    @media (max-width: 840px) {{
+      .trust-form, .contrast {{ grid-template-columns: 1fr; }}
+      .decision-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    }}
+    @media (max-width: 520px) {{
+      .decision-grid {{ grid-template-columns: 1fr; }}
+      .trust-form button {{ width: 100%; }}
+    }}
     {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
     {nav}
-    <h1>AxonGate Proof Packs</h1>
-    <p class="summary">Paid, citation-backed evidence reports for agent builders. Send a public source URL and a question; AxonGate returns a compact answer, executive summary, key claims, citations, risks, source hash, payment metadata, and UEG receipt.</p>
+    <section class="trust-hero">
+      <div>
+        <p class="eyebrow">Not a page parser</p>
+        <h1>Can your agent safely cite this source?</h1>
+        <p class="summary">AxonGate checks whether a public URL actually supports a claim, extracts citation-ready evidence, and flags weak or noisy sources before an AI agent relies on them.</p>
+      </div>
+      <form class="trust-form" method="get" action="{hero_quote_url}">
+        <label>Source URL
+          <input name="target_url" inputmode="url" placeholder="example.com/source" required>
+        </label>
+        <label>Claim or question
+          <input name="question" placeholder="What can my agent safely say?">
+        </label>
+        <input type="hidden" name="pack" value="standard">
+        <button type="submit">Run evidence check</button>
+      </form>
+    </section>
+    <section>
+      <h2>A parser returns text. AxonGate returns a trust decision.</h2>
+      <div class="decision-grid">
+        <div class="decision-card"><strong>Supported</strong><p>The source contains usable evidence for the claim.</p></div>
+        <div class="decision-card"><strong>Weak</strong><p>The page is mostly navigation, boilerplate, or vague copy.</p></div>
+        <div class="decision-card"><strong>Unsupported</strong><p>The submitted claim is not established by the cited source.</p></div>
+        <div class="decision-card"><strong>Citation-ready</strong><p>Every usable finding points back to exact evidence IDs.</p></div>
+      </div>
+      <div class="contrast">
+        <div class="box"><strong>Page parser</strong><br>Returns extracted text and leaves your agent to decide whether the evidence is useful.</div>
+        <div class="box"><strong>AxonGate</strong><br>Scores evidence quality, exposes risks, and tells your agent whether the source is safe to cite.</div>
+      </div>
+    </section>
+    <h2>Source Trust Reports <span class="proof-name">(Proof Packs)</span></h2>
+    <p class="summary">Paid, citation-backed evidence checks for agent builders. Send a public source URL and a claim or question; AxonGate returns a compact answer, executive summary, key claims, citations, risks, source hash, payment metadata, and UEG receipt.</p>
     {actions}
 
     <div class="grid">
-      <div class="box"><strong>Buyer</strong><br>Agent builders who need source-backed claims.</div>
+      <div class="box"><strong>Buyer</strong><br>Agent builders who need to know what a source can safely support.</div>
       <div class="box"><strong>Protocol</strong><br>x402 on Base USDC.</div>
-      <div class="box"><strong>Fallback</strong><br>Deterministic extractive pack if LLM generation is off or fails.</div>
+      <div class="box"><strong>Fallback</strong><br>Deterministic evidence check if LLM generation is off or fails.</div>
       <div class="box"><strong>Validation</strong><br>Unsupported LLM claims are dropped unless they cite extracted evidence IDs.</div>
     </div>
 
@@ -8783,7 +8897,7 @@ def build_llms_txt() -> str:
 
 Name: AxonGate
 Basename: axongate.base.eth
-Summary: x402-paid Clean Context Broker that converts public web pages into clean markdown for RAG, research, and autonomous agents.
+Summary: x402-paid source trust layer that checks whether public web evidence is safe for AI agents to cite or act on. Clean markdown extraction is available, but the main value is evidence quality, claim support, and citation-ready trust decisions.
 Canonical base URL: {PUBLIC_BASE_URL}
 Human docs: {public_url("/docs")}
 Operator dashboard: {public_url("/operator")}
@@ -8866,7 +8980,7 @@ Successful response shape:
 POST {public_url("/v1/x402/retry")}
 Use only when AxonGate returns a retryable 503 with X-AxonGate-Retry-Credit after payment was accepted but upstream delivery failed.
 
-## Proof Packs
+## Source Trust Reports
 
 GET {public_url("/proof-pack")}
 GET {public_url("/proof-pack/sample")}
@@ -8887,7 +9001,7 @@ Body example:
 Proof Pack prices:
 {proof_pack_lines}
 
-Proof Bundle quote and lead capture:
+Multi-source evidence checks:
 GET {public_url("/proof-pack/bundle")}
 GET {public_url("/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 GET {public_url("/proof-pack/bundle/pay")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
@@ -9018,8 +9132,8 @@ def build_docs_html() -> str:
             (
                 "Product",
                 [
-                    ("Proof Packs", f"{PUBLIC_BASE_URL}/proof-pack"),
-                    ("Proof Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+                    ("Source Trust Check", f"{PUBLIC_BASE_URL}/proof-pack"),
+                    ("Evidence Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
                     ("Bundle Checkout", f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay"),
                     ("Proof Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
                     ("Proof Preview", f"{PUBLIC_BASE_URL}/proof-pack/preview"),
@@ -9130,13 +9244,14 @@ def build_docs_html() -> str:
   <main>
     {nav}
     <h1>AxonGate</h1>
-    <p class="summary">The Clean Context Broker is an x402-paid Web-to-Markdown API for agents that need token-efficient public web context. It runs on Base mainnet, accepts USDC, and checks dynamic unit economics before supplier work.</p>
+    <p class="summary">AxonGate is an evidence trust layer for AI agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions before an agent cites or acts.</p>
 
     {discovery_links}
 
     <h2>Service Contract</h2>
     <div class="grid">
-      <div class="box"><strong>Paid endpoint</strong><br><code>POST /v1/x402/access</code></div>
+      <div class="box"><strong>Trust endpoint</strong><br><code>POST /v1/x402/proof-pack</code></div>
+      <div class="box"><strong>Context endpoint</strong><br><code>POST /v1/x402/access</code></div>
       <div class="box"><strong>Retry endpoint</strong><br><code>POST /v1/x402/retry</code></div>
       <div class="box"><strong>Network</strong><br>Base mainnet, <code>eip155:8453</code></div>
       <div class="box"><strong>Vault</strong><br><code>{vault}</code></div>
@@ -9153,8 +9268,8 @@ def build_docs_html() -> str:
     </table>
     </div>
 
-    <h2>Proof Packs</h2>
-    <p>Proof Packs are paid, citation-backed evidence reports for agent builders. Use the no-spend sample to inspect the report shape, use the quote API before spending, capture request intent when a buyer is not ready to pay yet, then POST to the x402 endpoint with <code>?pack=</code> or <code>X-AxonGate-Pack</code> so the payment challenge matches the requested pack.</p>
+    <h2>Source Trust Reports</h2>
+    <p>Source Trust Reports, still called Proof Packs in the API, are paid evidence checks for agent builders. Use them before RAG ingestion, web citations, autonomous actions, or customer-facing answers. They return whether the source supports the claim, what evidence is usable, and what risks make the source weak.</p>
     <div class="table-wrap">
     <table>
       <thead><tr><th>Pack</th><th>Price</th><th>Policy</th></tr></thead>
@@ -9175,8 +9290,8 @@ def build_docs_html() -> str:
     <pre>{proof_request_json}</pre>
     <pre>{proof_curl_example}</pre>
 
-    <h2>Proof Bundles</h2>
-    <p>Proof Bundles are multi-source evidence requests for buyers who need a cited source set rather than one page. The quote page now includes a tracked checkout redirect: configured payment links send buyers to payment, while unconfigured bundles fall back to request capture. Operators can then move leads through <code>new</code>, <code>contacted</code>, <code>paid</code>, <code>fulfilled</code>, or <code>lost</code>.</p>
+    <h2>Evidence Bundles</h2>
+    <p>Evidence Bundles, still called Proof Bundles in the API, answer a higher-value question: can this group of public sources prove the claim well enough for an agent to cite it? The quote page includes a tracked checkout redirect; configured payment links send buyers to payment, while unconfigured bundles fall back to request capture.</p>
     <div class="table-wrap">
     <table>
       <thead><tr><th>Bundle</th><th>Price</th><th>Sources</th><th>Policy</th></tr></thead>
@@ -9996,14 +10111,14 @@ npm run paid:buyer -- \\
   <main>
     {nav}
     <h1>AxonGate Quickstart</h1>
-    <p>Turn a public URL into clean RAG-ready markdown or a citation-backed Proof Pack with one paid x402 call. Use the terminal buyer for a direct smoke test, or attach the MCP server so an agent can call AxonGate as a tool.</p>
+    <p>Run a paid evidence trust check before your agent cites a public source. AxonGate can also return clean RAG-ready markdown, but the higher-value path is the Source Trust Report: supported, weak, unsupported, and citation-ready evidence.</p>
     {actions}
 
     <div class="steps">
       <div class="step"><strong>1. Fund burner wallet</strong>Use Base USDC. Starter costs <code>{starter_price} USDC</code>; fresh costs <code>{fresh_price} USDC</code>.</div>
-      <div class="step"><strong>2. Run the buyer</strong>The script probes payment terms, signs x402, pays, and returns markdown.</div>
+      <div class="step"><strong>2. Run the buyer</strong>The script probes payment terms, signs x402, pays, and returns a trust report or clean context.</div>
       <div class="step"><strong>3. Watch attribution</strong>Use <code>source=quickstart</code> so `/metrics` shows the conversion path.</div>
-      <div class="step"><strong>4. Sell proof</strong>Use <code>/proof-pack</code> when a buyer needs cited claims instead of raw markdown.</div>
+      <div class="step"><strong>4. Sell trust</strong>Use <code>/proof-pack</code> when a buyer needs to know whether a source is safe to cite.</div>
     </div>
 
     <p class="callout"><strong>This can spend real USDC.</strong> Every paid path requires an explicit <code>confirm-spend</code> or <code>confirm_spend_usdc</code> value that must match the selected tier.</p>
@@ -11151,7 +11266,9 @@ async def root(request: Request):
         "status": "alive",
         "agent": "AxonGate",
         "version": app.version,
-        "service": "The Clean Context Broker",
+        "service": "AI Source Trust Layer",
+        "positioning": "Checks whether public web evidence is safe for AI agents to cite or act on; clean Markdown extraction is a supporting capability.",
+        "primary_value": "supported, weak, unsupported, and citation-ready trust decisions for public sources",
         "basename": "axongate.base.eth",
         "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
         "agent_card": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
