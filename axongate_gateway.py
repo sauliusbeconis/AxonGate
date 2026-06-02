@@ -251,6 +251,13 @@ STRIPE_WEBHOOK_SECRET = os.getenv("AXONGATE_STRIPE_WEBHOOK_SECRET", "").strip()
 STRIPE_WEBHOOK_TOLERANCE_SECONDS = int(os.getenv("AXONGATE_STRIPE_WEBHOOK_TOLERANCE_SECONDS", "300"))
 STRIPE_EVENTS_REDIS_KEY = os.getenv("AXONGATE_STRIPE_EVENTS_REDIS_KEY", "axongate:stripe_events")
 STRIPE_EVENTS_RETENTION_SECONDS = int(os.getenv("AXONGATE_STRIPE_EVENTS_RETENTION_SECONDS", str(30 * 24 * 60 * 60)))
+EMAIL_DELIVERY_ENABLED = os.getenv("AXONGATE_EMAIL_DELIVERY_ENABLED", "false").lower() in {"1", "true", "yes"}
+EMAIL_PROVIDER = os.getenv("AXONGATE_EMAIL_PROVIDER", "resend").strip().lower()
+EMAIL_FROM = os.getenv("AXONGATE_EMAIL_FROM", "AxonGate <reports@axongate.one>").strip()
+EMAIL_REPLY_TO = os.getenv("AXONGATE_EMAIL_REPLY_TO", "").strip()
+RESEND_API_KEY = os.getenv("AXONGATE_RESEND_API_KEY", "").strip()
+RESEND_API_URL = os.getenv("AXONGATE_RESEND_API_URL", "https://api.resend.com/emails").strip()
+RESEND_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_RESEND_TIMEOUT_SECONDS", "10"))
 LLM_ENABLED = os.getenv("AXONGATE_LLM_ENABLED", "false").lower() in {"1", "true", "yes"}
 LLM_API_KEY = os.getenv("AXONGATE_LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 LLM_BASE_URL = os.getenv("AXONGATE_LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
@@ -403,6 +410,11 @@ metrics: dict[str, int] = {
     "proof_bundle_auto_fulfillment_started_total": 0,
     "proof_bundle_auto_fulfillment_success_total": 0,
     "proof_bundle_auto_fulfillment_errors_total": 0,
+    "proof_bundle_delivery_email_attempts_total": 0,
+    "proof_bundle_delivery_email_success_total": 0,
+    "proof_bundle_delivery_email_errors_total": 0,
+    "proof_bundle_delivery_email_missing_recipient_total": 0,
+    "proof_bundle_delivery_email_disabled_total": 0,
     "stripe_webhook_events_total": 0,
     "stripe_webhook_verified_total": 0,
     "stripe_webhook_signature_failures_total": 0,
@@ -431,7 +443,7 @@ PAYMENT_PROOF_HEADERS = (
 
 
 class AccessRequest(BaseModel):
-    target_url: str = Field(..., description="HTTP or HTTPS URL to convert into clean markdown")
+    target_url: str = Field(..., description="Public URL to convert into clean markdown; bare domains are prefixed with https")
     tier: str = Field(RECOMMENDED_TIER, description="Pricing tier: starter, cached, basic, fresh, or deep")
     force_refresh: bool = Field(False, description="Bypass cache when true")
 
@@ -459,7 +471,7 @@ class AccessRequest(BaseModel):
 
 
 class ProofPackRequest(BaseModel):
-    target_url: str = Field(..., description="HTTP or HTTPS source URL to turn into a citation-backed report")
+    target_url: str = Field(..., description="Public source URL to turn into a citation-backed report; bare domains are prefixed with https")
     question: str = Field(
         "What does this source establish?",
         description="Buyer question or evidence objective for this proof pack",
@@ -489,7 +501,7 @@ class ProofPackRequest(BaseModel):
 
 class ProofPackLeadRequest(BaseModel):
     contact: str = Field(..., description="Email, Telegram, X handle, or other reply path")
-    target_url: str = Field(..., description="Public source URL the buyer wants converted into a Proof Pack")
+    target_url: str = Field(..., description="Public source URL the buyer wants converted into a Proof Pack; bare domains are prefixed with https")
     question: Optional[str] = Field(None, description="Buyer question or evidence objective")
     pack: str = Field("quick", description="Proof Pack level: quick, standard, or deep")
     use_case: Optional[str] = Field(None, description="How the buyer plans to use the report")
@@ -517,7 +529,7 @@ class ProofPackLeadRequest(BaseModel):
 
 class ProofBundleLeadRequest(BaseModel):
     contact: str = Field(..., description="Email, Telegram, X handle, or other reply path")
-    target_urls: list[str] = Field(..., description="Public source URLs to bundle into one evidence package")
+    target_urls: list[str] = Field(..., description="Public source URLs to bundle into one evidence package; bare domains are prefixed with https")
     question: Optional[str] = Field(None, description="Bundle-level evidence objective")
     bundle: str = Field(DEFAULT_PROOF_BUNDLE, description="Bundle level: scout, builder, or audit")
     use_case: Optional[str] = Field(None, description="How the buyer plans to use the bundle")
@@ -1834,7 +1846,7 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "type": "http",
             "method": "GET",
             "query": {
-                "target_urls": "newline, comma, or space separated public HTTP/HTTPS URLs",
+                "target_urls": "newline, comma, or space separated public URLs; bare domains are prefixed with https",
                 "question": "optional evidence objective",
                 "bundle": list(PROOF_BUNDLE_PRICING_USDC.keys()),
                 "source": "optional attribution source",
@@ -2413,11 +2425,27 @@ def normalize_tx_hash(tx_hash: str) -> str:
     return normalized
 
 
+def normalize_target_url_input(target_url: Any, *, default_scheme: str = "https") -> str:
+    """Normalize buyer-entered public URLs, accepting bare domains like www.example.com."""
+    cleaned = clean_lead_text(str(target_url or ""), 2048)
+    if not cleaned:
+        return ""
+    if re.search(r"\s", cleaned):
+        return cleaned
+    parsed = urlparse(cleaned)
+    if parsed.scheme:
+        return cleaned
+    if cleaned.startswith("//"):
+        return f"{default_scheme}:{cleaned}"
+    return f"{default_scheme}://{cleaned}"
+
+
 def validate_target_url(target_url: str) -> str:
-    parsed = urlparse(target_url)
+    normalized_target_url = normalize_target_url_input(target_url)
+    parsed = urlparse(normalized_target_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         inc_metric("target_preflight_rejections_total")
-        raise PaymentValidationError("target_url must be an absolute http or https URL")
+        raise PaymentValidationError("target_url must be a public URL. You can enter https://example.com or www.example.com.")
 
     hostname = parsed.hostname or ""
     if hostname.lower() in {"localhost", "ip6-localhost"} or hostname.lower().endswith((".localhost", ".local")):
@@ -2440,7 +2468,7 @@ def validate_target_url(target_url: str) -> str:
         inc_metric("target_preflight_rejections_total")
         raise PaymentValidationError("target_url cannot point to a private or local IP address")
 
-    return target_url
+    return normalized_target_url
 
 
 def is_public_ip(ip: ipaddress._BaseAddress) -> bool:
@@ -4450,12 +4478,14 @@ def normalize_recovery_email(value: Any) -> str:
 
 def normalize_recovery_url(value: Any) -> str:
     """Normalize a public target URL for recovery matching without changing meaning."""
-    cleaned = clean_lead_text(str(value or ""), 2048)
+    cleaned = normalize_target_url_input(value)
     if not cleaned:
         return ""
     parsed = urlparse(cleaned)
     if parsed.scheme and parsed.netloc:
-        return parsed._replace(scheme=parsed.scheme.lower(), netloc=parsed.netloc.lower(), fragment="").geturl().rstrip("/")
+        path = parsed.path.rstrip("/")
+        query = f"?{parsed.query}" if parsed.query else ""
+        return f"{parsed.netloc.lower()}{path}{query}"
     return cleaned.rstrip("/").lower()
 
 
@@ -5134,6 +5164,10 @@ async def generate_and_store_proof_bundle_delivery(lead_id: str) -> Optional[dic
             fulfillment_url=fulfillment_url,
             delivery_note="Proof Bundle report generated automatically.",
         )
+        updated = updated or await find_stored_proof_pack_lead(str(lead.get("id")))
+        if updated:
+            emailed = await send_proof_bundle_delivery_email(updated)
+            updated = emailed or updated
         inc_metric("proof_bundle_auto_fulfillment_success_total")
         return updated or await find_stored_proof_pack_lead(str(lead.get("id")))
     except Exception as exc:
@@ -5164,6 +5198,151 @@ def build_proof_bundle_delivery_payload(lead: dict[str, Any]) -> dict[str, Any]:
         "fulfillment_url": lead.get("fulfillment_url"),
         "report": report,
     }
+
+
+def proof_bundle_delivery_email_recipient(lead: dict[str, Any]) -> str:
+    """Choose the best customer email for Proof Bundle report delivery."""
+    stripe = lead.get("stripe") if isinstance(lead.get("stripe"), dict) else {}
+    candidates = [
+        stripe.get("customer_email"),
+        lead.get("contact"),
+    ]
+    for candidate in candidates:
+        normalized = normalize_recovery_email(candidate)
+        if normalized:
+            return normalized
+    return ""
+
+
+def proof_bundle_delivery_email_url(lead: dict[str, Any]) -> str:
+    """Return the best stable customer-facing delivery URL for a bundle lead."""
+    existing = clean_lead_text(str(lead.get("fulfillment_url") or ""), 600)
+    if existing:
+        return existing
+    stripe = lead.get("stripe") if isinstance(lead.get("stripe"), dict) else {}
+    return proof_bundle_delivery_url(str(lead.get("id") or ""), str(stripe.get("session_id") or ""))
+
+
+def build_proof_bundle_delivery_email(lead: dict[str, Any]) -> dict[str, str]:
+    """Build a concise report delivery email payload."""
+    payload = build_proof_bundle_delivery_payload(lead)
+    report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
+    delivery_url = proof_bundle_delivery_email_url(lead)
+    bundle = str(payload.get("bundle") or "proof").title()
+    summary = clean_evidence_excerpt(
+        str(report.get("executive_summary") or report.get("answer") or "Your AxonGate report is ready."),
+        1200,
+    )
+    claims = report.get("key_claims") if isinstance(report.get("key_claims"), list) else []
+    claim_lines = [
+        f"- {clean_evidence_excerpt(str(claim.get('claim') or ''), 240)}"
+        for claim in claims[:5]
+        if isinstance(claim, dict) and claim.get("claim")
+    ]
+    claim_text = "\n".join(claim_lines) if claim_lines else "- The cited report is ready to review."
+    claim_html = "".join(f"<li>{html.escape(line[2:])}</li>" for line in claim_lines) or "<li>The cited report is ready to review.</li>"
+    subject = f"Your AxonGate {bundle} Proof Bundle report is ready"
+    text = f"""Your AxonGate Proof Bundle report is ready.
+
+Open report:
+{delivery_url}
+
+Summary:
+{summary}
+
+Key claims:
+{claim_text}
+
+AxonGate
+"""
+    html_body = f"""<!doctype html>
+<html>
+<body style="font-family:Arial,sans-serif;line-height:1.55;color:#111827">
+  <h1 style="font-size:22px;margin:0 0 12px">Your AxonGate Proof Bundle report is ready</h1>
+  <p><a href="{html.escape(delivery_url, quote=True)}" style="display:inline-block;background:#0f766e;color:white;padding:10px 14px;border-radius:6px;text-decoration:none">Open report</a></p>
+  <h2 style="font-size:16px;margin-top:22px">Summary</h2>
+  <p>{html.escape(summary)}</p>
+  <h2 style="font-size:16px;margin-top:22px">Key claims</h2>
+  <ul>{claim_html}</ul>
+  <p style="color:#6b7280;font-size:13px">AxonGate generated this report from public source URLs submitted at checkout.</p>
+</body>
+</html>"""
+    return {"subject": subject, "text": text, "html": html_body, "delivery_url": delivery_url}
+
+
+async def send_resend_email(payload: dict[str, Any]) -> dict[str, Any]:
+    """Send an email through Resend."""
+    async with httpx.AsyncClient(timeout=RESEND_TIMEOUT_SECONDS) as client:
+        response = await client.post(
+            RESEND_API_URL,
+            headers={
+                "Authorization": f"Bearer {RESEND_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        response.raise_for_status()
+        try:
+            parsed = response.json()
+        except json.JSONDecodeError:
+            parsed = {}
+        return parsed if isinstance(parsed, dict) else {}
+
+
+async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Email a fulfilled Proof Bundle report link when delivery email is configured."""
+    if not isinstance(lead.get("proof_bundle_report"), dict):
+        return None
+    if lead.get("delivery_email_sent_at"):
+        return lead
+    if not EMAIL_DELIVERY_ENABLED:
+        inc_metric("proof_bundle_delivery_email_disabled_total")
+        return lead
+
+    recipient = proof_bundle_delivery_email_recipient(lead)
+    if not recipient:
+        inc_metric("proof_bundle_delivery_email_missing_recipient_total")
+        return lead
+    if EMAIL_PROVIDER != "resend" or not RESEND_API_KEY or not EMAIL_FROM:
+        inc_metric("proof_bundle_delivery_email_errors_total")
+        await update_stored_proof_pack_lead(
+            str(lead.get("id") or ""),
+            {"delivery_email_error": "Email delivery is enabled but Resend is not fully configured."},
+        )
+        return lead
+
+    inc_metric("proof_bundle_delivery_email_attempts_total")
+    email_content = build_proof_bundle_delivery_email(lead)
+    resend_payload: dict[str, Any] = {
+        "from": EMAIL_FROM,
+        "to": [recipient],
+        "subject": email_content["subject"],
+        "text": email_content["text"],
+        "html": email_content["html"],
+    }
+    if EMAIL_REPLY_TO:
+        resend_payload["reply_to"] = EMAIL_REPLY_TO
+
+    try:
+        result = await send_resend_email(resend_payload)
+    except Exception as exc:
+        inc_metric("proof_bundle_delivery_email_errors_total")
+        await update_stored_proof_pack_lead(
+            str(lead.get("id") or ""),
+            {"delivery_email_error": str(getattr(exc, "response", None) or exc)[:260]},
+        )
+        print(f"[PROOF_BUNDLE_EMAIL] Delivery email failed for {lead.get('id')}: {exc}")
+        return await find_stored_proof_pack_lead(str(lead.get("id") or "")) or lead
+
+    updates = {
+        "delivery_email_sent_at": int(time.time()),
+        "delivery_email_to": recipient,
+        "delivery_email_provider": EMAIL_PROVIDER,
+        "delivery_email_id": clean_lead_text(str(result.get("id") or ""), 180),
+        "delivery_email_error": "",
+    }
+    inc_metric("proof_bundle_delivery_email_success_total")
+    return await update_stored_proof_pack_lead(str(lead.get("id") or ""), updates)
 
 
 def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: str = "") -> str:
@@ -5334,7 +5513,8 @@ def build_proof_bundle_recovery_html(email: str = "", target_url: str = "", erro
         </label>
         <label>
           Target URL
-          <input type="url" name="target_url" value="{html.escape(target_url, quote=True)}" placeholder="https://example.com" required>
+          <input type="text" name="target_url" value="{html.escape(target_url, quote=True)}" inputmode="url" placeholder="www.example.com or https://example.com" required>
+          <small>Include http/https if you know it; otherwise AxonGate will try https automatically.</small>
         </label>
         <button type="submit">Recover delivery</button>
       </form>
@@ -8307,6 +8487,7 @@ def build_docs_html() -> str:
     <p>Tracked checkout route: <code>{public}/proof-pack/bundle/pay</code>. Configure payment URLs with <code>AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL</code>, <code>AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL</code>, and <code>AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL</code>.</p>
     <p>Stripe fulfillment webhook: <code>{public}/v1/stripe/webhook</code>. Configure Stripe to send <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, and <code>checkout.session.async_payment_failed</code>, then set <code>AXONGATE_STRIPE_WEBHOOK_SECRET</code> from the Stripe signing secret.</p>
     <p>Stripe Payment Links should redirect after payment to <code>{public}/proof-pack/bundle/delivery?session_id={{CHECKOUT_SESSION_ID}}</code>. The webhook still handles fulfillment if the buyer closes Stripe before redirecting, and buyers can recover delivery at <code>{public}/proof-pack/bundle/recover</code> with their checkout email and one submitted target URL.</p>
+    <p>Email delivery uses Resend when configured. Set <code>AXONGATE_EMAIL_DELIVERY_ENABLED=true</code>, <code>AXONGATE_EMAIL_FROM=AxonGate &lt;reports@axongate.one&gt;</code>, and <code>AXONGATE_RESEND_API_KEY</code>; fulfilled Proof Bundles email the customer a delivery link and concise report summary.</p>
     <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
     <pre>curl -X POST "{public}/v1/proof-pack/bundle/leads" \\
   -H "Content-Type: application/json" \\
@@ -9908,10 +10089,14 @@ async def ensure_proof_bundle_delivery_ready(lead: dict[str, Any]) -> dict[str, 
         try:
             generated = await asyncio.wait_for(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")), timeout=25)
             if generated:
-                return generated
+                lead = generated
         except asyncio.TimeoutError:
             schedule_background(generate_and_store_proof_bundle_delivery(str(lead.get("id") or "")))
-    return await find_stored_proof_pack_lead(str(lead.get("id") or "")) or lead
+    ready = await find_stored_proof_pack_lead(str(lead.get("id") or "")) or lead
+    if isinstance(ready.get("proof_bundle_report"), dict):
+        emailed = await send_proof_bundle_delivery_email(ready)
+        return emailed or await find_stored_proof_pack_lead(str(ready.get("id") or "")) or ready
+    return ready
 
 
 @app.get("/proof-pack/bundle/recover", response_class=HTMLResponse, tags=["discovery"], summary="Recover Proof Bundle delivery")
@@ -10382,6 +10567,13 @@ async def metrics_snapshot():
             "events_redis_key": STRIPE_EVENTS_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
             "event_retention_seconds": STRIPE_EVENTS_RETENTION_SECONDS,
             "signature_tolerance_seconds": STRIPE_WEBHOOK_TOLERANCE_SECONDS,
+        },
+        "email_delivery": {
+            "enabled": EMAIL_DELIVERY_ENABLED,
+            "provider": EMAIL_PROVIDER,
+            "from_configured": bool(EMAIL_FROM),
+            "reply_to_configured": bool(EMAIL_REPLY_TO),
+            "resend_api_key_configured": bool(RESEND_API_KEY),
         },
         "cache": {
             "backend": "redis" if redis_client else "memory",

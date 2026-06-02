@@ -68,6 +68,20 @@ paid report with their checkout email and one submitted target URL. If Stripe
 passes a different email or malformed target data, recovery can still attach to
 one pending Stripe-paid bundle when there is exactly one unresolved order.
 
+Email delivery:
+
+```text
+AXONGATE_EMAIL_DELIVERY_ENABLED=true
+AXONGATE_EMAIL_PROVIDER=resend
+AXONGATE_EMAIL_FROM=AxonGate <reports@axongate.one>
+AXONGATE_EMAIL_REPLY_TO=support@axongate.one
+AXONGATE_RESEND_API_KEY=re_...
+```
+
+When email delivery is enabled, fulfilled Stripe Proof Bundles send the customer
+the delivery URL plus a concise report summary. Delivery still succeeds if email
+is disabled or the provider has a transient failure.
+
 ## Current Status
 
 | Target | Status | Action |

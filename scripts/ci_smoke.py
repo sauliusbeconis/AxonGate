@@ -13,6 +13,7 @@ import hmac
 import json
 import sys
 import time
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -24,6 +25,36 @@ import axongate_gateway as gateway
 
 gateway.OPERATOR_TOKEN = "ci-operator-token"
 gateway.STRIPE_WEBHOOK_SECRET = "whsec_ci_smoke"
+gateway.EMAIL_DELIVERY_ENABLED = True
+gateway.EMAIL_PROVIDER = "resend"
+gateway.EMAIL_FROM = "AxonGate <reports@axongate.one>"
+gateway.RESEND_API_KEY = "re_ci_smoke"
+sent_delivery_emails: list[dict] = []
+
+
+async def fake_send_resend_email(payload: dict) -> dict:
+    sent_delivery_emails.append(payload)
+    return {"id": f"email_ci_{len(sent_delivery_emails)}"}
+
+
+gateway.send_resend_email = fake_send_resend_email
+
+
+async def fake_fetch_current_base_fee_wei() -> int:
+    return 5_000_000
+
+
+async def fake_fetch_eth_usdc_quote() -> gateway.EthUsdQuote:
+    return gateway.EthUsdQuote(
+        price=Decimal("3500"),
+        source="ci-static",
+        fetched_at=int(time.time()),
+        floor_applied=False,
+    )
+
+
+gateway.fetch_current_base_fee_wei = fake_fetch_current_base_fee_wei
+gateway.fetch_eth_usdc_quote = fake_fetch_eth_usdc_quote
 
 
 def stripe_signature(payload: bytes, secret: str) -> str:
@@ -124,6 +155,12 @@ async def main() -> None:
             False,
         )
         assert starter_markdown and "Reserved Domains" in starter_markdown, "starter sample markdown missing"
+        assert gateway.validate_target_url("www.example.com") == "https://www.example.com", (
+            "bare domain target URLs should be prefixed with https"
+        )
+        assert gateway.normalize_recovery_url("http://www.example.com/") == gateway.normalize_recovery_url(
+            "www.example.com"
+        ), "recovery URL matching should be scheme agnostic"
 
         quote = (await client.get("/v1/x402/quote?target_url=https://www.iana.org/domains/reserved&source=ci")).json()
         assert quote["status"] == "quote", "quote endpoint returned wrong status"
@@ -401,6 +438,9 @@ async def main() -> None:
         assert stripe_delivery_json["status"] == "ready", "Stripe delivery should generate a ready report"
         assert stripe_delivery_json["lead_status"] == "fulfilled", "Stripe delivery should mark lead fulfilled"
         assert stripe_delivery_json["report"]["successful_sources"] >= 1, "Stripe delivery report should include sources"
+        assert sent_delivery_emails, "Stripe delivery should send a customer report email when configured"
+        assert sent_delivery_emails[-1]["to"] == ["stripe-buyer@example.invalid"], "Delivery email recipient mismatch"
+        assert "Open report" in sent_delivery_emails[-1]["html"], "Delivery email should include report link"
 
         stripe_delivery_page = await client.get(
             "/proof-pack/bundle/delivery?session_id=cs_ci_axongate_paid"
@@ -411,6 +451,8 @@ async def main() -> None:
         recovery_form = await client.get("/proof-pack/bundle/recover")
         assert recovery_form.status_code == 200, "Proof Bundle recovery form should render"
         assert "Recover Proof Bundle Delivery" in recovery_form.text, "Proof Bundle recovery form missing heading"
+        assert 'type="text" name="target_url"' in recovery_form.text, "Recovery form should accept bare domains"
+        assert "www.example.com or https://example.com" in recovery_form.text, "Recovery form should explain URL input"
 
         recovered_delivery = await client.get(
             "/v1/proof-pack/bundle/recover",
@@ -777,6 +819,9 @@ async def main() -> None:
         assert metrics["metrics"].get("proof_bundle_auto_fulfillment_success_total", 0) >= 1, (
             "Proof Bundle auto fulfillment should be counted"
         )
+        assert metrics["metrics"].get("proof_bundle_delivery_email_success_total", 0) >= 1, (
+            "Proof Bundle delivery email success should be counted"
+        )
         assert metrics["metrics"].get("stripe_webhook_payment_succeeded_total", 0) >= 1, (
             "Stripe webhook success should be counted"
         )
@@ -788,6 +833,8 @@ async def main() -> None:
         )
         assert "proof_bundle_pricing" in metrics, "Proof Bundle pricing missing from metrics"
         assert "proof_pack_leads" in metrics, "Proof Pack lead storage snapshot missing from metrics"
+        assert metrics["email_delivery"]["enabled"] is True, "email delivery should be enabled in CI"
+        assert metrics["email_delivery"]["resend_api_key_configured"] is True, "email delivery key should be configured in CI"
         assert metrics["stripe"]["webhook_enabled"] is True, "Stripe webhook should be enabled in CI"
         assert metrics["operator"]["private_leads_enabled"] is True, "operator private leads should be enabled in CI"
         assert "operator_auth_failures_total" in metrics["metrics"], "operator auth failures metric missing"
