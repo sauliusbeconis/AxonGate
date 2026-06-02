@@ -92,6 +92,9 @@ async def main() -> None:
             "/discovery/resources",
             "/llms.txt",
             "/docs",
+            "/about",
+            "/faq",
+            "/contact",
             "/operator",
             "/quickstart",
             "/paid-test",
@@ -114,6 +117,16 @@ async def main() -> None:
         for path in expected_ok:
             response = await client.get(path)
             assert response.status_code == 200, f"{path} returned {response.status_code}"
+
+        proof_pack_page = await client.get("/proof-pack")
+        assert "<link rel=\"canonical\"" in proof_pack_page.text, "Proof Pack page missing canonical link"
+        assert "Contact</a>" in proof_pack_page.text, "Proof Pack page footer should include Contact"
+        assert "A parser returns text" in proof_pack_page.text, "Proof Pack page should keep parser contrast"
+        faq_page = await client.get("/faq")
+        assert "Is AxonGate just a page parser?" in faq_page.text, "FAQ page missing parser question"
+        contact_page = await client.get("/contact")
+        assert "Contact AxonGate" in contact_page.text, "Contact page missing heading"
+        assert "name=\"email\"" in contact_page.text, "Contact page missing email field"
 
         secure_sample = await client.get(
             "/proof-pack/sample",
@@ -819,13 +832,37 @@ async def main() -> None:
         assert schemas.get("ProofPackRequest", {}).get("examples"), "ProofPackRequest examples missing"
         assert schemas.get("ProofPackLeadRequest", {}).get("examples"), "ProofPackLeadRequest examples missing"
         assert schemas.get("ProofBundleLeadRequest", {}).get("examples"), "ProofBundleLeadRequest examples missing"
+        assert schemas.get("ContactRequest", {}).get("examples"), "ContactRequest examples missing"
         post_operation = openapi.get("paths", {}).get("/v1/x402/access", {}).get("post", {})
         assert post_operation.get("x-payment-info"), "OpenAPI payment extension missing from paid endpoint"
         proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
         assert proof_operation.get("x-payment-info"), "OpenAPI payment extension missing from Proof Pack endpoint"
+        contact_operation = openapi.get("paths", {}).get("/v1/contact", {}).get("post", {})
+        assert contact_operation, "OpenAPI contact endpoint missing"
         operator_operation = openapi.get("paths", {}).get("/v1/operator/leads", {}).get("get", {})
         assert operator_operation.get("security"), "OpenAPI operator leads security missing"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
+
+        contact_payload = {
+            "name": "CI Builder",
+            "email": "contact-ci@example.invalid",
+            "company": "CI Labs",
+            "use_case": "SEO and buyer inquiry smoke test",
+            "message": "We want to evaluate whether AxonGate can support a launch workflow.",
+            "source": "ci-contact",
+        }
+        contact_submit = await client.post(
+            "/contact",
+            content=urlencode(contact_payload),
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert contact_submit.status_code == 200, f"Contact form returned {contact_submit.status_code}"
+        assert "Message received" in contact_submit.text, "Contact form should acknowledge submit"
+        contact_api = await client.post("/v1/contact", json={**contact_payload, "email": "contact-api@example.invalid"})
+        assert contact_api.status_code == 200, f"Contact API returned {contact_api.status_code}"
+        contact_api_json = contact_api.json()
+        assert contact_api_json["status"] == "received", "Contact API should acknowledge submit"
+        assert "message" not in contact_api_json, "Contact API response must not echo private message"
 
         metrics = (await client.get("/metrics")).json()
         assert "conversion_funnel" in metrics, "conversion_funnel missing from metrics"
@@ -846,6 +883,8 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("proof_pack_previews", 0) >= 3, "Proof Pack previews missing from funnel"
         assert metrics["metrics"].get("proof_pack_leads_total", 0) >= 2, "Proof Pack leads should be counted"
         assert metrics["conversion_funnel"].get("proof_pack_leads", 0) >= 2, "Proof Pack leads missing from funnel"
+        assert metrics["metrics"].get("contact_form_submits_total", 0) >= 2, "Contact submissions should be counted"
+        assert metrics["conversion_funnel"].get("contact_form_submits", 0) >= 2, "Contact submissions missing from funnel"
         assert metrics["metrics"].get("proof_bundle_quotes_total", 0) >= 2, "Proof Bundle quotes should be counted"
         assert metrics["conversion_funnel"].get("proof_bundle_quotes", 0) >= 2, "Proof Bundle quotes missing from funnel"
         assert metrics["metrics"].get("proof_bundle_leads_total", 0) >= 1, "Proof Bundle leads should be counted"

@@ -256,6 +256,8 @@ EMAIL_DELIVERY_ENABLED = os.getenv("AXONGATE_EMAIL_DELIVERY_ENABLED", "false").l
 EMAIL_PROVIDER = os.getenv("AXONGATE_EMAIL_PROVIDER", "resend").strip().lower()
 EMAIL_FROM = os.getenv("AXONGATE_EMAIL_FROM", "AxonGate <reports@axongate.one>").strip()
 EMAIL_REPLY_TO = os.getenv("AXONGATE_EMAIL_REPLY_TO", "").strip()
+PUBLIC_CONTACT_EMAIL = os.getenv("AXONGATE_PUBLIC_CONTACT_EMAIL", EMAIL_REPLY_TO or "reports@axongate.one").strip()
+CONTACT_NOTIFY_EMAIL = os.getenv("AXONGATE_CONTACT_NOTIFY_EMAIL", EMAIL_REPLY_TO or PUBLIC_CONTACT_EMAIL).strip()
 RESEND_API_KEY = os.getenv("AXONGATE_RESEND_API_KEY", "").strip()
 RESEND_API_URL = os.getenv("AXONGATE_RESEND_API_URL", "https://api.resend.com/emails").strip()
 RESEND_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_RESEND_TIMEOUT_SECONDS", "10"))
@@ -352,6 +354,9 @@ metrics: dict[str, int] = {
     "discovery_root_hits_total": 0,
     "discovery_llms_hits_total": 0,
     "discovery_docs_hits_total": 0,
+    "discovery_about_hits_total": 0,
+    "discovery_faq_hits_total": 0,
+    "discovery_contact_hits_total": 0,
     "discovery_operator_hits_total": 0,
     "discovery_operator_leads_hits_total": 0,
     "discovery_quickstart_hits_total": 0,
@@ -400,6 +405,10 @@ metrics: dict[str, int] = {
     "proof_pack_lead_errors_total": 0,
     "proof_pack_lead_notifications_total": 0,
     "proof_pack_lead_notification_errors_total": 0,
+    "contact_form_submits_total": 0,
+    "contact_form_errors_total": 0,
+    "contact_notifications_total": 0,
+    "contact_notification_errors_total": 0,
     "proof_bundle_quotes_total": 0,
     "proof_bundle_leads_total": 0,
     "proof_bundle_lead_errors_total": 0,
@@ -557,6 +566,30 @@ class ProofBundleLeadRequest(BaseModel):
                     "budget_usdc": "20/month",
                     "source": "proof-bundle-request",
                     "notes": "Need a multi-source evidence pack before wiring recurring calls.",
+                }
+            ]
+        }
+    }
+
+
+class ContactRequest(BaseModel):
+    name: Optional[str] = Field(None, description="Sender name")
+    email: str = Field(..., description="Reply email address")
+    company: Optional[str] = Field(None, description="Optional company, team, or project name")
+    use_case: Optional[str] = Field(None, description="What the sender wants to use AxonGate for")
+    message: str = Field(..., description="Question, partnership note, support request, or custom report request")
+    source: Optional[str] = Field(None, description="Attribution source for this inquiry")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "Agent Builder",
+                    "email": "builder@example.com",
+                    "company": "Example Labs",
+                    "use_case": "Agent citation checks before RAG ingestion",
+                    "message": "We want to evaluate 50 public sources per month and need a reliable evidence report workflow.",
+                    "source": "contact-page",
                 }
             ]
         }
@@ -1022,6 +1055,7 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_preview_cache_hits": values.get("proof_pack_preview_cache_hits_total", 0),
         "proof_pack_quotes": values.get("proof_pack_quotes_total", 0),
         "proof_pack_leads": values.get("proof_pack_leads_total", 0),
+        "contact_form_submits": values.get("contact_form_submits_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
         "proof_bundle_payment_clicks": values.get("proof_bundle_payment_clicks_total", 0),
@@ -1669,6 +1703,10 @@ def build_x402_resource() -> dict[str, Any]:
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
             "docs": f"{PUBLIC_BASE_URL}/docs",
+            "about": f"{PUBLIC_BASE_URL}/about",
+            "faq": f"{PUBLIC_BASE_URL}/faq",
+            "contact": f"{PUBLIC_BASE_URL}/contact",
+            "contactApi": f"{PUBLIC_BASE_URL}/v1/contact",
             "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
             "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
@@ -1752,6 +1790,9 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "tags": ["x402", "base", "usdc", "source-trust", "proof-pack", "citations", "agent-builders", "evidence"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
+            "about": f"{PUBLIC_BASE_URL}/about",
+            "faq": f"{PUBLIC_BASE_URL}/faq",
+            "contact": f"{PUBLIC_BASE_URL}/contact",
             "sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "sampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
             "preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
@@ -1822,6 +1863,7 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "description": "No-spend quote, tracked checkout, and delivery pipeline for multi-source claim support checks aimed at agent builders.",
             "tags": ["source-trust", "proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+            "contact": f"{PUBLIC_BASE_URL}/contact",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
             "checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "delivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
@@ -7012,6 +7054,146 @@ async def create_proof_bundle_lead(payload: ProofBundleLeadRequest | dict[str, A
     return lead
 
 
+def contact_public_response(lead: dict[str, Any]) -> dict[str, Any]:
+    """Acknowledge a contact inquiry without echoing private message text."""
+    return {
+        "status": "received",
+        "lead_id": lead["id"],
+        "product": "contact",
+        "contact_received": bool(lead.get("contact")),
+        "source": lead.get("source"),
+        "next_steps": {
+            "contact_page": public_url("/contact"),
+            "proof_pack": public_url("/proof-pack"),
+            "proof_bundle": public_url("/proof-pack/bundle"),
+            "docs": public_url("/docs"),
+        },
+    }
+
+
+async def send_contact_notification(lead: dict[str, Any]) -> None:
+    """Email the operator when a contact inquiry arrives and email is configured."""
+    if not CONTACT_NOTIFY_EMAIL:
+        return
+    if not EMAIL_DELIVERY_ENABLED or EMAIL_PROVIDER != "resend" or not RESEND_API_KEY or not EMAIL_FROM:
+        return
+
+    name = clean_lead_text(str(lead.get("name") or ""), 120) or "AxonGate visitor"
+    email_address = clean_lead_text(str(lead.get("contact") or ""), 180)
+    company = clean_lead_text(str(lead.get("company") or ""), 160)
+    use_case = clean_lead_text(str(lead.get("use_case") or ""), 240)
+    message = clean_lead_text(str(lead.get("notes") or ""), 1200)
+    subject = f"AxonGate contact: {name}"
+    text = (
+        f"New AxonGate contact inquiry\n\n"
+        f"Name: {name}\n"
+        f"Email: {email_address}\n"
+        f"Company: {company or 'not provided'}\n"
+        f"Use case: {use_case or 'not provided'}\n"
+        f"Source: {lead.get('source')}\n"
+        f"Lead ID: {lead.get('id')}\n\n"
+        f"Message:\n{message}\n\n"
+        f"Operator inbox: {public_url('/operator/leads')}"
+    )
+    html_body = f"""<!doctype html>
+<html lang="en">
+<body style="margin:0;background:#f8fafc;color:#111827;font-family:Arial,sans-serif">
+  <div style="max-width:640px;margin:0 auto;padding:24px">
+    <h1 style="font-size:22px;margin:0 0 16px">New AxonGate contact inquiry</h1>
+    <p><strong>Name:</strong> {html.escape(name)}</p>
+    <p><strong>Email:</strong> {html.escape(email_address)}</p>
+    <p><strong>Company:</strong> {html.escape(company or "not provided")}</p>
+    <p><strong>Use case:</strong> {html.escape(use_case or "not provided")}</p>
+    <p><strong>Source:</strong> {html.escape(str(lead.get("source") or ""))}</p>
+    <p><strong>Lead ID:</strong> {html.escape(str(lead.get("id") or ""))}</p>
+    <h2 style="font-size:16px;margin-top:22px">Message</h2>
+    <p style="white-space:pre-wrap;color:#374151">{html.escape(message)}</p>
+    <p><a href="{html.escape(public_url('/operator/leads'), quote=True)}" style="color:#0f766e">Open operator inbox</a></p>
+  </div>
+</body>
+</html>"""
+    resend_payload: dict[str, Any] = {
+        "from": EMAIL_FROM,
+        "to": [CONTACT_NOTIFY_EMAIL],
+        "subject": subject,
+        "text": text,
+        "html": html_body,
+    }
+    if email_address:
+        resend_payload["reply_to"] = email_address
+
+    try:
+        await send_resend_email(resend_payload)
+        clear_email_delivery_error()
+        inc_metric("contact_notifications_total")
+    except Exception as exc:
+        detail, status_code = describe_email_delivery_exception(exc)
+        record_email_delivery_error(detail, status_code)
+        inc_metric("contact_notification_errors_total")
+        print(f"[CONTACT] Notification delivery failed: {detail}")
+
+
+async def create_contact_lead(payload: ContactRequest | dict[str, Any], request: Request) -> dict[str, Any]:
+    """Validate and store a general public inquiry."""
+    if isinstance(payload, BaseModel):
+        raw = payload.model_dump() if hasattr(payload, "model_dump") else payload.dict()
+    else:
+        raw = dict(payload)
+
+    email_address = normalize_recovery_email(raw.get("email"))
+    if not email_address:
+        raise PaymentValidationError("Enter a valid email address so we can reply.")
+    message = clean_lead_text(raw.get("message"), 1200)
+    if len(message) < 8:
+        raise PaymentValidationError("Add a short message so we know how to help.")
+
+    source = normalize_attribution_source(str(raw.get("source") or attribution_source_from_request(request) or "contact"))
+    name = clean_lead_text(raw.get("name"), 120)
+    company = clean_lead_text(raw.get("company"), 160)
+    use_case = clean_lead_text(raw.get("use_case"), 240)
+    created_at = int(time.time())
+    lead_id = stable_hash(
+        json.dumps(
+            {
+                "created_at": created_at,
+                "email": email_address,
+                "message": message,
+                "nonce": secrets.token_hex(4),
+            },
+            sort_keys=True,
+        )
+    )[:16]
+    lead = {
+        "id": lead_id,
+        "created_at": created_at,
+        "product": "contact",
+        "contact": email_address,
+        "name": name,
+        "company": company,
+        "target_url": "",
+        "target_urls": [],
+        "target_count": 0,
+        "question": "General inquiry",
+        "pack": "contact",
+        "use_case": use_case,
+        "budget_usdc": "",
+        "notes": message,
+        "source": source,
+        "price_usdc": 0,
+        "amount_units": "0",
+        "request_page": public_url("/contact"),
+        "quote_page": public_url("/proof-pack/quote"),
+        "quote_api": public_url("/v1/proof-pack/quote"),
+        "payment_url": "",
+        "buyer_command": "Reply to this inquiry and route the buyer to a Source Trust Report or Evidence Bundle if relevant.",
+    }
+    lead["storage_backend"] = await store_proof_pack_lead(lead)
+    inc_metric("contact_form_submits_total")
+    inc_attribution("contact_form_submits", source)
+    schedule_background(send_contact_notification(lead))
+    return lead
+
+
 def resolve_proof_pack_selection(
     request: Request,
     proof_request: ProofPackRequest,
@@ -7245,6 +7427,47 @@ def shared_ui_css() -> str:
     .compact-copy {
       max-width: 68ch;
     }
+    .site-footer {
+      margin-top: 52px;
+      padding-top: 28px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+    }
+    .footer-grid {
+      display: grid;
+      gap: 22px;
+      grid-template-columns: minmax(220px, 1.2fr) repeat(3, minmax(150px, 1fr));
+      align-items: start;
+    }
+    .footer-brand {
+      display: grid;
+      gap: 8px;
+    }
+    .footer-brand strong,
+    .footer-group strong {
+      color: var(--text);
+    }
+    .footer-brand p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .footer-group {
+      display: grid;
+      gap: 8px;
+    }
+    .footer-group a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+    .footer-group a:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+    .footer-fine {
+      margin-top: 22px;
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
     @media (max-width: 760px) {
       .site-nav {
         align-items: flex-start;
@@ -7275,8 +7498,97 @@ def shared_ui_css() -> str:
         margin-top: 8px;
         box-shadow: none;
       }
+      .footer-grid {
+        grid-template-columns: 1fr;
+      }
     }
     """
+
+
+def seo_meta_html(title: str, description: str, path: str = "/proof-pack", *, schema_type: str = "Service") -> str:
+    """Render indexable metadata for public marketing and docs pages."""
+    clean_title = clean_lead_text(title, 120)
+    clean_description = clean_lead_text(description, 240)
+    canonical = public_url(path)
+    schema: dict[str, Any] = {
+        "@context": "https://schema.org",
+        "@type": schema_type,
+        "name": clean_title,
+        "url": canonical,
+        "description": clean_description,
+        "isPartOf": {
+            "@type": "WebSite",
+            "name": "AxonGate",
+            "url": public_url("/proof-pack"),
+        },
+    }
+    if schema_type == "Service":
+        schema.update(
+            {
+                "provider": {
+                    "@type": "Organization",
+                    "name": "AxonGate",
+                    "url": public_url("/about"),
+                },
+                "applicationCategory": "DeveloperApplication",
+                "offers": {
+                    "@type": "AggregateOffer",
+                    "priceCurrency": "USD",
+                    "lowPrice": str(PROOF_PACK_PRICING_USDC.get("quick", Decimal("0.10"))),
+                    "highPrice": str(PROOF_BUNDLE_PRICING_USDC.get("audit", Decimal("20.00"))),
+                },
+            }
+        )
+    schema_json = json.dumps(schema, separators=(",", ":")).replace("</", "<\\/")
+    return f"""<title>{html.escape(clean_title)}</title>
+  <meta name="description" content="{html.escape(clean_description, quote=True)}">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="{html.escape(canonical, quote=True)}">
+  <meta property="og:site_name" content="AxonGate">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{html.escape(clean_title, quote=True)}">
+  <meta property="og:description" content="{html.escape(clean_description, quote=True)}">
+  <meta property="og:url" content="{html.escape(canonical, quote=True)}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{html.escape(clean_title, quote=True)}">
+  <meta name="twitter:description" content="{html.escape(clean_description, quote=True)}">
+  <script type="application/ld+json">{schema_json}</script>"""
+
+
+def site_footer_html() -> str:
+    """Render shared footer links for public pages."""
+    contact_email = PUBLIC_CONTACT_EMAIL or "reports@axongate.one"
+    return f"""
+    <footer class="site-footer">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <strong>AxonGate</strong>
+          <p>Evidence trust checks for AI agents that need supported, cited, and safer public-source decisions.</p>
+        </div>
+        <div class="footer-group">
+          <strong>Product</strong>
+          <a href="{html.escape(public_url('/proof-pack'), quote=True)}">Trust Check</a>
+          <a href="{html.escape(public_url('/proof-pack/bundle'), quote=True)}">Evidence Bundles</a>
+          <a href="{html.escape(public_url('/proof-pack/sample'), quote=True)}">Sample Report</a>
+          <a href="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}">Recover Delivery</a>
+        </div>
+        <div class="footer-group">
+          <strong>Company</strong>
+          <a href="{html.escape(public_url('/about'), quote=True)}">About</a>
+          <a href="{html.escape(public_url('/faq'), quote=True)}">FAQ</a>
+          <a href="{html.escape(public_url('/contact'), quote=True)}">Contact</a>
+          <a href="mailto:{html.escape(contact_email, quote=True)}">Email</a>
+        </div>
+        <div class="footer-group">
+          <strong>Developers</strong>
+          <a href="{html.escape(public_url('/docs'), quote=True)}">Docs</a>
+          <a href="{html.escape(public_url('/quickstart'), quote=True)}">Quickstart</a>
+          <a href="{html.escape(public_url('/llms.txt'), quote=True)}">llms.txt</a>
+          <a href="{html.escape(public_url('/sitemap.xml'), quote=True)}">Sitemap</a>
+        </div>
+      </div>
+      <div class="footer-fine">AxonGate checks public source evidence before agents cite, ingest, or act on it.</div>
+    </footer>"""
 
 
 def ui_link(label: str, href: Any, *, class_name: str = "button secondary", current: bool = False) -> str:
@@ -7312,6 +7624,9 @@ def site_nav_html(active: str = "") -> str:
             ("Proof Quote", public_url("/proof-pack/quote")),
             ("Request", public_url("/proof-pack/request")),
             ("Recover Bundle", public_url("/proof-pack/bundle/recover")),
+            ("About", public_url("/about")),
+            ("FAQ", public_url("/faq")),
+            ("Contact", public_url("/contact")),
             ("Operator", public_url("/operator")),
             ("Discovery", public_url("/discovery/resources")),
         ]
@@ -7365,6 +7680,341 @@ def link_cluster_html(groups: list[tuple[str, list[tuple[str, Any]]]]) -> str:
       </details>"""
         )
     return '<section class="link-cluster" aria-label="Discovery links">' + "\n".join(rendered_groups) + "\n    </section>"
+
+
+def build_about_html() -> str:
+    """Render the public About page."""
+    nav = site_nav_html("About")
+    actions = action_bar_html(
+        [
+            ("Run Trust Check", public_url("/proof-pack")),
+            ("Contact", public_url("/contact")),
+        ],
+        [
+            ("Evidence Bundles", public_url("/proof-pack/bundle")),
+            ("Docs", public_url("/docs")),
+            ("Quickstart", public_url("/quickstart")),
+        ],
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html("About AxonGate", "AxonGate is an evidence trust layer for AI agents, helping builders decide whether public web sources safely support claims before citation or ingestion.", "/about", schema_type="WebPage")}
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 1040px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.2rem, 4vw, 3.5rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 38px 0 12px; font-size: 1.3rem; }}
+    p, li {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .summary {{ max-width: 820px; font-size: 1.08rem; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin: 22px 0; }}
+    .box {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }}
+    .box strong {{ color: var(--text); }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <h1>AxonGate helps agents know what they can safely cite.</h1>
+    <p class="summary">AI systems increasingly read the public web, but raw page extraction does not tell an agent whether a source is useful, noisy, weak, or unsupported. AxonGate sits between the web and the agent as a trust check for public-source evidence.</p>
+    {actions}
+    <div class="grid">
+      <div class="box"><strong>For agent builders</strong><br><p>Use AxonGate before RAG ingestion, autonomous web actions, customer-facing citations, and launch audits.</p></div>
+      <div class="box"><strong>For evidence workflows</strong><br><p>Get cited findings, source hashes, confidence, risks, JSON, PDF, and delivery links instead of unjudged page text.</p></div>
+      <div class="box"><strong>For paid automation</strong><br><p>x402 endpoints let agents buy source checks directly, while Stripe links capture human demand for bundles.</p></div>
+    </div>
+    <h2>Why this exists</h2>
+    <p>Most web tooling answers, "What text is on this page?" AxonGate answers the more valuable question: "Can my agent rely on this source for this claim?" That difference matters when an agent is about to cite a page, update a knowledge base, or produce a customer-visible answer.</p>
+    <h2>What AxonGate returns</h2>
+    <p>Proof Packs and Evidence Bundles return a trust decision with supported claims, citation IDs, excerpts, confidence, source quality notes, delivery metadata, and risks. The output is built to be read by humans and consumed by agent workflows.</p>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
+
+
+def build_faq_html() -> str:
+    """Render a public FAQ page."""
+    nav = site_nav_html("FAQ")
+    faq_items = [
+        (
+            "Is AxonGate just a page parser?",
+            "No. Page extraction is only the input. AxonGate checks whether the extracted evidence supports a claim, identifies weak or noisy source material, and returns cited findings with confidence and risks.",
+        ),
+        (
+            "Who is AxonGate for?",
+            "Agent builders, RAG teams, AI product operators, and technical buyers who need a defensible source check before an agent cites, ingests, or acts on public web evidence.",
+        ),
+        (
+            "What is a Proof Pack?",
+            "A Proof Pack is a single-source evidence report. It answers a claim or question using one public URL and returns summary, claims, citations, risks, confidence, source hash, and API metadata.",
+        ),
+        (
+            "What is an Evidence Bundle?",
+            "An Evidence Bundle checks several public URLs together. It is better for launch audits, vendor claims, source lists, and buyer requests where one page is not enough.",
+        ),
+        (
+            "How does payment work?",
+            "Agent calls use x402 on Base USDC. Human bundle requests use Stripe payment links and then deliver the report through a secure delivery page and email when email delivery is configured.",
+        ),
+        (
+            "Can I try it without paying?",
+            "Yes. The sample report, quote endpoints, and mini preview help buyers inspect the report shape and price before paid work.",
+        ),
+        (
+            "What URLs are accepted?",
+            "AxonGate accepts public HTTP and HTTPS URLs and blocks private, loopback, local, multicast, and unsafe target hosts before supplier work.",
+        ),
+        (
+            "How do I contact AxonGate?",
+            "Use the contact form for support, partnerships, custom bundle requests, or API questions. Paid delivery recovery is available from the Evidence Bundle recovery page.",
+        ),
+    ]
+    details = "\n".join(
+        f"""
+      <details>
+        <summary>{html.escape(question)}</summary>
+        <p>{html.escape(answer)}</p>
+      </details>"""
+        for question, answer in faq_items
+    )
+    actions = action_bar_html(
+        [
+            ("Run Trust Check", public_url("/proof-pack")),
+            ("Contact", public_url("/contact")),
+        ],
+        [
+            ("Sample Report", public_url("/proof-pack/sample")),
+            ("Evidence Bundles", public_url("/proof-pack/bundle")),
+            ("Docs", public_url("/docs")),
+        ],
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html("AxonGate FAQ", "Answers about AxonGate source trust reports, Proof Packs, Evidence Bundles, x402 payments, Stripe delivery, accepted URLs, and contact options.", "/faq", schema_type="WebPage")}
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.2rem, 4vw, 3.5rem); line-height: 1.05; margin: 0 0 12px; }}
+    p {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .summary {{ max-width: 760px; font-size: 1.08rem; }}
+    .faq-list {{ display: grid; gap: 10px; margin: 24px 0; }}
+    .faq-list details {{ border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 0; }}
+    .faq-list summary {{ cursor: pointer; padding: 14px 16px; color: var(--text); font-weight: 700; }}
+    .faq-list p {{ margin: 0; padding: 0 16px 16px; }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <h1>FAQ</h1>
+    <p class="summary">Short answers for buyers and builders evaluating AxonGate as a source trust layer for AI agents.</p>
+    {actions}
+    <section class="faq-list" aria-label="Frequently asked questions">
+      {details}
+    </section>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
+
+
+def build_contact_html(
+    values: Optional[dict[str, Any]] = None,
+    submitted: Optional[dict[str, Any]] = None,
+    error: Optional[str] = None,
+) -> str:
+    """Render a public contact form."""
+    values = values or {}
+    nav = site_nav_html("Contact")
+    contact_email = PUBLIC_CONTACT_EMAIL or "reports@axongate.one"
+    name = clean_lead_text(values.get("name"), 120)
+    email_address = clean_lead_text(values.get("email"), 180)
+    company = clean_lead_text(values.get("company"), 160)
+    use_case = clean_lead_text(values.get("use_case"), 240)
+    message = clean_lead_text(values.get("message"), 1200)
+    source = normalize_attribution_source(str(values.get("source") or "contact-page"))
+    success_html = ""
+    if submitted:
+        success_html = f"""
+    <div class="notice success">
+      <strong>Message received</strong><br>
+      Thanks. Your inquiry was saved as <code>{html.escape(str(submitted.get("lead_id") or ""))}</code>. We will reply to the email you entered.
+    </div>"""
+    error_html = (
+        f'<div class="notice error"><strong>Message not sent</strong><br>{html.escape(error)}</div>'
+        if error
+        else ""
+    )
+    actions = action_bar_html(
+        [
+            ("Run Trust Check", public_url("/proof-pack")),
+            ("Evidence Bundles", public_url("/proof-pack/bundle")),
+        ],
+        [
+            ("FAQ", public_url("/faq")),
+            ("Docs", public_url("/docs")),
+            ("Recover Delivery", public_url("/proof-pack/bundle/recover")),
+        ],
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html("Contact AxonGate", "Contact AxonGate for source trust reports, Evidence Bundles, API questions, delivery help, partnerships, or custom agent evidence workflows.", "/contact", schema_type="WebPage")}
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+      --good: #7ee787;
+      --bad: #ff9b9b;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.2rem, 4vw, 3.5rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 34px 0 12px; font-size: 1.25rem; }}
+    p, label, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .summary {{ max-width: 760px; font-size: 1.08rem; }}
+    .contact-layout {{ display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(240px, .8fr); gap: 18px; align-items: start; margin-top: 22px; }}
+    form {{ display: grid; gap: 13px; }}
+    .row {{ display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    label {{ display: grid; gap: 6px; font-size: .9rem; }}
+    input, textarea {{
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px 12px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }}
+    textarea {{ min-height: 150px; resize: vertical; }}
+    button {{
+      justify-self: start;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      padding: 11px 14px;
+      background: color-mix(in srgb, var(--accent), var(--panel) 78%);
+      color: var(--text);
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }}
+    .panel, .notice {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px; }}
+    .success {{ border-color: color-mix(in srgb, var(--good), var(--line)); }}
+    .error {{ border-color: color-mix(in srgb, var(--bad), var(--line)); }}
+    code {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); border-radius: 4px; padding: 2px 5px; }}
+    @media (max-width: 760px) {{
+      .contact-layout, .row {{ grid-template-columns: 1fr; }}
+    }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <h1>Contact AxonGate</h1>
+    <p class="summary">Ask about source trust reports, custom Evidence Bundles, delivery recovery, API use, partnerships, or a higher-volume workflow.</p>
+    {actions}
+    {error_html}
+    {success_html}
+    <div class="contact-layout">
+      <form method="post" action="/contact" accept-charset="utf-8">
+        <input type="hidden" name="source" value="{html.escape(source)}">
+        <div class="row">
+          <label>Name
+            <input name="name" value="{html.escape(name)}" autocomplete="name">
+          </label>
+          <label>Email
+            <input name="email" type="email" value="{html.escape(email_address)}" autocomplete="email" required>
+          </label>
+        </div>
+        <div class="row">
+          <label>Company or project
+            <input name="company" value="{html.escape(company)}" autocomplete="organization">
+          </label>
+          <label>Use case
+            <input name="use_case" value="{html.escape(use_case)}" placeholder="RAG, agent eval, launch audit">
+          </label>
+        </div>
+        <label>Message
+          <textarea name="message" required>{html.escape(message)}</textarea>
+        </label>
+        <button type="submit">Send message</button>
+      </form>
+      <aside class="panel">
+        <h2>Useful links</h2>
+        <p>Email: <a href="mailto:{html.escape(contact_email, quote=True)}">{html.escape(contact_email)}</a></p>
+        <p>For paid report delivery, use the same email entered at Stripe checkout on the recovery page.</p>
+        <p><a href="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}">Recover a delivery</a></p>
+        <p><a href="{html.escape(public_url('/docs'), quote=True)}">Read API docs</a></p>
+      </aside>
+    </div>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
 
 
 def build_quote_html(quote: dict[str, Any]) -> str:
@@ -8152,7 +8802,7 @@ def build_proof_bundle_html(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AxonGate Multi-Source Evidence Check</title>
+  {seo_meta_html("AxonGate Evidence Bundles", "Multi-source evidence checks for AI agents. AxonGate verifies whether a set of public URLs can safely support a claim and delivers cited trust reports.", "/proof-pack/bundle")}
   <style>
     :root {{
       color-scheme: light dark;
@@ -8304,6 +8954,7 @@ def build_proof_bundle_html(
     <pre>curl -X POST {public}/v1/proof-pack/bundle/leads \\
   -H "Content-Type: application/json" \\
   -d '{api_example}'</pre>
+    {site_footer_html()}
   </main>
 </body>
 </html>"""
@@ -8533,7 +9184,7 @@ def build_proof_pack_html() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AxonGate Source Trust Check</title>
+  {seo_meta_html("AxonGate Source Trust Check", "Check whether a public URL safely supports a claim before an AI agent cites, ingests, or acts on it. Get cited source trust reports for agent builders.", "/proof-pack")}
   <style>
     :root {{
       color-scheme: light dark;
@@ -8711,6 +9362,7 @@ Header: X-AxonGate-Pack: standard</pre>
 
     <h2>Response Shape</h2>
     <pre>{response_json}</pre>
+    {site_footer_html()}
   </main>
 </body>
 </html>"""
@@ -8900,6 +9552,9 @@ Basename: axongate.base.eth
 Summary: x402-paid source trust layer that checks whether public web evidence is safe for AI agents to cite or act on. Clean markdown extraction is available, but the main value is evidence quality, claim support, and citation-ready trust decisions.
 Canonical base URL: {PUBLIC_BASE_URL}
 Human docs: {public_url("/docs")}
+About: {public_url("/about")}
+FAQ: {public_url("/faq")}
+Contact: {public_url("/contact")}
 Operator dashboard: {public_url("/operator")}
 Private Proof Pack lead inbox: {public_url("/operator/leads")} (requires AXONGATE_OPERATOR_TOKEN)
 Quickstart: {public_url("/quickstart")}
@@ -9134,6 +9789,9 @@ def build_docs_html() -> str:
                 [
                     ("Source Trust Check", f"{PUBLIC_BASE_URL}/proof-pack"),
                     ("Evidence Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+                    ("About", f"{PUBLIC_BASE_URL}/about"),
+                    ("FAQ", f"{PUBLIC_BASE_URL}/faq"),
+                    ("Contact", f"{PUBLIC_BASE_URL}/contact"),
                     ("Bundle Checkout", f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay"),
                     ("Proof Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
                     ("Proof Preview", f"{PUBLIC_BASE_URL}/proof-pack/preview"),
@@ -9182,7 +9840,7 @@ def build_docs_html() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AxonGate Docs</title>
+  {seo_meta_html("AxonGate Docs", "Developer docs for AxonGate source trust reports, Evidence Bundles, x402 payment endpoints, quote APIs, delivery recovery, and agent discovery resources.", "/docs", schema_type="TechArticle")}
   <style>
     :root {{
       color-scheme: light dark;
@@ -9332,6 +9990,7 @@ def build_docs_html() -> str:
 
     <h2>Supply Guards</h2>
     <p>AxonGate rejects unsafe targets before payment-funded supplier work, blocks private and loopback address space, follows bounded redirects, caps content size, rate-limits abuse patterns, and fails closed when dynamic gas pricing or supplier availability would make delivery uneconomic.</p>
+    {site_footer_html()}
   </main>
 </body>
 </html>"""
@@ -9388,6 +10047,7 @@ def build_operator_dashboard_html(
             card("Proof Previews", count(metric("proof_pack_previews_total")), f'{count(metric("proof_pack_preview_cache_hits_total"))} cache hits'),
             card("Proof Quotes", count(metric("proof_pack_quotes_total")), "No-spend report quotes"),
             card("Proof Leads", count(metric("proof_pack_leads_total")), "Request capture submits"),
+            card("Contact Inquiries", count(metric("contact_form_submits_total")), "General buyer/support messages"),
             card("Bundle Quotes", count(metric("proof_bundle_quotes_total")), "Multi-source quote interest"),
             card("Bundle Leads", count(metric("proof_bundle_leads_total")), "Higher-ticket demand capture"),
             card("Bundle Checkout", count(metric("proof_bundle_payment_clicks_total")), "Tracked payment clicks"),
@@ -9470,6 +10130,9 @@ def build_operator_dashboard_html(
             f"<tr><td>Root</td><td>{count(metric('discovery_root_hits_total'))}</td></tr>",
             f"<tr><td>x402 Discovery</td><td>{count(metric('discovery_x402_hits_total'))}</td></tr>",
             f"<tr><td>Docs</td><td>{count(metric('discovery_docs_hits_total'))}</td></tr>",
+            f"<tr><td>About</td><td>{count(metric('discovery_about_hits_total'))}</td></tr>",
+            f"<tr><td>FAQ</td><td>{count(metric('discovery_faq_hits_total'))}</td></tr>",
+            f"<tr><td>Contact</td><td>{count(metric('discovery_contact_hits_total'))}</td></tr>",
             f"<tr><td>Operator</td><td>{count(metric('discovery_operator_hits_total'))}</td></tr>",
             f"<tr><td>Quickstart</td><td>{count(metric('discovery_quickstart_hits_total'))}</td></tr>",
             f"<tr><td>Paid Test Guide</td><td>{count(metric('discovery_paid_test_hits_total'))}</td></tr>",
@@ -10052,7 +10715,7 @@ npm run paid:buyer -- \\
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AxonGate Quickstart</title>
+  {seo_meta_html("AxonGate Quickstart", "Run your first AxonGate paid source trust check with x402 on Base USDC, burner wallet setup, buyer examples, and agent workflow guidance.", "/quickstart", schema_type="TechArticle")}
   <style>
     :root {{
       color-scheme: light dark;
@@ -10153,6 +10816,7 @@ npm run paid:buyer -- \\
       </tbody>
     </table>
     </div>
+    {site_footer_html()}
   </main>
 </body>
 </html>"""
@@ -10521,6 +11185,9 @@ def build_sitemap_xml() -> str:
     entries = [
         ("/", "1.0"),
         ("/docs", "0.9"),
+        ("/about", "0.85"),
+        ("/faq", "0.85"),
+        ("/contact", "0.85"),
         ("/operator", "0.9"),
         ("/quickstart", "0.95"),
         ("/paid-test", "0.9"),
@@ -10580,6 +11247,57 @@ async def human_docs(request: Request):
     """Serve a lightweight docs page; Swagger remains available at /swagger."""
     inc_discovery_hit("discovery_docs_hits_total", attribution_source_from_request(request))
     return build_docs_html()
+
+
+@app.get("/about", response_class=HTMLResponse, tags=["discovery"], summary="About AxonGate")
+async def about_page(request: Request):
+    """Serve the public About page."""
+    inc_discovery_hit("discovery_about_hits_total", attribution_source_from_request(request))
+    return build_about_html()
+
+
+@app.get("/faq", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate FAQ")
+async def faq_page(request: Request):
+    """Serve a public FAQ page for buyers and builders."""
+    inc_discovery_hit("discovery_faq_hits_total", attribution_source_from_request(request))
+    return build_faq_html()
+
+
+@app.get("/contact", response_class=HTMLResponse, tags=["discovery"], summary="Contact AxonGate")
+async def contact_page(request: Request):
+    """Serve the public contact form."""
+    inc_discovery_hit("discovery_contact_hits_total", attribution_source_from_request(request))
+    return build_contact_html({"source": attribution_source_from_request(request) or "contact-page"})
+
+
+@app.post("/contact", response_class=HTMLResponse, tags=["discovery"], summary="Submit AxonGate contact form")
+async def contact_form_submit(request: Request):
+    """Accept a browser contact form and store the inquiry privately."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_contact_hits_total", source)
+    payload = parse_urlencoded_payload(await request.body())
+    try:
+        await enforce_rate_limit("contact_form_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        lead = await create_contact_lead(payload, request)
+    except Exception as exc:
+        inc_metric("contact_form_errors_total")
+        detail = exc.detail if isinstance(exc, PaymentValidationError) else str(exc)
+        return HTMLResponse(build_contact_html(payload, error=clean_lead_text(str(detail), 320)), status_code=400)
+    return build_contact_html(payload, submitted=contact_public_response(lead))
+
+
+@app.post("/v1/contact", tags=["discovery"], summary="Submit AxonGate contact inquiry")
+async def contact_api(request: Request, contact_request: ContactRequest):
+    """Store a public contact inquiry for operator follow-up."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_contact_hits_total", source)
+    try:
+        await enforce_rate_limit("contact_form_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        lead = await create_contact_lead(contact_request, request)
+    except PaymentValidationError as exc:
+        inc_metric("contact_form_errors_total")
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    return contact_public_response(lead)
 
 
 @app.get("/operator", response_class=HTMLResponse, tags=["operations"], summary="Operator conversion dashboard")
@@ -11277,6 +11995,11 @@ async def root(request: Request):
         "x402_json": f"{PUBLIC_BASE_URL}/.well-known/x402.json",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
+        "about": f"{PUBLIC_BASE_URL}/about",
+        "faq": f"{PUBLIC_BASE_URL}/faq",
+        "contact": f"{PUBLIC_BASE_URL}/contact",
+        "contact_api": f"{PUBLIC_BASE_URL}/v1/contact",
+        "contact_email": PUBLIC_CONTACT_EMAIL,
         "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
         "operator_leads": f"{PUBLIC_BASE_URL}/operator/leads",
         "operator_leads_api": f"{PUBLIC_BASE_URL}/v1/operator/leads",
