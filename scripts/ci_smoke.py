@@ -449,15 +449,49 @@ async def main() -> None:
         assert stripe_delivery_json["status"] == "ready", "Stripe delivery should generate a ready report"
         assert stripe_delivery_json["lead_status"] == "fulfilled", "Stripe delivery should mark lead fulfilled"
         assert stripe_delivery_json["report"]["successful_sources"] >= 1, "Stripe delivery report should include sources"
+        assert stripe_delivery_json["delivery"]["version"] == "delivery-v2", "Stripe delivery should expose Delivery v2 model"
+        assert stripe_delivery_json["delivery"]["quality_label"], "Delivery v2 should include an evidence quality label"
+        assert "download_pdf" in stripe_delivery_json["delivery"]["actions"], "Delivery v2 should include PDF action"
+        assert "download_json" in stripe_delivery_json["delivery"]["actions"], "Delivery v2 should include JSON action"
         assert sent_delivery_emails, "Stripe delivery should send a customer report email when configured"
         assert sent_delivery_emails[-1]["to"] == ["stripe-buyer@example.invalid"], "Delivery email recipient mismatch"
         assert "Open report" in sent_delivery_emails[-1]["html"], "Delivery email should include report link"
+        assert "Evidence quality" in sent_delivery_emails[-1]["html"], "Delivery email should include quality signal"
+        assert "Download PDF" in sent_delivery_emails[-1]["html"], "Delivery email should include PDF download"
+        assert "](" not in sent_delivery_emails[-1]["html"], "Delivery email should not expose raw markdown links"
 
         stripe_delivery_page = await client.get(
             "/proof-pack/bundle/delivery?session_id=cs_ci_axongate_paid"
         )
         assert stripe_delivery_page.status_code == 200, "Stripe delivery page should render"
-        assert "Proof Bundle Delivery" in stripe_delivery_page.text, "Stripe delivery page missing heading"
+        assert "Proof Bundle Report" in stripe_delivery_page.text, "Stripe delivery page missing report heading"
+        assert "What This Establishes" in stripe_delivery_page.text, "Stripe delivery page missing findings section"
+        assert "Source Quality Audit" in stripe_delivery_page.text, "Stripe delivery page missing source audit"
+        assert "Download PDF" in stripe_delivery_page.text, "Stripe delivery page missing PDF action"
+
+        stripe_json_download = await client.get(
+            "/proof-pack/bundle/delivery.json?session_id=cs_ci_axongate_paid"
+        )
+        assert stripe_json_download.status_code == 200, "Stripe delivery JSON download should resolve"
+        assert stripe_json_download.headers.get("content-disposition", "").endswith(".json\""), (
+            "JSON download should include attachment filename"
+        )
+        assert stripe_json_download.json()["delivery"]["version"] == "delivery-v2", "JSON download should include Delivery v2"
+
+        stripe_pdf_download = await client.get(
+            "/proof-pack/bundle/delivery.pdf?session_id=cs_ci_axongate_paid"
+        )
+        assert stripe_pdf_download.status_code == 200, "Stripe delivery PDF download should resolve"
+        assert stripe_pdf_download.content.startswith(b"%PDF-1.4"), "PDF download should return PDF bytes"
+        assert stripe_pdf_download.headers.get("content-disposition", "").endswith(".pdf\""), (
+            "PDF download should include attachment filename"
+        )
+
+        stripe_print_page = await client.get(
+            "/proof-pack/bundle/delivery/print?session_id=cs_ci_axongate_paid"
+        )
+        assert stripe_print_page.status_code == 200, "Stripe delivery print page should render"
+        assert "Proof Bundle Report" in stripe_print_page.text, "Print page missing report heading"
 
         recovery_form = await client.get("/proof-pack/bundle/recover")
         assert recovery_form.status_code == 200, "Proof Bundle recovery form should render"

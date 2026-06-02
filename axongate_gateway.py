@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import socket
+import textwrap
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -5186,9 +5187,335 @@ async def generate_and_store_proof_bundle_delivery(lead_id: str) -> Optional[dic
         return await find_stored_proof_pack_lead(str(lead.get("id")))
 
 
+PROOF_BUNDLE_EMAIL_TEMPLATE_VERSION = "proof-bundle-delivery-v2"
+REPORT_NAVIGATION_TERMS = (
+    "toggle menu",
+    "login",
+    "join for free",
+    "premium",
+    "language",
+    "your location",
+    "best videos",
+    "menu",
+    "account",
+    "sign in",
+    "sign up",
+    "cookie",
+    "privacy",
+    "terms",
+)
+REPORT_MARKDOWN_NOISE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)|\[[^\]]*\]\([^)]+\)|https?://\S+")
+
+
+def proof_bundle_delivery_lookup_query(lead: dict[str, Any]) -> str:
+    """Return the most stable delivery lookup query for action links."""
+    stripe = lead.get("stripe") if isinstance(lead.get("stripe"), dict) else {}
+    session_id = str(stripe.get("session_id") or "").strip()
+    if session_id:
+        return f"session_id={url_quote(session_id, safe='')}"
+    return f"lead_id={url_quote(str(lead.get('id') or ''), safe='')}"
+
+
+def proof_bundle_delivery_action_urls(lead: dict[str, Any], report: Optional[dict[str, Any]]) -> dict[str, str]:
+    """Build customer actions that add value after a paid delivery."""
+    query = proof_bundle_delivery_lookup_query(lead)
+    target_urls = [
+        str(target).strip()
+        for target in (lead.get("target_urls") if isinstance(lead.get("target_urls"), list) else [])
+        if str(target).strip()
+    ]
+    if not target_urls and lead.get("target_url"):
+        target_urls = [str(lead.get("target_url"))]
+    question = proof_bundle_question(lead.get("question"))
+    current_bundle = normalize_proof_bundle(str(lead.get("bundle") or DEFAULT_PROOF_BUNDLE))
+    upgrade_bundle = DEFAULT_PROOF_BUNDLE if current_bundle == "scout" else "audit"
+    return {
+        "open_report": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery?{query}",
+        "download_json": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery.json?{query}",
+        "download_pdf": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery.pdf?{query}",
+        "print": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery/print?{query}",
+        "refine": proof_bundle_request_page_url(target_urls, f"Refine this report: {question}", current_bundle, "delivery-refine")
+        if target_urls
+        else public_url("/proof-pack/bundle"),
+        "analyze_another": public_url("/proof-pack/bundle"),
+        "upgrade": proof_bundle_quote_page_url(target_urls, question, upgrade_bundle, "delivery-upgrade")
+        if target_urls
+        else public_url("/proof-pack/bundle"),
+    }
+
+
+def report_text_from_url(value: str) -> str:
+    parsed = urlparse(value)
+    host = parsed.hostname or value
+    path = parsed.path.strip("/")
+    return f"{host}/{path}" if path else host
+
+
+def clean_report_text(value: Any, max_chars: int = 420) -> str:
+    """Convert markdown-heavy extracted evidence into readable report text."""
+    text = html.unescape(str(value or ""))
+
+    def replace_markdown_link(match: re.Match[str]) -> str:
+        label = clean_evidence_excerpt(match.group(1), 160)
+        url = match.group(2).split(" ", 1)[0].strip()
+        if not label or label.lower().startswith(("http://", "https://")):
+            return report_text_from_url(url)
+        return label
+
+    text = re.sub(r"!\[[^\]]*\]\([^)]+\)", " ", text)
+    text = re.sub(r"\[([^\]]*)\]\((https?://[^)]+)\)", replace_markdown_link, text)
+    text = re.sub(r"https?://[^\s)\]]+", lambda match: report_text_from_url(match.group(0)), text)
+    text = re.sub(r"\bImage\s*:\s*[^.|\n]+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"#+\s*", " ", text)
+    text = re.sub(r"[\[\]()`*_]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" -:;,.")
+    text = re.sub(r"\b([A-Za-z0-9.-]+\.[A-Za-z]{2,})(?:\s+\1\b)+", r"\1", text)
+    return clean_evidence_excerpt(text, max_chars)
+
+
+def report_noise_score(value: Any) -> float:
+    """Estimate whether evidence is useful prose or mostly navigation/markdown noise."""
+    raw = str(value or "")
+    lower = raw.lower()
+    marker_count = len(REPORT_MARKDOWN_NOISE_RE.findall(raw))
+    nav_hits = sum(1 for term in REPORT_NAVIGATION_TERMS if term in lower)
+    cleaned = clean_report_text(raw, 500)
+    word_count = len(re.findall(r"[A-Za-z0-9]{3,}", cleaned))
+    score = 0.0
+    if marker_count >= 2:
+        score += 0.35
+    elif marker_count == 1:
+        score += 0.15
+    score += min(0.35, nav_hits * 0.08)
+    if word_count < 8:
+        score += 0.3
+    elif word_count < 18:
+        score += 0.15
+    if len(cleaned) < 55:
+        score += 0.15
+    return round(min(1.0, score), 2)
+
+
+def source_quality_level(score: float, substantive_count: int) -> str:
+    if score >= 0.72 and substantive_count >= 2:
+        return "strong"
+    if score >= 0.48 and substantive_count >= 1:
+        return "usable"
+    return "low"
+
+
+def source_quality_label(level: str) -> str:
+    return {
+        "strong": "Strong evidence",
+        "usable": "Usable evidence",
+        "low": "Low evidence quality",
+    }.get(level, "Low evidence quality")
+
+
+def citation_lookup(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    citations = report.get("citations") if isinstance(report.get("citations"), list) else []
+    return {str(citation.get("id") or ""): citation for citation in citations if isinstance(citation, dict)}
+
+
+def clean_claim_with_quality(claim: dict[str, Any], citations_by_id: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    citation_ids = [str(item) for item in claim.get("citation_ids", []) if str(item)]
+    citation_scores = [
+        max(0.0, 1.0 - report_noise_score(citations_by_id.get(citation_id, {}).get("excerpt", "")))
+        for citation_id in citation_ids
+    ]
+    raw_claim = str(claim.get("claim") or "")
+    cleaned = clean_report_text(raw_claim, 300)
+    if not cleaned:
+        cleaned = "Evidence excerpt was captured, but no readable claim could be extracted."
+    own_score = max(0.0, 1.0 - report_noise_score(raw_claim))
+    support_score = sum(citation_scores) / max(1, len(citation_scores))
+    quality_score = clamp_confidence((own_score + support_score) / 2, 0.0)
+    return {
+        "claim": cleaned,
+        "citation_ids": citation_ids,
+        "confidence": clamp_confidence(claim.get("confidence"), 0.0),
+        "source_id": claim.get("source_id"),
+        "target_url": claim.get("target_url"),
+        "quality_score": quality_score,
+        "is_substantive": quality_score >= 0.48 and len(cleaned) >= 55,
+    }
+
+
+def proof_bundle_source_quality(source_report: dict[str, Any]) -> dict[str, Any]:
+    citations = source_report.get("citations") if isinstance(source_report.get("citations"), list) else []
+    claims = source_report.get("key_claims") if isinstance(source_report.get("key_claims"), list) else []
+    source_citations_by_id = {
+        str(citation.get("id") or ""): citation
+        for citation in citations
+        if isinstance(citation, dict)
+    }
+    clean_claims = [
+        clean_claim_with_quality(claim, source_citations_by_id)
+        for claim in claims
+        if isinstance(claim, dict)
+    ]
+    clean_citations = [
+        {
+            "id": str(citation.get("id") or ""),
+            "url": str(citation.get("url") or source_report.get("target_url") or ""),
+            "excerpt": clean_report_text(citation.get("excerpt"), 420),
+            "quality_score": clamp_confidence(1.0 - report_noise_score(citation.get("excerpt")), 0.0),
+        }
+        for citation in citations
+        if isinstance(citation, dict)
+    ]
+    substantive_claims = [claim for claim in clean_claims if claim["is_substantive"]]
+    if clean_citations:
+        quality_score = sum(item["quality_score"] for item in clean_citations) / len(clean_citations)
+    else:
+        quality_score = 0.0
+    if clean_claims:
+        quality_score = (quality_score + sum(item["quality_score"] for item in clean_claims) / len(clean_claims)) / 2
+    quality_score = clamp_confidence(quality_score, 0.0)
+    level = source_quality_level(quality_score, len(substantive_claims))
+    return {
+        "source_id": source_report.get("source_id"),
+        "target_url": source_report.get("target_url"),
+        "status": source_report.get("status"),
+        "quality_score": quality_score,
+        "quality_level": level,
+        "quality_label": source_quality_label(level),
+        "summary": clean_report_text(source_report.get("executive_summary") or source_report.get("answer") or "", 620),
+        "clean_claims": clean_claims,
+        "clean_citations": clean_citations,
+        "substantive_claim_count": len(substantive_claims),
+        "citation_count": len(clean_citations),
+        "cache_hit": bool((source_report.get("cache") or {}).get("hit")) if isinstance(source_report.get("cache"), dict) else False,
+        "content_sha256": str((source_report.get("source_profile") or {}).get("content_sha256") or "")
+        if isinstance(source_report.get("source_profile"), dict)
+        else "",
+        "risks": [
+            clean_report_text(risk, 240)
+            for risk in (source_report.get("risks") if isinstance(source_report.get("risks"), list) else [])
+            if str(risk).strip()
+        ],
+    }
+
+
+def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
+    """Build the polished, customer-facing Delivery v2 model from a stored report."""
+    report = lead.get("proof_bundle_report") if isinstance(lead.get("proof_bundle_report"), dict) else {}
+    if not report:
+        return {
+            "version": "delivery-v2",
+            "quality_level": "processing",
+            "quality_label": "Generating report",
+            "summary": "Payment received. AxonGate is generating your cited Proof Bundle report.",
+            "what_this_establishes": [],
+            "clean_claims": [],
+            "clean_citations": [],
+            "source_quality": [],
+            "risks": [],
+            "actions": proof_bundle_delivery_action_urls(lead, None),
+            "copy_text": "",
+        }
+
+    sources = [
+        proof_bundle_source_quality(source_report)
+        for source_report in (report.get("source_reports") if isinstance(report.get("source_reports"), list) else [])
+        if isinstance(source_report, dict)
+    ]
+    if not sources:
+        source_report = {
+            "source_id": "s1",
+            "status": "success",
+            "target_url": (report.get("target_url") or lead.get("target_url") or ""),
+            "executive_summary": report.get("executive_summary") or report.get("answer") or "",
+            "key_claims": report.get("key_claims") if isinstance(report.get("key_claims"), list) else [],
+            "citations": report.get("citations") if isinstance(report.get("citations"), list) else [],
+            "source_profile": {},
+            "cache": {},
+            "risks": report.get("risks") if isinstance(report.get("risks"), list) else [],
+        }
+        sources = [proof_bundle_source_quality(source_report)]
+
+    clean_claims: list[dict[str, Any]] = []
+    for source in sources:
+        clean_claims.extend(source["clean_claims"])
+    clean_claims = sorted(clean_claims, key=lambda item: item.get("quality_score", 0), reverse=True)
+    clean_citations: list[dict[str, Any]] = []
+    for source in sources:
+        clean_citations.extend(source["clean_citations"])
+
+    average_quality = (
+        sum(source["quality_score"] for source in sources) / max(1, len(sources))
+        if sources
+        else 0.0
+    )
+    substantive_count = sum(source["substantive_claim_count"] for source in sources)
+    quality_level = source_quality_level(average_quality, substantive_count)
+    quality_label = source_quality_label(quality_level)
+    if quality_level == "low":
+        summary = (
+            "AxonGate received payment and inspected the submitted public source material, but the extracted evidence is mostly "
+            "navigation, boilerplate, or low-context text. Treat this as a weak evidence result rather than a substantive proof report."
+        )
+        what_this_establishes = [
+            "The submitted source was reachable and returned public text.",
+            "The available public text did not establish a clean, substantive answer to the buyer question.",
+            "A better result likely needs a more specific source URL, article page, documentation page, transcript, or public evidence page.",
+        ]
+    else:
+        summary = clean_report_text(report.get("executive_summary") or report.get("answer") or "", 900)
+        if not summary:
+            summary = "AxonGate generated a cited Proof Bundle report from the submitted public sources."
+        what_this_establishes = [
+            claim["claim"]
+            for claim in clean_claims
+            if claim.get("is_substantive")
+        ][:5]
+        if not what_this_establishes:
+            what_this_establishes = [summary]
+
+    risks = [
+        clean_report_text(risk, 260)
+        for risk in (report.get("risks") if isinstance(report.get("risks"), list) else [])
+        if str(risk).strip()
+    ]
+    if quality_level == "low":
+        risks.insert(0, "Low evidence quality: extracted text is mostly boilerplate, navigation, or link-heavy markup.")
+    if report.get("failed_sources"):
+        risks.append(f"{report.get('failed_sources')} submitted source failed during delivery.")
+    risks = list(dict.fromkeys(risk for risk in risks if risk))[:8]
+    top_claims = clean_claims[:8] if quality_level != "low" else clean_claims[:3]
+    copy_lines = [
+        "AxonGate Proof Bundle Report",
+        f"Quality: {quality_label}",
+        f"Summary: {summary}",
+        "",
+        "What this establishes:",
+        *[f"- {item}" for item in what_this_establishes],
+    ]
+    return {
+        "version": "delivery-v2",
+        "generated_at": report.get("generated_at"),
+        "generated_at_label": lead_created_at_label(report.get("generated_at")),
+        "bundle": report.get("bundle") or lead.get("bundle"),
+        "question": report.get("question") or lead.get("question"),
+        "quality_score": clamp_confidence(average_quality, 0.0),
+        "quality_level": quality_level,
+        "quality_label": quality_label,
+        "confidence_score": clamp_confidence(report.get("confidence_score"), 0.0),
+        "summary": summary,
+        "what_this_establishes": what_this_establishes,
+        "clean_claims": top_claims,
+        "clean_citations": clean_citations[:20],
+        "source_quality": sources,
+        "risks": risks,
+        "actions": proof_bundle_delivery_action_urls(lead, report),
+        "copy_text": "\n".join(copy_lines),
+    }
+
+
 def build_proof_bundle_delivery_payload(lead: dict[str, Any]) -> dict[str, Any]:
     lead = lead_with_pipeline_defaults(lead)
     report = lead.get("proof_bundle_report") if isinstance(lead.get("proof_bundle_report"), dict) else None
+    delivery_view = proof_bundle_report_view_model(lead)
     return {
         "status": "ready" if report else "processing",
         "lead_id": lead.get("id"),
@@ -5200,6 +5527,7 @@ def build_proof_bundle_delivery_payload(lead: dict[str, Any]) -> dict[str, Any]:
         "delivery_note": lead.get("delivery_note"),
         "fulfillment_url": lead.get("fulfillment_url"),
         "report": report,
+        "delivery": delivery_view,
     }
 
 
@@ -5230,44 +5558,69 @@ def build_proof_bundle_delivery_email(lead: dict[str, Any]) -> dict[str, str]:
     """Build a concise report delivery email payload."""
     payload = build_proof_bundle_delivery_payload(lead)
     report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
+    delivery = payload.get("delivery") if isinstance(payload.get("delivery"), dict) else {}
     delivery_url = proof_bundle_delivery_email_url(lead)
     bundle = str(payload.get("bundle") or "proof").title()
-    summary = clean_evidence_excerpt(
-        str(report.get("executive_summary") or report.get("answer") or "Your AxonGate report is ready."),
-        1200,
-    )
-    claims = report.get("key_claims") if isinstance(report.get("key_claims"), list) else []
+    summary = clean_evidence_excerpt(str(delivery.get("summary") or report.get("answer") or "Your AxonGate report is ready."), 900)
+    quality_label = str(delivery.get("quality_label") or "Evidence reviewed")
+    quality_score = delivery.get("quality_score")
+    actions = delivery.get("actions") if isinstance(delivery.get("actions"), dict) else {}
+    claims = delivery.get("clean_claims") if isinstance(delivery.get("clean_claims"), list) else []
+    establishes = delivery.get("what_this_establishes") if isinstance(delivery.get("what_this_establishes"), list) else []
     claim_lines = [
         f"- {clean_evidence_excerpt(str(claim.get('claim') or ''), 240)}"
         for claim in claims[:5]
         if isinstance(claim, dict) and claim.get("claim")
     ]
-    claim_text = "\n".join(claim_lines) if claim_lines else "- The cited report is ready to review."
-    claim_html = "".join(f"<li>{html.escape(line[2:])}</li>" for line in claim_lines) or "<li>The cited report is ready to review.</li>"
+    if not claim_lines:
+        claim_lines = [
+            f"- {clean_evidence_excerpt(str(item), 240)}"
+            for item in establishes[:3]
+            if str(item).strip()
+        ]
+    claim_text = "\n".join(claim_lines) if claim_lines else "- The report is ready to review."
+    claim_html = "".join(f"<li>{html.escape(line[2:])}</li>" for line in claim_lines) or "<li>The report is ready to review.</li>"
     subject = f"Your AxonGate {bundle} Proof Bundle report is ready"
     text = f"""Your AxonGate Proof Bundle report is ready.
 
 Open report:
 {delivery_url}
 
+Evidence quality:
+{quality_label}{f" ({quality_score})" if quality_score is not None else ""}
+
 Summary:
 {summary}
 
-Key claims:
+What this establishes:
 {claim_text}
+
+Downloads:
+JSON: {actions.get("download_json") or ""}
+PDF: {actions.get("download_pdf") or ""}
 
 AxonGate
 """
     html_body = f"""<!doctype html>
 <html>
-<body style="font-family:Arial,sans-serif;line-height:1.55;color:#111827">
+<body style="font-family:Arial,sans-serif;line-height:1.55;color:#111827;margin:0;background:#f7f8fb">
+  <div style="max-width:680px;margin:0 auto;padding:24px">
+  <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:22px">
   <h1 style="font-size:22px;margin:0 0 12px">Your AxonGate Proof Bundle report is ready</h1>
+  <p style="margin:0 0 16px;color:#374151">Evidence quality: <strong>{html.escape(quality_label)}</strong>{html.escape(f" ({quality_score})" if quality_score is not None else "")}</p>
   <p><a href="{html.escape(delivery_url, quote=True)}" style="display:inline-block;background:#0f766e;color:white;padding:10px 14px;border-radius:6px;text-decoration:none">Open report</a></p>
   <h2 style="font-size:16px;margin-top:22px">Summary</h2>
-  <p>{html.escape(summary)}</p>
-  <h2 style="font-size:16px;margin-top:22px">Key claims</h2>
+  <p style="color:#374151">{html.escape(summary)}</p>
+  <h2 style="font-size:16px;margin-top:22px">What this establishes</h2>
   <ul>{claim_html}</ul>
-  <p style="color:#6b7280;font-size:13px">AxonGate generated this report from public source URLs submitted at checkout.</p>
+  <p style="margin-top:22px">
+    <a href="{html.escape(str(actions.get('download_json') or delivery_url), quote=True)}" style="color:#0f766e">Download JSON</a>
+    &nbsp;|&nbsp;
+    <a href="{html.escape(str(actions.get('download_pdf') or delivery_url), quote=True)}" style="color:#0f766e">Download PDF</a>
+  </p>
+  <p style="color:#6b7280;font-size:13px">AxonGate generated this report from public source URLs submitted at checkout. Open the report for source hashes, citations, risks, and next actions.</p>
+  </div>
+  </div>
 </body>
 </html>"""
     return {"subject": subject, "text": text, "html": html_body, "delivery_url": delivery_url}
@@ -5344,7 +5697,7 @@ async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dic
     """Email a fulfilled Proof Bundle report link when delivery email is configured."""
     if not isinstance(lead.get("proof_bundle_report"), dict):
         return None
-    if lead.get("delivery_email_sent_at"):
+    if lead.get("delivery_email_sent_at") and lead.get("delivery_email_template_version") == PROOF_BUNDLE_EMAIL_TEMPLATE_VERSION:
         return lead
     if not EMAIL_DELIVERY_ENABLED:
         inc_metric("proof_bundle_delivery_email_disabled_total")
@@ -5393,6 +5746,7 @@ async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dic
         "delivery_email_sent_at": int(time.time()),
         "delivery_email_to": recipient,
         "delivery_email_provider": EMAIL_PROVIDER,
+        "delivery_email_template_version": PROOF_BUNDLE_EMAIL_TEMPLATE_VERSION,
         "delivery_email_id": clean_lead_text(str(result.get("id") or ""), 180),
         "delivery_email_error": "",
     }
@@ -5401,7 +5755,103 @@ async def send_proof_bundle_delivery_email(lead: dict[str, Any]) -> Optional[dic
     return await update_stored_proof_pack_lead(str(lead.get("id") or ""), updates)
 
 
-def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: str = "") -> str:
+def delivery_quality_class(level: str) -> str:
+    return {
+        "strong": "quality-strong",
+        "usable": "quality-usable",
+        "low": "quality-low",
+        "processing": "quality-processing",
+    }.get(level, "quality-low")
+
+
+def delivery_html_list(items: list[Any], empty: str) -> str:
+    rows = [f"<li>{html.escape(clean_report_text(item, 320))}</li>" for item in items if str(item).strip()]
+    return f"<ul>{''.join(rows)}</ul>" if rows else f"<p class=\"muted\">{html.escape(empty)}</p>"
+
+
+def delivery_claim_cards(claims: list[dict[str, Any]]) -> str:
+    if not claims:
+        return '<p class="muted">No clean customer-facing claims were strong enough to show as primary findings.</p>'
+    cards = []
+    for claim in claims:
+        citations = " ".join(f"<code>{html.escape(str(item))}</code>" for item in claim.get("citation_ids", [])[:4])
+        confidence = clamp_confidence(claim.get("confidence"), 0.0)
+        quality = clamp_confidence(claim.get("quality_score"), 0.0)
+        cards.append(
+            f"""
+        <article class="claim-item">
+          <p>{html.escape(str(claim.get('claim') or ''))}</p>
+          <div class="mini-meta">
+            <span>confidence {html.escape(str(confidence))}</span>
+            <span>evidence {html.escape(str(quality))}</span>
+            <span>{citations}</span>
+          </div>
+        </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def delivery_citation_cards(citations: list[dict[str, Any]]) -> str:
+    if not citations:
+        return '<p class="muted">No readable citations were extracted.</p>'
+    cards = []
+    for citation in citations[:20]:
+        url = str(citation.get("url") or "")
+        cards.append(
+            f"""
+        <article class="citation-item">
+          <div class="citation-head">
+            <code>{html.escape(str(citation.get('id') or ''))}</code>
+            <a href="{html.escape(url, quote=True)}" rel="noopener noreferrer">{html.escape(report_text_from_url(url))}</a>
+          </div>
+          <p>{html.escape(str(citation.get('excerpt') or ''))}</p>
+        </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def delivery_source_cards(sources: list[dict[str, Any]]) -> str:
+    if not sources:
+        return '<p class="muted">Source audit is not available yet.</p>'
+    cards = []
+    for source in sources:
+        level = str(source.get("quality_level") or "low")
+        url = str(source.get("target_url") or "")
+        risks = source.get("risks") if isinstance(source.get("risks"), list) else []
+        risks_html = delivery_html_list(risks[:3], "No source-specific risks were recorded.")
+        cards.append(
+            f"""
+        <article class="source-item">
+          <div class="source-top">
+            <div>
+              <h3>{html.escape(str(source.get('source_id') or 'Source'))}: {html.escape(report_text_from_url(url))}</h3>
+              <p>{html.escape(str(source.get('summary') or 'No readable summary extracted.'))}</p>
+            </div>
+            <span class="quality-pill {delivery_quality_class(level)}">{html.escape(str(source.get('quality_label') or source_quality_label(level)))}</span>
+          </div>
+          <div class="mini-meta">
+            <span>quality {html.escape(str(source.get('quality_score')))}</span>
+            <span>{html.escape(str(source.get('citation_count')))} citations</span>
+            <span>{'cache hit' if source.get('cache_hit') else 'fresh or uncached'}</span>
+          </div>
+          <details>
+            <summary>Risks and source hash</summary>
+            {risks_html}
+            <p><code>{html.escape(str(source.get('content_sha256') or 'hash unavailable'))}</code></p>
+          </details>
+        </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def delivery_json_script(value: Any) -> str:
+    return json.dumps(str(value or ""), ensure_ascii=True).replace("</", "<\\/")
+
+
+def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: str = "", print_mode: bool = False) -> str:
     nav = site_nav_html("Proof Bundles")
     if not lead:
         content = f"""
@@ -5414,52 +5864,87 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
     else:
         payload = build_proof_bundle_delivery_payload(lead)
         report = payload.get("report") if isinstance(payload.get("report"), dict) else None
+        delivery = payload.get("delivery") if isinstance(payload.get("delivery"), dict) else {}
         if report:
-            claim_rows = "\n".join(
-                "<tr>"
-                f"<td>{html.escape(str(claim.get('claim') or ''))}</td>"
-                f"<td><code>{html.escape(', '.join(str(item) for item in claim.get('citation_ids', [])))}</code></td>"
-                f"<td>{html.escape(str(claim.get('confidence') or ''))}</td>"
-                "</tr>"
-                for claim in report.get("key_claims", [])[:12]
-            ) or '<tr><td colspan="3">No claims generated.</td></tr>'
-            citation_rows = "\n".join(
-                "<tr>"
-                f"<td><code>{html.escape(str(citation.get('id') or ''))}</code></td>"
-                f"<td><a href=\"{html.escape(str(citation.get('url') or ''), quote=True)}\">{html.escape(str(citation.get('url') or ''))}</a></td>"
-                f"<td>{html.escape(str(citation.get('excerpt') or ''))}</td>"
-                "</tr>"
-                for citation in report.get("citations", [])[:40]
-            ) or '<tr><td colspan="3">No citations generated.</td></tr>'
-            source_sections = "\n".join(
-                f"""
-        <section class="panel">
-          <h2>{html.escape(str(source_report.get('source_id') or 'Source'))}: {html.escape(str(source_report.get('target_url') or ''))}</h2>
-          <p>{html.escape(str(source_report.get('executive_summary') or source_report.get('error') or ''))}</p>
-        </section>
-                """
-                for source_report in report.get("source_reports", [])
-            )
+            actions = delivery.get("actions") if isinstance(delivery.get("actions"), dict) else {}
+            quality_level = str(delivery.get("quality_level") or "low")
+            quality_class = delivery_quality_class(quality_level)
+            establishes = delivery.get("what_this_establishes") if isinstance(delivery.get("what_this_establishes"), list) else []
+            clean_claims = delivery.get("clean_claims") if isinstance(delivery.get("clean_claims"), list) else []
+            clean_citations = delivery.get("clean_citations") if isinstance(delivery.get("clean_citations"), list) else []
+            source_quality = delivery.get("source_quality") if isinstance(delivery.get("source_quality"), list) else []
+            risks = delivery.get("risks") if isinstance(delivery.get("risks"), list) else []
+            copy_text = delivery_json_script(delivery.get("copy_text"))
+            action_bar = "" if print_mode else f"""
+      <div class="actions" aria-label="Report actions">
+        <a class="button primary" href="{html.escape(str(actions.get('download_pdf') or '#'), quote=True)}">Download PDF</a>
+        <a class="button" href="{html.escape(str(actions.get('download_json') or '#'), quote=True)}">Download JSON</a>
+        <button class="button" type="button" data-copy-summary>Copy summary</button>
+        <a class="button" href="{html.escape(str(actions.get('refine') or public_url('/proof-pack/bundle')), quote=True)}">Request refinement</a>
+        <a class="button" href="{html.escape(str(actions.get('analyze_another') or public_url('/proof-pack/bundle')), quote=True)}">Analyze another source</a>
+        <a class="button" href="{html.escape(str(actions.get('upgrade') or public_url('/proof-pack/bundle')), quote=True)}">Upgrade bundle</a>
+      </div>
+            """
             content = f"""
     <section class="panel hero">
       <p class="eyebrow">Payment received</p>
-      <h1>Proof Bundle Delivery</h1>
-      <p>{html.escape(str(report.get('executive_summary') or report.get('answer') or 'Report ready.'))}</p>
-      <div class="meta">
-        <span>{html.escape(str(report.get('bundle')))} bundle</span>
-        <span>{html.escape(str(report.get('successful_sources')))} sources delivered</span>
-        <span>{html.escape(str(report.get('confidence_score')))} confidence</span>
+      <h1>Proof Bundle Report</h1>
+      <p class="lead">{html.escape(str(delivery.get('summary') or report.get('answer') or 'Report ready.'))}</p>
+      <div class="hero-grid">
+        <div>
+          <span class="label">Bundle</span>
+          <strong>{html.escape(str(delivery.get('bundle') or report.get('bundle') or payload.get('bundle') or 'proof'))}</strong>
+        </div>
+        <div>
+          <span class="label">Sources</span>
+          <strong>{html.escape(str(report.get('successful_sources') or 0))} delivered</strong>
+        </div>
+        <div>
+          <span class="label">Confidence</span>
+          <strong>{html.escape(str(delivery.get('confidence_score')))}</strong>
+        </div>
+        <div>
+          <span class="label">Generated</span>
+          <strong>{html.escape(str(delivery.get('generated_at_label') or 'unknown'))}</strong>
+        </div>
       </div>
+      <div class="quality-banner {quality_class}">
+        <strong>{html.escape(str(delivery.get('quality_label') or 'Evidence reviewed'))}</strong>
+        <span>Evidence quality {html.escape(str(delivery.get('quality_score')))}. AxonGate shows weak evidence honestly instead of turning noisy page text into inflated claims.</span>
+      </div>
+      {action_bar}
     </section>
     <section class="panel">
-      <h2>Key Claims</h2>
-      <div class="table-wrap"><table><thead><tr><th>Claim</th><th>Citations</th><th>Confidence</th></tr></thead><tbody>{claim_rows}</tbody></table></div>
+      <h2>What This Establishes</h2>
+      {delivery_html_list(establishes, "The submitted material did not establish a clean substantive finding.")}
     </section>
     <section class="panel">
-      <h2>Citations</h2>
-      <div class="table-wrap"><table><thead><tr><th>ID</th><th>URL</th><th>Excerpt</th></tr></thead><tbody>{citation_rows}</tbody></table></div>
+      <h2>Clean Findings</h2>
+      <div class="claim-list">{delivery_claim_cards(clean_claims)}</div>
     </section>
-    {source_sections}
+    <section class="panel">
+      <h2>Risks and Gaps</h2>
+      {delivery_html_list(risks, "No delivery risks were recorded.")}
+    </section>
+    <section class="panel">
+      <h2>Evidence Citations</h2>
+      <div class="citation-list">{delivery_citation_cards(clean_citations)}</div>
+    </section>
+    <section class="panel">
+      <h2>Source Quality Audit</h2>
+      <div class="source-list">{delivery_source_cards(source_quality)}</div>
+    </section>
+    <script>
+      const axonGateCopyText = {copy_text};
+      const copyButton = document.querySelector("[data-copy-summary]");
+      if (copyButton && navigator.clipboard) {{
+        copyButton.addEventListener("click", async () => {{
+          await navigator.clipboard.writeText(axonGateCopyText);
+          copyButton.textContent = "Copied";
+          window.setTimeout(() => copyButton.textContent = "Copy summary", 1400);
+        }});
+      }}
+    </script>
             """
         else:
             status_text = "Payment received. AxonGate is generating your cited Proof Bundle report."
@@ -5489,6 +5974,10 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
       --muted: #b7c0cf;
       --line: #303542;
       --accent: #73daca;
+      --accent-strong: #0f766e;
+      --warn: #f6c177;
+      --danger: #fca5a5;
+      --good: #86efac;
       --code: #0a0d13;
     }}
     * {{ box-sizing: border-box; }}
@@ -5502,12 +5991,50 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
     .panel {{ border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 18px; margin: 0 0 16px; }}
     .hero {{ padding: clamp(22px, 4vw, 34px); }}
     .eyebrow {{ color: var(--accent); text-transform: uppercase; letter-spacing: 0; font-size: .78rem; font-weight: 800; margin: 0 0 8px; }}
-    .meta {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }}
-    .meta span {{ border: 1px solid var(--line); border-radius: 999px; padding: 7px 10px; color: var(--muted); }}
-    table {{ width: 100%; border-collapse: collapse; }}
-    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    .lead {{ max-width: 86ch; }}
+    .muted {{ color: var(--muted); }}
+    .hero-grid {{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }}
+    .hero-grid > div {{ border: 1px solid var(--line); border-radius: 8px; padding: 11px; min-width: 0; }}
+    .label {{ display: block; color: var(--muted); font-size: .8rem; }}
+    .quality-banner {{ display: grid; gap: 4px; border: 1px solid var(--line); border-left-width: 5px; border-radius: 8px; padding: 13px; margin: 18px 0; }}
+    .quality-strong {{ border-left-color: var(--good); }}
+    .quality-usable {{ border-left-color: var(--accent); }}
+    .quality-low {{ border-left-color: var(--warn); }}
+    .quality-processing {{ border-left-color: var(--muted); }}
+    .actions {{ display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }}
+    .button, button.button {{ display: inline-flex; align-items: center; justify-content: center; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: #10141d; color: var(--text); padding: 9px 12px; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }}
+    .button.primary {{ background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }}
+    .claim-list, .citation-list, .source-list {{ display: grid; gap: 10px; }}
+    .claim-item, .citation-item, .source-item {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; overflow-wrap: anywhere; }}
+    .claim-item p, .citation-item p, .source-item p {{ margin: 0 0 9px; }}
+    .mini-meta {{ display: flex; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: .88rem; }}
+    .mini-meta span {{ border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; }}
+    .citation-head, .source-top {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }}
+    .source-top h3 {{ margin: 0 0 5px; font-size: 1rem; overflow-wrap: anywhere; }}
+    .quality-pill {{ display: inline-flex; white-space: nowrap; border: 1px solid var(--line); border-left-width: 5px; border-radius: 999px; padding: 5px 9px; color: var(--text); }}
+    details {{ margin-top: 10px; }}
+    summary {{ cursor: pointer; color: var(--accent); font-weight: 700; }}
+    ul {{ padding-left: 1.2rem; }}
+    li {{ margin: 6px 0; color: var(--muted); }}
     code {{ background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--text); }}
-    .button {{ display: inline-block; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }}
+    @media (max-width: 760px) {{
+      .hero-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .citation-head, .source-top {{ display: grid; }}
+      .quality-pill {{ width: fit-content; }}
+    }}
+    @media (max-width: 520px) {{
+      main {{ padding: 20px 12px 44px; }}
+      .hero-grid {{ grid-template-columns: 1fr; }}
+      .actions .button {{ width: 100%; }}
+    }}
+    @media print {{
+      :root {{ color-scheme: light; --bg: #fff; --panel: #fff; --text: #111827; --muted: #374151; --line: #d1d5db; --code: #f3f4f6; }}
+      nav, .actions, script {{ display: none !important; }}
+      body {{ background: #fff; }}
+      main {{ max-width: 100%; padding: 0; }}
+      .panel {{ break-inside: avoid; }}
+      a {{ color: #111827; }}
+    }}
     {shared_ui_css()}
   </style>
 </head>
@@ -5518,6 +6045,123 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
   </main>
 </body>
 </html>"""
+
+
+def pdf_escape_text(value: Any) -> str:
+    return str(value or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def proof_bundle_pdf_lines(lead: dict[str, Any]) -> list[str]:
+    payload = build_proof_bundle_delivery_payload(lead)
+    report = payload.get("report") if isinstance(payload.get("report"), dict) else {}
+    delivery = payload.get("delivery") if isinstance(payload.get("delivery"), dict) else {}
+    lines = [
+        "AxonGate Proof Bundle Report",
+        "",
+        f"Bundle: {delivery.get('bundle') or payload.get('bundle') or 'proof'}",
+        f"Generated: {delivery.get('generated_at_label') or 'unknown'}",
+        f"Evidence quality: {delivery.get('quality_label') or 'Evidence reviewed'} ({delivery.get('quality_score')})",
+        f"Confidence: {delivery.get('confidence_score')}",
+        f"Sources delivered: {report.get('successful_sources') or 0}",
+        "",
+        "Executive Summary",
+        str(delivery.get("summary") or report.get("answer") or "Report ready."),
+        "",
+        "What This Establishes",
+    ]
+    establishes = delivery.get("what_this_establishes") if isinstance(delivery.get("what_this_establishes"), list) else []
+    clean_claims = delivery.get("clean_claims") if isinstance(delivery.get("clean_claims"), list) else []
+    risks = delivery.get("risks") if isinstance(delivery.get("risks"), list) else []
+    source_quality = delivery.get("source_quality") if isinstance(delivery.get("source_quality"), list) else []
+    for item in establishes:
+        lines.append(f"- {clean_report_text(item, 260)}")
+    lines.extend(["", "Clean Findings"])
+    for claim in clean_claims:
+        if isinstance(claim, dict):
+            citations = ", ".join(str(item) for item in claim.get("citation_ids", [])[:4])
+            lines.append(f"- {clean_report_text(claim.get('claim'), 260)} [{citations}]")
+    lines.extend(["", "Risks and Gaps"])
+    for risk in risks:
+        lines.append(f"- {clean_report_text(risk, 260)}")
+    lines.extend(["", "Source Quality Audit"])
+    for source in source_quality:
+        if isinstance(source, dict):
+            lines.append(
+                f"- {source.get('source_id')}: {source.get('quality_label')} quality={source.get('quality_score')} "
+                f"citations={source.get('citation_count')} url={report_text_from_url(str(source.get('target_url') or ''))}"
+            )
+            if source.get("content_sha256"):
+                lines.append(f"  hash={source.get('content_sha256')}")
+    return lines
+
+
+def build_simple_pdf(title: str, lines: list[str]) -> bytes:
+    """Build a small text PDF without external dependencies."""
+    wrapped_lines: list[str] = []
+    for line in lines:
+        if not line:
+            wrapped_lines.append("")
+            continue
+        wrapped_lines.extend(textwrap.wrap(str(line), width=92) or [""])
+    pages = [wrapped_lines[index : index + 46] for index in range(0, len(wrapped_lines), 46)] or [[""]]
+
+    objects: list[bytes] = []
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    objects.append(b"")  # pages object filled after page ids are known
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+    page_ids: list[int] = []
+    content_ids: list[int] = []
+
+    for page_lines in pages:
+        page_id = len(objects) + 1
+        content_id = page_id + 1
+        page_ids.append(page_id)
+        content_ids.append(content_id)
+        commands = ["BT", "/F1 11 Tf", "50 760 Td", "14 TL"]
+        for line_index, line in enumerate(page_lines):
+            font_size = 16 if page_id == page_ids[0] and line_index == 0 else 11
+            if font_size == 16:
+                commands.append("/F1 16 Tf")
+            elif line_index == 1 and page_id == page_ids[0]:
+                commands.append("/F1 11 Tf")
+            commands.append(f"({pdf_escape_text(line)}) Tj")
+            commands.append("T*")
+        commands.append("ET")
+        stream = "\n".join(commands).encode("latin-1", errors="replace")
+        objects.append(
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents {content_id} 0 R >>".encode(
+                "ascii"
+            )
+        )
+        objects.append(b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"\nendstream")
+
+    kids = " ".join(f"{page_id} 0 R" for page_id in page_ids)
+    objects[1] = f"<< /Type /Pages /Kids [{kids}] /Count {len(page_ids)} >>".encode("ascii")
+
+    output = bytearray()
+    output.extend(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+    offsets = [0]
+    for index, obj in enumerate(objects, start=1):
+        offsets.append(len(output))
+        output.extend(f"{index} 0 obj\n".encode("ascii"))
+        output.extend(obj)
+        output.extend(b"\nendobj\n")
+    xref_start = len(output)
+    output.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    output.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        output.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    output.extend(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R /Title ({pdf_escape_text(title)}) >>\n"
+            f"startxref\n{xref_start}\n%%EOF\n"
+        ).encode("latin-1", errors="replace")
+    )
+    return bytes(output)
+
+
+def build_proof_bundle_delivery_pdf(lead: dict[str, Any]) -> bytes:
+    return build_simple_pdf("AxonGate Proof Bundle Report", proof_bundle_pdf_lines(lead))
 
 
 def build_proof_bundle_recovery_html(email: str = "", target_url: str = "", error: str = "") -> str:
@@ -10192,6 +10836,51 @@ async def proof_bundle_recovery_api(request: Request, email: str = "", target_ur
     return build_proof_bundle_delivery_payload(lead)
 
 
+@app.get("/proof-pack/bundle/delivery.json", tags=["discovery"], summary="Download Proof Bundle delivery JSON")
+async def proof_bundle_delivery_json_download(request: Request, lead_id: str = "", session_id: str = ""):
+    """Download the paid Proof Bundle delivery payload as JSON."""
+    lead = await resolve_paid_bundle_delivery_lead(lead_id, session_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Delivery was not found. If payment just completed, retry shortly.")
+    lead = await ensure_proof_bundle_delivery_ready(lead)
+    payload = build_proof_bundle_delivery_payload(lead)
+    filename = f"axongate-proof-bundle-{clean_lead_text(str(payload.get('lead_id') or 'report'), 80)}.json"
+    return Response(
+        content=json.dumps(payload, ensure_ascii=True, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/proof-pack/bundle/delivery.pdf", tags=["discovery"], summary="Download Proof Bundle delivery PDF")
+async def proof_bundle_delivery_pdf_download(request: Request, lead_id: str = "", session_id: str = ""):
+    """Download a customer-readable PDF version of the paid Proof Bundle report."""
+    lead = await resolve_paid_bundle_delivery_lead(lead_id, session_id)
+    if not lead:
+        raise HTTPException(status_code=404, detail="Delivery was not found. If payment just completed, retry shortly.")
+    lead = await ensure_proof_bundle_delivery_ready(lead)
+    payload = build_proof_bundle_delivery_payload(lead)
+    filename = f"axongate-proof-bundle-{clean_lead_text(str(payload.get('lead_id') or 'report'), 80)}.pdf"
+    return Response(
+        content=build_proof_bundle_delivery_pdf(lead),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/proof-pack/bundle/delivery/print", response_class=HTMLResponse, tags=["discovery"], summary="Print Proof Bundle delivery")
+async def proof_bundle_delivery_print_page(request: Request, lead_id: str = "", session_id: str = ""):
+    """Serve a print-friendly paid Proof Bundle report page."""
+    lead = await resolve_paid_bundle_delivery_lead(lead_id, session_id)
+    if not lead:
+        return HTMLResponse(
+            build_proof_bundle_delivery_html(None, error="Delivery was not found. If payment just completed, refresh this page in a moment."),
+            status_code=404,
+        )
+    lead = await ensure_proof_bundle_delivery_ready(lead)
+    return build_proof_bundle_delivery_html(lead, print_mode=True)
+
+
 @app.get("/proof-pack/bundle/delivery", response_class=HTMLResponse, tags=["discovery"], summary="Proof Bundle delivery page")
 async def proof_bundle_delivery_page(request: Request, lead_id: str = "", session_id: str = ""):
     """Serve the customer-facing Proof Bundle delivery page after Stripe checkout."""
@@ -10493,6 +11182,9 @@ async def root(request: Request):
         "proof_bundle_checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proof_bundle_delivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
         "proof_bundle_delivery_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
+        "proof_bundle_delivery_json": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery.json",
+        "proof_bundle_delivery_pdf": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery.pdf",
+        "proof_bundle_delivery_print": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery/print",
         "proof_bundle_recovery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover",
         "proof_bundle_recovery_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proof_bundle_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
