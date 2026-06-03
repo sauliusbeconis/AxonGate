@@ -388,6 +388,8 @@ async def main() -> None:
 
         operator_leads_unauthorized = await client.get("/operator/leads")
         assert operator_leads_unauthorized.status_code == 401, "operator leads should require a token"
+        operator_orders_unauthorized = await client.get("/operator/orders")
+        assert operator_orders_unauthorized.status_code == 401, "operator orders should require a token"
 
         operator_leads_page = await client.get("/operator/leads?operator_token=ci-operator-token&limit=10")
         assert operator_leads_page.status_code == 200, "operator leads page should accept operator token"
@@ -416,6 +418,23 @@ async def main() -> None:
             lead.get("contact") == "codex-bundle@example.invalid" and lead.get("product") == "proof_bundle"
             for lead in operator_leads_json["leads"]
         ), "operator leads API should include private bundle contact"
+        operator_orders_page = await client.get("/operator/orders?operator_token=ci-operator-token&limit=10")
+        assert operator_orders_page.status_code == 200, "operator orders page should accept operator token"
+        assert "Proof Bundle Orders" in operator_orders_page.text, "operator orders page missing heading"
+        assert "codex-bundle@example.invalid" in operator_orders_page.text, "operator orders page should show bundle contact"
+        assert "Order Console" in operator_orders_page.text, "operator orders page missing console table"
+        operator_orders_api = await client.get(
+            "/v1/operator/orders?limit=10",
+            headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+        )
+        assert operator_orders_api.status_code == 200, "operator orders API should accept operator token header"
+        operator_orders_json = operator_orders_api.json()
+        assert operator_orders_json["status"] == "ok", "operator orders API returned wrong status"
+        assert operator_orders_json["stats"]["orders"] >= 1, "operator orders API should include bundle orders"
+        assert any(
+            order.get("contact") == "codex-bundle@example.invalid"
+            for order in operator_orders_json["orders"]
+        ), "operator orders API should expose private bundle buyer details"
         operator_status = await client.post(
             f"/v1/operator/leads/{proof_bundle_lead_json['lead_id']}/status",
             headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
@@ -781,6 +800,46 @@ async def main() -> None:
         assert stripe_lead["status"] == "fulfilled", "Stripe-created lead should be auto-fulfilled"
         assert stripe_lead["stripe"]["session_id"] == "cs_ci_axongate_paid", "Stripe lead should retain session ID"
 
+        operator_orders_after_stripe_page = await client.get("/operator/orders?operator_token=ci-operator-token&limit=20")
+        assert operator_orders_after_stripe_page.status_code == 200, "operator orders page should render after Stripe"
+        assert "stripe-buyer@example.invalid" in operator_orders_after_stripe_page.text, (
+            "operator orders page should show Stripe buyer email"
+        )
+        assert "cs_ci_axongate_paid" in operator_orders_after_stripe_page.text, (
+            "operator orders page should show Stripe session ID"
+        )
+        assert "Resend Email" in operator_orders_after_stripe_page.text, (
+            "operator orders page should expose email recovery action"
+        )
+        operator_orders_after_stripe_api = await client.get(
+            "/v1/operator/orders?limit=20",
+            headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+        )
+        assert operator_orders_after_stripe_api.status_code == 200, "operator orders API should render after Stripe"
+        operator_orders_after_stripe_json = operator_orders_after_stripe_api.json()
+        stripe_order = next(
+            (
+                order
+                for order in operator_orders_after_stripe_json["orders"]
+                if order.get("stripe_session_id") == "cs_ci_axongate_paid"
+            ),
+            None,
+        )
+        assert stripe_order, "operator orders API should include Stripe order"
+        assert stripe_order["status"] == "fulfilled", "Stripe order should be fulfilled in orders API"
+        assert stripe_order["delivery_ready"] is True, "Stripe order should expose ready delivery state"
+        assert stripe_order["email_status"] == "sent", "Stripe order should expose sent email status"
+        sent_delivery_count = len(sent_delivery_emails)
+        resend_order_email = await client.post(
+            f"/v1/operator/orders/{stripe_lead['id']}/resend-email",
+            headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+        )
+        assert resend_order_email.status_code == 200, "operator order resend API should succeed"
+        resend_order_email_json = resend_order_email.json()
+        assert resend_order_email_json["status"] == "ok", "operator order resend API returned wrong status"
+        assert resend_order_email_json["order"]["email_status"] == "sent", "resend should restore sent email status"
+        assert len(sent_delivery_emails) == sent_delivery_count + 1, "resend should send one extra delivery email"
+
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
         assert proof_sample["supplier_spend"] is False, "Proof Pack sample should not spend supplier budget"
@@ -888,6 +947,7 @@ async def main() -> None:
         assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
         assert "proofBundleQuote" in x402_discovery["metadata"], "Proof Bundle quote missing from public discovery"
         assert "proofBundles" in x402_discovery["metadata"], "Proof Bundle pricing missing from public discovery"
+        assert "operatorOrders" in x402_discovery["metadata"], "Operator orders missing from public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})
@@ -904,6 +964,12 @@ async def main() -> None:
         assert contact_operation, "OpenAPI contact endpoint missing"
         operator_operation = openapi.get("paths", {}).get("/v1/operator/leads", {}).get("get", {})
         assert operator_operation.get("security"), "OpenAPI operator leads security missing"
+        operator_orders_operation = openapi.get("paths", {}).get("/v1/operator/orders", {}).get("get", {})
+        assert operator_orders_operation.get("security"), "OpenAPI operator orders security missing"
+        operator_resend_operation = (
+            openapi.get("paths", {}).get("/v1/operator/orders/{lead_id}/resend-email", {}).get("post", {})
+        )
+        assert operator_resend_operation.get("security"), "OpenAPI operator order resend security missing"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
 
         contact_payload = {
@@ -950,6 +1016,12 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("contact_form_submits", 0) >= 2, "Contact submissions missing from funnel"
         assert metrics["metrics"].get("proof_bundle_quotes_total", 0) >= 2, "Proof Bundle quotes should be counted"
         assert metrics["conversion_funnel"].get("proof_bundle_quotes", 0) >= 2, "Proof Bundle quotes missing from funnel"
+        assert metrics["metrics"].get("proof_bundle_checkout_reviews_total", 0) >= 1, (
+            "Proof Bundle checkout reviews should be counted"
+        )
+        assert metrics["conversion_funnel"].get("proof_bundle_checkout_reviews", 0) >= 1, (
+            "Proof Bundle checkout reviews missing from funnel"
+        )
         assert metrics["metrics"].get("proof_bundle_leads_total", 0) >= 1, "Proof Bundle leads should be counted"
         assert metrics["conversion_funnel"].get("proof_bundle_leads", 0) >= 1, "Proof Bundle leads missing from funnel"
         assert metrics["metrics"].get("proof_bundle_paid_total", 0) >= 2, "Proof Bundle paid updates should be counted"

@@ -190,6 +190,7 @@ ATTRIBUTION_FUNNEL_STAGES = (
     "proof_pack_quotes",
     "proof_pack_leads",
     "proof_bundle_quotes",
+    "proof_bundle_checkout_reviews",
     "proof_bundle_leads",
     "proof_bundle_payment_clicks",
     "proof_bundle_paid",
@@ -359,6 +360,7 @@ metrics: dict[str, int] = {
     "discovery_contact_hits_total": 0,
     "discovery_operator_hits_total": 0,
     "discovery_operator_leads_hits_total": 0,
+    "discovery_operator_orders_hits_total": 0,
     "discovery_quickstart_hits_total": 0,
     "discovery_paid_test_hits_total": 0,
     "discovery_quote_hits_total": 0,
@@ -410,6 +412,7 @@ metrics: dict[str, int] = {
     "contact_notifications_total": 0,
     "contact_notification_errors_total": 0,
     "proof_bundle_quotes_total": 0,
+    "proof_bundle_checkout_reviews_total": 0,
     "proof_bundle_leads_total": 0,
     "proof_bundle_lead_errors_total": 0,
     "proof_bundle_payment_clicks_total": 0,
@@ -1057,13 +1060,18 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_leads": values.get("proof_pack_leads_total", 0),
         "contact_form_submits": values.get("contact_form_submits_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
+        "proof_bundle_checkout_reviews": values.get("proof_bundle_checkout_reviews_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
         "proof_bundle_payment_clicks": values.get("proof_bundle_payment_clicks_total", 0),
+        "proof_bundle_payment_configured_clicks": values.get("proof_bundle_payment_configured_clicks_total", 0),
+        "proof_bundle_payment_missing_clicks": values.get("proof_bundle_payment_missing_clicks_total", 0),
         "proof_bundle_paid": values.get("proof_bundle_paid_total", 0),
         "proof_bundle_fulfilled": values.get("proof_bundle_fulfilled_total", 0),
         "proof_bundle_delivery_requests": values.get("proof_bundle_delivery_requests_total", 0),
         "proof_bundle_recovery_requests": values.get("proof_bundle_recovery_requests_total", 0),
         "proof_bundle_auto_fulfillment_success": values.get("proof_bundle_auto_fulfillment_success_total", 0),
+        "proof_bundle_delivery_email_success": values.get("proof_bundle_delivery_email_success_total", 0),
+        "proof_bundle_delivery_email_errors": values.get("proof_bundle_delivery_email_errors_total", 0),
         "proof_pack_requests": values.get("proof_pack_requests_total", 0),
         "proof_pack_llm_success": values.get("proof_pack_llm_success_total", 0),
         "proof_pack_llm_fallback": values.get("proof_pack_llm_fallback_total", 0),
@@ -1083,9 +1091,33 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
             "accepted_per_paid_attempt": conversion_rate(accepted, paid_attempts),
             "delivered_per_accepted": conversion_rate(delivered, accepted),
             "bundle_lead_per_quote": conversion_rate(values.get("proof_bundle_leads_total", 0), values.get("proof_bundle_quotes_total", 0)),
+            "bundle_checkout_review_per_quote": conversion_rate(
+                values.get("proof_bundle_checkout_reviews_total", 0),
+                values.get("proof_bundle_quotes_total", 0),
+            ),
             "bundle_payment_click_per_quote": conversion_rate(
                 values.get("proof_bundle_payment_clicks_total", 0),
                 values.get("proof_bundle_quotes_total", 0),
+            ),
+            "bundle_payment_click_per_checkout_review": conversion_rate(
+                values.get("proof_bundle_payment_clicks_total", 0),
+                values.get("proof_bundle_checkout_reviews_total", 0),
+            ),
+            "bundle_configured_payment_click_per_click": conversion_rate(
+                values.get("proof_bundle_payment_configured_clicks_total", 0),
+                values.get("proof_bundle_payment_clicks_total", 0),
+            ),
+            "bundle_paid_per_payment_click": conversion_rate(
+                values.get("proof_bundle_paid_total", 0),
+                values.get("proof_bundle_payment_clicks_total", 0),
+            ),
+            "bundle_fulfilled_per_paid": conversion_rate(
+                values.get("proof_bundle_fulfilled_total", 0),
+                values.get("proof_bundle_paid_total", 0),
+            ),
+            "bundle_email_success_per_fulfilled": conversion_rate(
+                values.get("proof_bundle_delivery_email_success_total", 0),
+                values.get("proof_bundle_fulfilled_total", 0),
             ),
             "supplier_success_per_request": conversion_rate(values.get("jina_success_total", 0), supplier_requests),
         },
@@ -1707,6 +1739,8 @@ def build_x402_resource() -> dict[str, Any]:
             "contact": f"{PUBLIC_BASE_URL}/contact",
             "contactApi": f"{PUBLIC_BASE_URL}/v1/contact",
             "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
+            "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
+            "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
             "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
             "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -1732,6 +1766,7 @@ def build_x402_resource() -> dict[str, Any]:
             "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
+            "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
             "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
@@ -1875,7 +1910,10 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "deliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
             "recoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
             "operatorLeads": f"{PUBLIC_BASE_URL}/operator/leads",
+            "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
+            "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
             "operatorStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
+            "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
             "defaultBundle": DEFAULT_PROOF_BUNDLE,
             "paymentLinkConfigured": any(bool(url) for url in PROOF_BUNDLE_PAYMENT_URLS.values()),
             "pipelineStatuses": list(PROOF_BUNDLE_LEAD_STATUSES),
@@ -1965,6 +2003,8 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
+        "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
+        "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -1990,6 +2030,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
         "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
+        "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
         "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
@@ -2216,7 +2257,10 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
+        "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
+        "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
         "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
+        "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
         "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
         "paymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
@@ -11045,6 +11089,7 @@ FAQ: {public_url("/faq")}
 Contact: {public_url("/contact")}
 Operator dashboard: {public_url("/operator")}
 Private Proof Pack lead inbox: {public_url("/operator/leads")} (requires AXONGATE_OPERATOR_TOKEN)
+Private Proof Bundle order console: {public_url("/operator/orders")} (requires AXONGATE_OPERATOR_TOKEN)
 Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
 Quote API: {public_url("/v1/x402/quote")}
@@ -11136,6 +11181,8 @@ GET {public_url("/proof-pack/request")}?target_url=<url>&question=<question>&pac
 POST {public_url("/v1/proof-pack/leads")}
 GET {public_url("/operator/leads")} (private operator token required)
 GET {public_url("/v1/operator/leads")} (private operator token required)
+GET {public_url("/operator/orders")} (private operator token required)
+GET {public_url("/v1/operator/orders")} (private operator token required)
 POST {public_url("/v1/x402/proof-pack")}?pack=standard
 Header: X-AxonGate-Pack: standard
 Body example:
@@ -11155,6 +11202,7 @@ GET {public_url("/v1/proof-pack/bundle/recover")}?email=<checkout-email>&target_
 GET {public_url("/v1/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 POST {public_url("/v1/proof-pack/bundle/leads")}
 POST {public_url("/v1/operator/leads/<lead_id>/status")} (private operator token required; statuses: {", ".join(PROOF_BUNDLE_LEAD_STATUSES)})
+POST {public_url("/v1/operator/orders/<lead_id>/resend-email")} (private operator token required)
 POST {public_url("/v1/stripe/webhook")} (Stripe-signed Checkout events; set AXONGATE_STRIPE_WEBHOOK_SECRET)
 
 Proof Bundle prices:
@@ -11303,6 +11351,7 @@ def build_docs_html() -> str:
                 [
                     ("Operator dashboard", f"{PUBLIC_BASE_URL}/operator"),
                     ("Private leads", f"{PUBLIC_BASE_URL}/operator/leads"),
+                    ("Private orders", f"{PUBLIC_BASE_URL}/operator/orders"),
                     ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
                     ("Paid test guide", f"{PUBLIC_BASE_URL}/paid-test"),
                     ("Quote", f"{PUBLIC_BASE_URL}/quote"),
@@ -11431,7 +11480,7 @@ def build_docs_html() -> str:
     <pre>curl -X POST "{public}/v1/proof-pack/leads" \\
   -H "Content-Type: application/json" \\
   -d '{proof_lead_json}'</pre>
-    <p>Private lead inbox: <code>{public}/operator/leads</code> and <code>{public}/v1/operator/leads</code> require <code>AXONGATE_OPERATOR_TOKEN</code>. Optional notifications use <code>AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL</code>.</p>
+    <p>Private lead and order consoles: <code>{public}/operator/leads</code>, <code>{public}/operator/orders</code>, <code>{public}/v1/operator/leads</code>, and <code>{public}/v1/operator/orders</code> require <code>AXONGATE_OPERATOR_TOKEN</code>. Optional notifications use <code>AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL</code>.</p>
     <pre>curl -H "X-AxonGate-Operator-Token: &lt;token&gt;" "{public}/v1/operator/leads?limit=25"</pre>
     <pre>{proof_request_json}</pre>
     <pre>{proof_curl_example}</pre>
@@ -11537,10 +11586,13 @@ def build_operator_dashboard_html(
             card("Proof Leads", count(metric("proof_pack_leads_total")), "Request capture submits"),
             card("Contact Inquiries", count(metric("contact_form_submits_total")), "General buyer/support messages"),
             card("Bundle Quotes", count(metric("proof_bundle_quotes_total")), "Multi-source quote interest"),
+            card("Checkout Reviews", count(metric("proof_bundle_checkout_reviews_total")), percent(rates.get("bundle_checkout_review_per_quote", 0))),
             card("Bundle Leads", count(metric("proof_bundle_leads_total")), "Higher-ticket demand capture"),
             card("Bundle Checkout", count(metric("proof_bundle_payment_clicks_total")), "Tracked payment clicks"),
+            card("Stripe Clicks", count(metric("proof_bundle_payment_configured_clicks_total")), percent(rates.get("bundle_configured_payment_click_per_click", 0))),
             card("Bundle Paid", count(metric("proof_bundle_paid_total")), "Operator-marked paid"),
             card("Bundle Fulfilled", count(metric("proof_bundle_fulfilled_total")), "Reports delivered"),
+            card("Delivery Email", count(metric("proof_bundle_delivery_email_success_total")), percent(rates.get("bundle_email_success_per_fulfilled", 0))),
             card("Auto Delivery", count(metric("proof_bundle_auto_fulfillment_success_total")), "Stripe-triggered reports"),
             card("Proof Requests", count(metric("proof_pack_requests_total")), "Paid Proof Pack posts"),
             card("Proof Delivered", count(metric("proof_pack_delivery_success_total")), "Citation reports delivered"),
@@ -11548,6 +11600,35 @@ def build_operator_dashboard_html(
             card("Supplier Calls", count(metric("jina_requests_total")), f'{percent(supplier_rate)} success'),
         ]
     )
+
+    bundle_funnel_steps = [
+        ("Bundle visits", metric("discovery_proof_bundle_hits_total"), None, "Human-facing bundle and checkout traffic"),
+        ("Quotes", metric("proof_bundle_quotes_total"), metric("discovery_proof_bundle_hits_total"), "Buyer submitted URLs for a no-spend quote"),
+        ("Checkout reviews", metric("proof_bundle_checkout_reviews_total"), metric("proof_bundle_quotes_total"), "Buyer opened the review step before Stripe"),
+        ("Payment clicks", metric("proof_bundle_payment_clicks_total"), metric("proof_bundle_checkout_reviews_total"), "Buyer clicked the tracked pay route"),
+        ("Stripe redirects", metric("proof_bundle_payment_configured_clicks_total"), metric("proof_bundle_payment_clicks_total"), "Configured Payment Link redirects"),
+        ("Paid", metric("proof_bundle_paid_total"), metric("proof_bundle_payment_configured_clicks_total"), "Stripe webhook or operator paid status"),
+        ("Fulfilled", metric("proof_bundle_fulfilled_total"), metric("proof_bundle_paid_total"), "Report generated and marked fulfilled"),
+        ("Email delivered", metric("proof_bundle_delivery_email_success_total"), metric("proof_bundle_fulfilled_total"), "Customer report email sent"),
+    ]
+    funnel_diagnosis_rows = []
+    for label, value, previous, note in bundle_funnel_steps:
+        if previous is None:
+            rate = "baseline"
+            dropoff = "-"
+        else:
+            rate = percent(conversion_rate(value, previous))
+            dropoff = count(max(0, int(previous) - int(value)))
+        funnel_diagnosis_rows.append(
+            "<tr>"
+            f"<td>{html.escape(label)}</td>"
+            f"<td>{count(value)}</td>"
+            f"<td>{rate}</td>"
+            f"<td>{dropoff}</td>"
+            f"<td>{html.escape(note)}</td>"
+            "</tr>"
+        )
+    funnel_diagnosis_rows_html = "\n".join(funnel_diagnosis_rows)
 
     source_names = sorted({source for stages in attribution.values() for source in stages})
     source_rows = []
@@ -11622,6 +11703,7 @@ def build_operator_dashboard_html(
             f"<tr><td>FAQ</td><td>{count(metric('discovery_faq_hits_total'))}</td></tr>",
             f"<tr><td>Contact</td><td>{count(metric('discovery_contact_hits_total'))}</td></tr>",
             f"<tr><td>Operator</td><td>{count(metric('discovery_operator_hits_total'))}</td></tr>",
+            f"<tr><td>Operator Orders</td><td>{count(metric('discovery_operator_orders_hits_total'))}</td></tr>",
             f"<tr><td>Quickstart</td><td>{count(metric('discovery_quickstart_hits_total'))}</td></tr>",
             f"<tr><td>Paid Test Guide</td><td>{count(metric('discovery_paid_test_hits_total'))}</td></tr>",
             f"<tr><td>Quote</td><td>{count(metric('discovery_quote_hits_total'))}</td></tr>",
@@ -11765,6 +11847,7 @@ def build_operator_dashboard_html(
       <nav class="links" aria-label="Operator links">
         <a href="{public}/metrics">Metrics JSON</a>
         <a href="{public}/operator/leads">Private Leads</a>
+        <a href="{public}/operator/orders">Orders</a>
         <a href="{public}/paid-test">Paid Test</a>
         <a href="{public}/docs">Docs</a>
         <a href="{public}/proof-pack/bundle">Bundles</a>
@@ -11773,6 +11856,12 @@ def build_operator_dashboard_html(
     </header>
 
     <section class="cards">{cards}</section>
+
+    <h2>Bundle Funnel Diagnosis</h2>
+    <table>
+      <thead><tr><th>Step</th><th>Count</th><th>Rate From Previous</th><th>Drop-Off</th><th>Meaning</th></tr></thead>
+      <tbody>{funnel_diagnosis_rows_html}</tbody>
+    </table>
 
     <h2>Rolling Funnel</h2>
     <table>
@@ -11822,6 +11911,405 @@ def build_operator_dashboard_html(
     </table>
 
     <p class="notice"><strong>Alert state:</strong> <span class="{'warn' if triggered_alerts else 'ok'}">{html.escape(alert_text)}</span></p>
+  </main>
+</body>
+</html>"""
+
+
+def proof_bundle_order_records(leads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return retained Proof Bundle leads as private operator order records."""
+    return [
+        lead_with_pipeline_defaults(lead)
+        for lead in leads
+        if str(lead.get("product") or "") == "proof_bundle"
+    ]
+
+
+def proof_bundle_order_recovery_url(order: dict[str, Any]) -> str:
+    """Build a customer recovery URL when an order has enough identifying data."""
+    email = proof_bundle_delivery_email_recipient(order)
+    target_urls = order.get("target_urls") if isinstance(order.get("target_urls"), list) else []
+    target_url = str(target_urls[0] if target_urls else order.get("target_url") or "").strip()
+    if not email or not target_url:
+        return ""
+    return (
+        f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover?"
+        f"email={url_quote(email, safe='')}&target_url={url_quote(target_url, safe='')}"
+    )
+
+
+def proof_bundle_order_record(order: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a private Proof Bundle order for HTML and API views."""
+    order = lead_with_pipeline_defaults(order)
+    stripe = order.get("stripe") if isinstance(order.get("stripe"), dict) else {}
+    report_ready = isinstance(order.get("proof_bundle_report"), dict)
+    status = normalize_lead_status(order.get("status") or "new")
+    email_to = proof_bundle_delivery_email_recipient(order)
+    delivery_url = proof_bundle_delivery_email_url(order) if (status in {"paid", "fulfilled"} or report_ready) else str(order.get("fulfillment_url") or "")
+    target_urls = order.get("target_urls") if isinstance(order.get("target_urls"), list) else []
+    if not target_urls and order.get("target_url"):
+        target_urls = [str(order.get("target_url"))]
+    email_status = "waiting_report"
+    if order.get("delivery_email_error"):
+        email_status = "error"
+    elif order.get("delivery_email_sent_at"):
+        email_status = "sent"
+    elif not email_to:
+        email_status = "missing_recipient"
+    elif not EMAIL_DELIVERY_ENABLED:
+        email_status = "disabled"
+    elif report_ready:
+        email_status = "ready_to_send"
+    payment_status = str(stripe.get("payment_status") or ("paid" if status in {"paid", "fulfilled"} else status))
+    return {
+        "id": order.get("id"),
+        "created_at": order.get("created_at"),
+        "created_at_label": lead_created_at_label(order.get("created_at")),
+        "status": status,
+        "bundle": order.get("bundle") or order.get("pack") or DEFAULT_PROOF_BUNDLE,
+        "price_usdc": order.get("price_usdc"),
+        "amount_units": order.get("amount_units"),
+        "source": order.get("source"),
+        "contact": order.get("contact"),
+        "customer_email": email_to,
+        "customer_name": stripe.get("customer_name"),
+        "target_urls": target_urls,
+        "target_count": int(order.get("target_count") or len(target_urls)),
+        "question": order.get("question"),
+        "delivery_url": delivery_url,
+        "delivery_note": order.get("delivery_note"),
+        "delivery_ready": report_ready,
+        "report_status": (order.get("proof_bundle_report") or {}).get("status") if report_ready else "",
+        "email_status": email_status,
+        "email_to": email_to,
+        "email_sent_at": order.get("delivery_email_sent_at"),
+        "email_sent_at_label": lead_created_at_label(order.get("delivery_email_sent_at")) if order.get("delivery_email_sent_at") else "",
+        "email_error": order.get("delivery_email_error") or "",
+        "recovery_url": proof_bundle_order_recovery_url(order),
+        "stripe_session_id": stripe.get("session_id") or "",
+        "stripe_payment_link": stripe.get("payment_link") or "",
+        "stripe_payment_intent": stripe.get("payment_intent") or "",
+        "payment_status": payment_status,
+        "source_profiles": order.get("source_profiles") if isinstance(order.get("source_profiles"), list) else [],
+        "raw": order,
+    }
+
+
+def proof_bundle_order_stats(orders: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize private Proof Bundle orders for the operator console."""
+    by_status: dict[str, int] = {status: 0 for status in PROOF_BUNDLE_LEAD_STATUSES}
+    by_bundle: dict[str, int] = {}
+    latest_created_at = 0
+    total_value_usdc = Decimal("0")
+    paid_value_usdc = Decimal("0")
+    fulfilled_value_usdc = Decimal("0")
+    pending_delivery = 0
+    report_ready = 0
+    email_sent = 0
+    email_errors = 0
+    missing_recipient = 0
+    recoverable = 0
+    for order in orders:
+        record = proof_bundle_order_record(order)
+        status = str(record.get("status") or "new")
+        bundle = str(record.get("bundle") or "unknown")
+        by_status[status] = by_status.get(status, 0) + 1
+        by_bundle[bundle] = by_bundle.get(bundle, 0) + 1
+        try:
+            latest_created_at = max(latest_created_at, int(record.get("created_at") or 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            value = Decimal(str(record.get("price_usdc") or "0"))
+        except Exception:
+            value = Decimal("0")
+        total_value_usdc += value
+        if status in {"paid", "fulfilled"}:
+            paid_value_usdc += value
+        if status == "fulfilled":
+            fulfilled_value_usdc += value
+        if status == "paid" and not record.get("delivery_ready"):
+            pending_delivery += 1
+        if record.get("delivery_ready"):
+            report_ready += 1
+        if record.get("email_status") == "sent":
+            email_sent += 1
+        if record.get("email_status") == "error":
+            email_errors += 1
+        if record.get("email_status") == "missing_recipient":
+            missing_recipient += 1
+        if record.get("recovery_url"):
+            recoverable += 1
+    return {
+        "orders": len(orders),
+        "latest_created_at": latest_created_at or None,
+        "paid": sum(by_status.get(status, 0) for status in ("paid", "fulfilled")),
+        "fulfilled": by_status.get("fulfilled", 0),
+        "pending_delivery": pending_delivery,
+        "report_ready": report_ready,
+        "email_sent": email_sent,
+        "email_errors": email_errors,
+        "missing_recipient": missing_recipient,
+        "recoverable": recoverable,
+        "total_value_usdc": float(total_value_usdc),
+        "paid_value_usdc": float(paid_value_usdc),
+        "fulfilled_value_usdc": float(fulfilled_value_usdc),
+        "by_status": by_status,
+        "by_bundle": dict(sorted(by_bundle.items())),
+    }
+
+
+def build_operator_orders_html(
+    orders: list[dict[str, Any]],
+    stats: dict[str, Any],
+    limit: int,
+    operator_token: str = "",
+) -> str:
+    """Render a private operator view focused on paid Proof Bundle fulfillment."""
+    public = html.escape(PUBLIC_BASE_URL)
+
+    def esc(value: Any) -> str:
+        return html.escape(str(value or ""))
+
+    def card(label: str, value: Any, note: str = "") -> str:
+        return (
+            '<div class="card">'
+            f"<span>{esc(label)}</span>"
+            f"<strong>{esc(value)}</strong>"
+            f"<small>{esc(note)}</small>"
+            "</div>"
+        )
+
+    operator_query = (
+        f"?operator_token={url_quote(operator_token, safe='')}&limit={int(limit)}"
+        if operator_token
+        else f"?limit={int(limit)}"
+    )
+    operator_query_attr = html.escape(operator_query, quote=True)
+    status_options_html = lambda current: "\n".join(
+        f'<option value="{esc(status)}"{" selected" if status == current else ""}>{esc(status)}</option>'
+        for status in PROOF_BUNDLE_LEAD_STATUSES
+    )
+    cards = "\n".join(
+        [
+            card("Orders", stats.get("orders", 0), f"latest {lead_created_at_label(stats.get('latest_created_at'))}"),
+            card("Paid", stats.get("paid", 0), f"{stats.get('paid_value_usdc', 0)} USDC"),
+            card("Fulfilled", stats.get("fulfilled", 0), f"{stats.get('fulfilled_value_usdc', 0)} USDC"),
+            card("Pending Delivery", stats.get("pending_delivery", 0), "paid but no generated report"),
+            card("Reports Ready", stats.get("report_ready", 0), "JSON/PDF delivery available"),
+            card("Emails Sent", stats.get("email_sent", 0), "customer delivery email"),
+            card("Email Errors", stats.get("email_errors", 0), "needs provider/domain attention"),
+            card("Recoverable", stats.get("recoverable", 0), "email + target URL available"),
+        ]
+    )
+    status_rows = "\n".join(
+        f"<tr><td>{esc(status)}</td><td>{esc(count)}</td></tr>"
+        for status, count in stats.get("by_status", {}).items()
+    ) or '<tr><td colspan="2">No Proof Bundle orders.</td></tr>'
+    bundle_rows = "\n".join(
+        f"<tr><td>{esc(bundle)}</td><td>{esc(count)}</td></tr>"
+        for bundle, count in stats.get("by_bundle", {}).items()
+    ) or '<tr><td colspan="2">No Proof Bundle orders.</td></tr>'
+
+    order_rows = []
+    order_records = [proof_bundle_order_record(order) for order in orders]
+    for record in order_records:
+        delivery_links = []
+        if record.get("delivery_url"):
+            delivery_links.append(f'<a href="{esc(record.get("delivery_url"))}">Open report</a>')
+        if record.get("delivery_ready"):
+            delivery_links.append(f'<a href="{esc(str(record.get("delivery_url") or "").replace("/delivery?", "/delivery.pdf?"))}">PDF</a>')
+            delivery_links.append(f'<a href="{esc(str(record.get("delivery_url") or "").replace("/delivery?", "/delivery.json?"))}">JSON</a>')
+        if record.get("recovery_url"):
+            delivery_links.append(f'<a href="{esc(record.get("recovery_url"))}">Recovery link</a>')
+        delivery_html = "<br>".join(delivery_links) or "<small>No delivery link yet.</small>"
+
+        email_class = "ok" if record.get("email_status") == "sent" else "warn"
+        if record.get("email_status") == "error":
+            email_class = "danger"
+        resend_html = ""
+        if record.get("delivery_ready") and record.get("email_to"):
+            resend_html = f"""
+              <form class="inline-form" method="post" action="/operator/orders/{esc(record.get('id'))}/resend-email{operator_query_attr}">
+                <button type="submit">Resend Email</button>
+              </form>
+            """
+        email_html = (
+            f'<strong class="{email_class}">{esc(record.get("email_status"))}</strong><br>'
+            f'<small>{esc(record.get("email_to"))}</small><br>'
+            f'<small>{esc(record.get("email_sent_at_label"))}</small>'
+            f'{resend_html}'
+            f'<small class="danger">{esc(record.get("email_error"))}</small>'
+        )
+        target_links = "<br>".join(
+            f'<a href="{esc(target)}">{esc(target)}</a>'
+            for target in (record.get("target_urls") or [])[:5]
+        ) or "<small>No target URLs stored.</small>"
+        if int(record.get("target_count") or 0) > 5:
+            target_links += f"<br><small>+{int(record.get('target_count') or 0) - 5} more</small>"
+        status_form = f"""
+          <form class="status-form" method="post" action="/operator/leads/{esc(record.get('id'))}/status{operator_query_attr}">
+            <label>Status
+              <select name="status">{status_options_html(str(record.get("status") or "new"))}</select>
+            </label>
+            <label>Delivery note
+              <input name="delivery_note" value="" placeholder="private fulfillment note">
+            </label>
+            <button type="submit">Update</button>
+          </form>
+        """
+        order_rows.append(
+            "<tr>"
+            f"<td><code>{esc(record.get('id'))}</code><br><small>{esc(record.get('created_at_label'))}</small></td>"
+            f"<td>{esc(record.get('contact'))}<br><small>{esc(record.get('customer_name'))}</small></td>"
+            f"<td><code>{esc(record.get('bundle'))}</code><br>{esc(record.get('price_usdc'))} USDC<br><code>{esc(record.get('amount_units'))}</code></td>"
+            f"<td><code>{esc(record.get('status'))}</code><br><small>{esc(record.get('payment_status'))}</small>{status_form}</td>"
+            f"<td>{delivery_html}<br><small>{esc(record.get('delivery_note'))}</small></td>"
+            f"<td>{email_html}</td>"
+            f"<td><code>{esc(record.get('stripe_session_id'))}</code><br><small>{esc(record.get('stripe_payment_intent'))}</small></td>"
+            f"<td>{target_links}<br><small>{esc(record.get('question'))}</small></td>"
+            f"<td>{esc(record.get('source'))}</td>"
+            "</tr>"
+        )
+    orders_table = "\n".join(order_rows) or '<tr><td colspan="9">No Proof Bundle orders retained yet.</td></tr>'
+    json_export = html.escape(
+        json.dumps(
+            {
+                "status": "ok",
+                "limit": limit,
+                "stats": stats,
+                "orders": order_records,
+            },
+            indent=2,
+        )
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>AxonGate Proof Bundle Orders</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #101318;
+      --panel: #181d24;
+      --panel-2: #202630;
+      --text: #f5f7fb;
+      --muted: #b8c2cf;
+      --line: #303844;
+      --accent: #78d6b6;
+      --warn: #f4be62;
+      --danger: #f07f7f;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }}
+    main {{ max-width: 1440px; margin: 0 auto; padding: 28px 18px 56px; }}
+    header {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }}
+    h1 {{ margin: 0; font-size: 1.85rem; line-height: 1.1; }}
+    h2 {{ margin: 26px 0 10px; font-size: 1rem; }}
+    p, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .links {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }}
+    .links a {{ border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--panel); }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }}
+    .card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 96px;
+    }}
+    .card span, .card small {{ display: block; color: var(--muted); }}
+    .card strong {{ display: block; margin: 5px 0; font-size: 1.45rem; line-height: 1.1; }}
+    .split {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }}
+    .table-wrap {{ overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; min-width: 1180px; border-collapse: collapse; background: var(--panel); }}
+    .split table {{ min-width: 0; }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--text); background: var(--panel-2); font-size: 0.9rem; white-space: nowrap; }}
+    td {{ color: var(--muted); max-width: 340px; overflow-wrap: anywhere; }}
+    input, select, button {{
+      width: 100%;
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 7px 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      font: inherit;
+    }}
+    button {{ cursor: pointer; }}
+    .status-form, .inline-form {{ display: grid; gap: 7px; min-width: 210px; margin-top: 8px; }}
+    .status-form label {{ display: grid; gap: 4px; color: var(--muted); font-size: 0.82rem; }}
+    code, pre {{
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--code);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+    }}
+    code {{ display: inline-block; max-width: 100%; padding: 1px 5px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 14px; margin: 0; }}
+    .ok {{ color: var(--accent); }}
+    .warn {{ color: var(--warn); }}
+    .danger {{ color: var(--danger); }}
+    @media (max-width: 860px) {{
+      header {{ display: block; }}
+      .links {{ justify-content: flex-start; margin-top: 14px; }}
+      .split {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Proof Bundle Orders</h1>
+        <p>Private fulfillment console for paid bundle delivery, recovery, and email status.</p>
+      </div>
+      <nav class="links" aria-label="Order operator links">
+        <a href="{public}/operator">Operator</a>
+        <a href="{public}/operator/leads">Leads</a>
+        <a href="{public}/metrics">Metrics JSON</a>
+        <a href="{public}/v1/operator/orders?limit={int(limit)}">Orders JSON</a>
+        <a href="{public}/proof-pack/bundle/recover">Recovery</a>
+      </nav>
+    </header>
+
+    <section class="cards">{cards}</section>
+
+    <div class="split">
+      <section>
+        <h2>By Status</h2>
+        <table><thead><tr><th>Status</th><th>Orders</th></tr></thead><tbody>{status_rows}</tbody></table>
+      </section>
+      <section>
+        <h2>By Bundle</h2>
+        <table><thead><tr><th>Bundle</th><th>Orders</th></tr></thead><tbody>{bundle_rows}</tbody></table>
+      </section>
+    </div>
+
+    <h2>Order Console</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID / Time</th><th>Buyer</th><th>Bundle</th><th>Status / Payment</th><th>Delivery</th><th>Email Status</th><th>Stripe</th><th>Targets / Question</th><th>Source</th></tr></thead>
+        <tbody>{orders_table}</tbody>
+      </table>
+    </div>
+
+    <h2>Private JSON Snapshot</h2>
+    <pre>{json_export}</pre>
   </main>
 </body>
 </html>"""
@@ -12048,6 +12536,7 @@ def build_operator_leads_html(
       </div>
       <nav class="links" aria-label="Lead operator links">
         <a href="{public}/operator">Operator</a>
+        <a href="{public}/operator/orders">Orders</a>
         <a href="{public}/metrics">Metrics JSON</a>
         <a href="{public}/proof-pack/request">Request Page</a>
         <a href="{public}/proof-pack/quote">Quote Page</a>
@@ -12902,6 +13391,100 @@ async def operator_leads_api(request: Request, limit: int = 50):
     }
 
 
+@app.get("/operator/orders", response_class=HTMLResponse, tags=["operations"], summary="Private Proof Bundle order console")
+async def operator_orders_page(request: Request, limit: int = 50):
+    """Serve a token-protected fulfillment console for paid Proof Bundle orders."""
+    require_operator_access(request)
+    inc_discovery_hit("discovery_operator_orders_hits_total", attribution_source_from_request(request))
+    bounded_limit = max(1, min(limit, PROOF_PACK_LEADS_MEMORY_MAX, 200))
+    leads = await durable_proof_pack_leads(bounded_limit)
+    orders = proof_bundle_order_records(leads)
+    query_token = request.query_params.get("operator_token") or request.query_params.get("token") or ""
+    return build_operator_orders_html(orders, proof_bundle_order_stats(orders), bounded_limit, query_token)
+
+
+@app.get("/v1/operator/orders", tags=["operations"], summary="Private Proof Bundle order JSON")
+async def operator_orders_api(request: Request, limit: int = 50):
+    """Return token-protected Proof Bundle order details for private automation."""
+    require_operator_access(request)
+    inc_discovery_hit("discovery_operator_orders_hits_total", attribution_source_from_request(request))
+    bounded_limit = max(1, min(limit, PROOF_PACK_LEADS_MEMORY_MAX, 200))
+    leads = await durable_proof_pack_leads(bounded_limit)
+    orders = proof_bundle_order_records(leads)
+    return {
+        "status": "ok",
+        "limit": bounded_limit,
+        "stats": proof_bundle_order_stats(orders),
+        "orders": [proof_bundle_order_record(order) for order in orders],
+        "notification": {
+            "email_delivery_enabled": EMAIL_DELIVERY_ENABLED,
+            "email_provider": EMAIL_PROVIDER,
+            "token_header": "X-AxonGate-Operator-Token",
+        },
+    }
+
+
+async def resend_proof_bundle_order_email(lead_id: str) -> Optional[dict[str, Any]]:
+    """Force a Proof Bundle delivery email retry for an existing private order."""
+    lead = await find_stored_proof_pack_lead(lead_id)
+    if not lead:
+        return None
+    if str(lead.get("product") or "") != "proof_bundle":
+        raise PaymentValidationError("Only Proof Bundle orders can use the resend-email action.")
+    ready = await ensure_proof_bundle_delivery_ready(lead)
+    if not isinstance(ready.get("proof_bundle_report"), dict):
+        raise PaymentValidationError("Proof Bundle report is not ready to email yet.")
+    if not proof_bundle_delivery_email_recipient(ready):
+        raise PaymentValidationError("Proof Bundle order has no customer email recipient.")
+
+    await update_stored_proof_pack_lead(
+        lead_id,
+        {
+            "delivery_email_sent_at": 0,
+            "delivery_email_template_version": "",
+            "delivery_email_error": "",
+        },
+    )
+    refreshed = await find_stored_proof_pack_lead(lead_id) or ready
+    emailed = await send_proof_bundle_delivery_email(refreshed)
+    return emailed or await find_stored_proof_pack_lead(lead_id) or refreshed
+
+
+@app.post("/v1/operator/orders/{lead_id}/resend-email", tags=["operations"], summary="Resend Proof Bundle delivery email")
+async def operator_order_resend_email_api(request: Request, lead_id: str):
+    """Force one customer delivery email retry for a private Proof Bundle order."""
+    require_operator_access(request)
+    try:
+        updated = await resend_proof_bundle_order_email(lead_id)
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Proof Bundle order not found.")
+    orders = proof_bundle_order_records(await durable_proof_pack_leads())
+    return {
+        "status": "ok",
+        "order": proof_bundle_order_record(updated),
+        "stats": proof_bundle_order_stats(orders),
+    }
+
+
+@app.post("/operator/orders/{lead_id}/resend-email", response_class=HTMLResponse, tags=["operations"], summary="Resend Proof Bundle delivery email from operator page")
+async def operator_order_resend_email_form(request: Request, lead_id: str, limit: int = 50):
+    """Accept a browser resend-email action for private Proof Bundle orders."""
+    require_operator_access(request)
+    try:
+        updated = await resend_proof_bundle_order_email(lead_id)
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    if not updated:
+        raise HTTPException(status_code=404, detail="Proof Bundle order not found.")
+    bounded_limit = max(1, min(limit, PROOF_PACK_LEADS_MEMORY_MAX, 200))
+    leads = await durable_proof_pack_leads(bounded_limit)
+    orders = proof_bundle_order_records(leads)
+    query_token = request.query_params.get("operator_token") or request.query_params.get("token") or ""
+    return build_operator_orders_html(orders, proof_bundle_order_stats(orders), bounded_limit, query_token)
+
+
 @app.post("/v1/operator/leads/{lead_id}/status", tags=["operations"], summary="Update private lead pipeline status")
 async def operator_lead_status_api(request: Request, lead_id: str, status_update: OperatorLeadStatusUpdate):
     """Move a private lead through the operator pipeline."""
@@ -13074,6 +13657,8 @@ async def proof_bundle_checkout_review(
     """Show a customer-facing review step before the tracked Stripe redirect."""
     source = attribution_source_from_request(request)
     inc_discovery_hit("discovery_proof_bundle_hits_total", source)
+    inc_metric("proof_bundle_checkout_reviews_total")
+    inc_attribution("proof_bundle_checkout_reviews", source)
     raw_targets = split_bundle_target_urls(target_urls)
     try:
         normalized_bundle = normalize_proof_bundle(bundle)
@@ -13111,9 +13696,11 @@ async def proof_bundle_checkout(
     external_payment_url = proof_bundle_payment_url(normalized_bundle)
     if external_payment_url:
         inc_metric("proof_bundle_payment_configured_clicks_total")
+        inc_attribution("proof_bundle_payment_configured_clicks", source)
         return RedirectResponse(external_payment_url, status_code=302)
 
     inc_metric("proof_bundle_payment_missing_clicks_total")
+    inc_attribution("proof_bundle_payment_missing_clicks", source)
     fallback_url = (
         proof_bundle_request_page_url(raw_targets, normalized_question, normalized_bundle, source)
         if raw_targets
@@ -13517,6 +14104,8 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
         "operator_leads": f"{PUBLIC_BASE_URL}/operator/leads",
         "operator_leads_api": f"{PUBLIC_BASE_URL}/v1/operator/leads",
+        "operator_orders": f"{PUBLIC_BASE_URL}/operator/orders",
+        "operator_orders_api": f"{PUBLIC_BASE_URL}/v1/operator/orders",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -14541,15 +15130,27 @@ def custom_openapi() -> dict[str, Any]:
         "name": "X-AxonGate-Operator-Token",
         "description": "Private operator token for raw Proof Pack lead contact data.",
     }
-    for operator_path in ("/operator/leads", "/v1/operator/leads"):
-        operator_get = schema.get("paths", {}).get(operator_path, {}).get("get")
-        if isinstance(operator_get, dict):
-            operator_get["security"] = [{"OperatorToken": []}]
-            operator_get.setdefault("responses", {}).setdefault("401", {"description": "Operator token required"})
-            operator_get.setdefault("responses", {}).setdefault(
-                "503",
-                {"description": "AXONGATE_OPERATOR_TOKEN is not configured"},
-            )
+    operator_security_paths = {
+        "/operator/leads": ("get",),
+        "/v1/operator/leads": ("get",),
+        "/v1/operator/leads/{lead_id}/status": ("post",),
+        "/operator/leads/{lead_id}/status": ("post",),
+        "/operator/orders": ("get",),
+        "/v1/operator/orders": ("get",),
+        "/v1/operator/orders/{lead_id}/resend-email": ("post",),
+        "/operator/orders/{lead_id}/resend-email": ("post",),
+    }
+    for operator_path, methods in operator_security_paths.items():
+        path_schema = schema.get("paths", {}).get(operator_path, {})
+        for method in methods:
+            operator_operation = path_schema.get(method)
+            if isinstance(operator_operation, dict):
+                operator_operation["security"] = [{"OperatorToken": []}]
+                operator_operation.setdefault("responses", {}).setdefault("401", {"description": "Operator token required"})
+                operator_operation.setdefault("responses", {}).setdefault(
+                    "503",
+                    {"description": "AXONGATE_OPERATOR_TOKEN is not configured"},
+                )
 
     access_request_schema = schema.get("components", {}).get("schemas", {}).get("AccessRequest")
     if isinstance(access_request_schema, dict):
