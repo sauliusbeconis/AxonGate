@@ -118,6 +118,17 @@ async def main() -> None:
             response = await client.get(path)
             assert response.status_code == 200, f"{path} returned {response.status_code}"
 
+        root_page = await client.get("/")
+        assert "Can these sources prove your claim?" in root_page.text, "Homepage missing evidence-check headline"
+        assert "Start Builder - $7" in root_page.text, "Homepage missing primary Stripe CTA"
+        legacy_checkout_copy = "Hu" + "man checkout " + "funnel"
+        legacy_package_copy = "Choose the " + "h" + "uman package"
+        assert legacy_checkout_copy not in root_page.text, "Homepage should not expose internal funnel wording"
+        assert legacy_package_copy not in root_page.text, "Homepage should not expose awkward package wording"
+        root_discovery = await client.get("/?format=json")
+        assert root_discovery.status_code == 200, "Root discovery JSON should still render"
+        assert root_discovery.json()["status"] == "alive", "Root discovery JSON returned wrong status"
+
         proof_pack_page = await client.get("/proof-pack")
         assert "<link rel=\"canonical\"" in proof_pack_page.text, "Proof Pack page missing canonical link"
         assert "Contact</a>" in proof_pack_page.text, "Proof Pack page footer should include Contact"
@@ -209,7 +220,7 @@ async def main() -> None:
         assert "proof_pack_preview_page" in proof_quote["next_steps"], "Proof Pack quote should point to mini preview"
         assert proof_quote["next_steps"]["proof_pack_quote_page"].endswith(
             "/proof-pack/quote"
-        ), "Proof Pack quote should point to the human quote page"
+        ), "Proof Pack quote should point to the quote page"
 
         proof_preview = (
             await client.get(

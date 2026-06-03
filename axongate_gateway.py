@@ -4670,7 +4670,7 @@ def stripe_custom_field_label(field: dict[str, Any]) -> str:
 
 
 def stripe_checkout_custom_fields(session: dict[str, Any]) -> dict[str, str]:
-    """Return Stripe Checkout custom fields keyed by both configured key and human label."""
+    """Return Stripe Checkout custom fields keyed by both configured key and display label."""
     fields: dict[str, str] = {}
     raw_fields = session.get("custom_fields") if isinstance(session.get("custom_fields"), list) else []
     for raw_field in raw_fields:
@@ -6359,6 +6359,21 @@ def proof_bundle_checkout_url(target_urls: list[str], question: str, bundle: str
     return f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay?{query}"
 
 
+def proof_bundle_checkout_path(target_urls: list[str], question: str, bundle: str, source: str) -> str:
+    """Return a same-host checkout path for customer-facing Stripe buttons."""
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_source = normalize_attribution_source(source)
+    parts = [
+        f"bundle={url_quote(normalized_bundle, safe='')}",
+        f"source={url_quote(normalized_source, safe='')}",
+    ]
+    if target_urls:
+        parts.insert(0, f"target_urls={proof_bundle_target_query(target_urls)}")
+    if question:
+        parts.insert(-2, f"question={url_quote(question, safe='')}")
+    return f"/proof-pack/bundle/pay?{'&'.join(parts)}"
+
+
 async def validate_proof_bundle_targets(target_urls: list[str], bundle: str) -> list[str]:
     normalized_bundle = normalize_proof_bundle(bundle)
     limit = proof_bundle_source_limit(normalized_bundle)
@@ -7215,7 +7230,7 @@ def resolve_proof_pack_selection(
 
 
 def shared_ui_css() -> str:
-    """Return shared styling for the human-facing HTML surfaces."""
+    """Return shared styling for the public HTML surfaces."""
     return """
     :root {
       --focus: #9ee7d5;
@@ -7308,6 +7323,23 @@ def shared_ui_css() -> str:
     }
     .button.secondary {
       color: var(--text);
+    }
+    .stripe-button {
+      border-color: #635bff !important;
+      background: #635bff !important;
+      color: #ffffff !important;
+      font-weight: 800;
+    }
+    .stripe-button:hover {
+      border-color: #7a73ff !important;
+      background: #5147e8 !important;
+      color: #ffffff !important;
+    }
+    .stripe-note {
+      display: block;
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.88rem;
     }
     .action-row {
       display: flex;
@@ -7426,6 +7458,22 @@ def shared_ui_css() -> str:
     }
     .compact-copy {
       max-width: 68ch;
+    }
+    .developer-details {
+      margin-top: 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 0 16px 16px;
+    }
+    .developer-details summary {
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 800;
+      padding: 14px 0;
+    }
+    .developer-details h2 {
+      margin-top: 22px;
     }
     .site-footer {
       margin-top: 52px;
@@ -7563,28 +7611,28 @@ def site_footer_html() -> str:
       <div class="footer-grid">
         <div class="footer-brand">
           <strong>AxonGate</strong>
-          <p>Evidence trust checks for AI agents that need supported, cited, and safer public-source decisions.</p>
+          <p>Fast evidence checks for teams that need AI agents to cite public sources with confidence.</p>
         </div>
         <div class="footer-group">
-          <strong>Product</strong>
-          <a href="{html.escape(public_url('/proof-pack'), quote=True)}">Trust Check</a>
+          <strong>Buy</strong>
+          <a href="{html.escape(public_url('/'), quote=True)}">Start Here</a>
+          <a href="{html.escape(public_url('/proof-pack/quote'), quote=True)}">Instant Quote</a>
           <a href="{html.escape(public_url('/proof-pack/bundle'), quote=True)}">Evidence Bundles</a>
+          <a href="{html.escape(public_url('/contact'), quote=True)}">Talk To Us</a>
+        </div>
+        <div class="footer-group">
+          <strong>Learn</strong>
           <a href="{html.escape(public_url('/proof-pack/sample'), quote=True)}">Sample Report</a>
+          <a href="{html.escape(public_url('/faq'), quote=True)}">FAQ</a>
+          <a href="{html.escape(public_url('/about'), quote=True)}">About</a>
           <a href="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}">Recover Delivery</a>
         </div>
         <div class="footer-group">
-          <strong>Company</strong>
-          <a href="{html.escape(public_url('/about'), quote=True)}">About</a>
-          <a href="{html.escape(public_url('/faq'), quote=True)}">FAQ</a>
-          <a href="{html.escape(public_url('/contact'), quote=True)}">Contact</a>
+          <strong>Build</strong>
+          <a href="{html.escape(public_url('/docs'), quote=True)}">API Docs</a>
+          <a href="{html.escape(public_url('/quickstart'), quote=True)}">x402 Quickstart</a>
+          <a href="{html.escape(public_url('/discovery/resources'), quote=True)}">Discovery JSON</a>
           <a href="mailto:{html.escape(contact_email, quote=True)}">Email</a>
-        </div>
-        <div class="footer-group">
-          <strong>Developers</strong>
-          <a href="{html.escape(public_url('/docs'), quote=True)}">Docs</a>
-          <a href="{html.escape(public_url('/quickstart'), quote=True)}">Quickstart</a>
-          <a href="{html.escape(public_url('/llms.txt'), quote=True)}">llms.txt</a>
-          <a href="{html.escape(public_url('/sitemap.xml'), quote=True)}">Sitemap</a>
         </div>
       </div>
       <div class="footer-fine">AxonGate checks public source evidence before agents cite, ingest, or act on it.</div>
@@ -7600,13 +7648,19 @@ def ui_link(label: str, href: Any, *, class_name: str = "button secondary", curr
     return f'<a href="{safe_href}"{class_attr}{current_attr}>{safe_label}</a>'
 
 
+def stripe_button_html(href: Any, label: str = "Pay with Stripe") -> str:
+    """Render a Stripe checkout button for bundle purchases."""
+    return ui_link(label, href, class_name="button stripe-button")
+
+
 def site_nav_html(active: str = "") -> str:
     """Render the compact shared top navigation."""
     nav_items = [
-        ("Trust Check", public_url("/proof-pack"), "Proof Packs"),
+        ("Home", public_url("/"), "Home"),
         ("Evidence Bundles", public_url("/proof-pack/bundle"), "Bundles"),
-        ("Docs", public_url("/docs"), "Docs"),
-        ("Quickstart", public_url("/quickstart"), "Quickstart"),
+        ("Sample", public_url("/proof-pack/sample"), "Sample"),
+        ("Contact", public_url("/contact"), "Contact"),
+        ("Developers", public_url("/docs"), "Docs"),
     ]
     nav_links = "\n        ".join(
         ui_link(
@@ -7620,20 +7674,19 @@ def site_nav_html(active: str = "") -> str:
     more_links = "\n          ".join(
         ui_link(label, href, class_name="")
         for label, href in [
-            ("Sample Report", public_url("/proof-pack/sample")),
-            ("Proof Quote", public_url("/proof-pack/quote")),
-            ("Request", public_url("/proof-pack/request")),
-            ("Recover Bundle", public_url("/proof-pack/bundle/recover")),
+            ("Instant Quote", public_url("/proof-pack/quote")),
+            ("Request Report", public_url("/proof-pack/request")),
+            ("Recover Delivery", public_url("/proof-pack/bundle/recover")),
+            ("Agent API / x402", public_url("/proof-pack")),
+            ("Quickstart", public_url("/quickstart")),
             ("About", public_url("/about")),
             ("FAQ", public_url("/faq")),
-            ("Contact", public_url("/contact")),
-            ("Operator", public_url("/operator")),
-            ("Discovery", public_url("/discovery/resources")),
+            ("Discovery JSON", public_url("/discovery/resources")),
         ]
     )
     return f"""
     <nav class="site-nav" aria-label="Main navigation">
-      <a class="brand" href="{html.escape(public_url('/proof-pack'), quote=True)}">AxonGate<small>agent evidence trust layer</small></a>
+      <a class="brand" href="{html.escape(public_url('/'), quote=True)}">AxonGate<small>source evidence checks</small></a>
       <div class="nav-core">
         {nav_links}
         <details class="ui-menu">
@@ -7680,6 +7733,383 @@ def link_cluster_html(groups: list[tuple[str, list[tuple[str, Any]]]]) -> str:
       </details>"""
         )
     return '<section class="link-cluster" aria-label="Discovery links">' + "\n".join(rendered_groups) + "\n    </section>"
+
+
+def build_home_html() -> str:
+    """Render the customer-facing homepage at the root URL."""
+    nav = site_nav_html("Home")
+    scout_price = html.escape(str(price_for_proof_bundle("scout")))
+    builder_price = html.escape(str(price_for_proof_bundle(DEFAULT_PROOF_BUNDLE)))
+    audit_price = html.escape(str(price_for_proof_bundle("audit")))
+    scout_limit = html.escape(str(proof_bundle_source_limit("scout")))
+    builder_limit = html.escape(str(proof_bundle_source_limit(DEFAULT_PROOF_BUNDLE)))
+    audit_limit = html.escape(str(proof_bundle_source_limit("audit")))
+    bundle_url = html.escape(public_url("/proof-pack/bundle"), quote=True)
+    contact_url = html.escape(public_url("/contact"), quote=True)
+    sample_url = html.escape(public_url("/proof-pack/sample"), quote=True)
+    docs_url = html.escape(public_url("/docs"), quote=True)
+    agent_api_url = html.escape(public_url("/proof-pack"), quote=True)
+    scout_stripe = proof_bundle_checkout_path([], "", "scout", "home-stripe")
+    builder_stripe = proof_bundle_checkout_path([], "", DEFAULT_PROOF_BUNDLE, "home-stripe")
+    audit_stripe = proof_bundle_checkout_path([], "", "audit", "home-stripe")
+    bundle_options = "\n".join(
+        f'<option value="{html.escape(bundle_name)}"{" selected" if bundle_name == DEFAULT_PROOF_BUNDLE else ""}>'
+        f'{html.escape(bundle_name.title())} - ${html.escape(str(price_for_proof_bundle(bundle_name)))}</option>'
+        for bundle_name in PROOF_BUNDLE_PRICING_USDC
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html("AxonGate Evidence Bundles", "Buy cited evidence checks that show whether public sources support an AI product claim before your agent cites, ingests, or acts on them.", "/")}
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #101218;
+      --panel: #181b23;
+      --panel-strong: #202530;
+      --text: #f5f7fb;
+      --muted: #b9c2cf;
+      --line: #333947;
+      --accent: #6ee7b7;
+      --price: #f8fafc;
+      --price-muted: #a7f3d0;
+      --stripe: #635bff;
+      --code: #0a0d13;
+      --good: #7ee787;
+      --bad: #ff9b9b;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--panel), var(--bg) 28%) 0, var(--bg) 430px),
+        var(--bg);
+      color: var(--text);
+    }}
+    main {{ max-width: 1120px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.3rem, 5vw, 4.1rem); line-height: 1.02; margin: 0 0 14px; max-width: 13ch; }}
+    h2 {{ margin: 42px 0 14px; font-size: clamp(1.45rem, 3vw, 2rem); line-height: 1.12; }}
+    h3 {{ margin: 0 0 8px; font-size: 1.05rem; }}
+    p, li, label, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .hero {{
+      display: grid;
+      gap: clamp(22px, 4vw, 42px);
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr);
+      align-items: center;
+      margin: 0 0 34px;
+    }}
+    .eyebrow {{
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }}
+    .summary {{ max-width: 680px; font-size: 1.11rem; }}
+    .hero-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 22px 0;
+    }}
+    .bundle-form {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, .72fr);
+      margin: 22px 0 0;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--panel), var(--bg) 18%);
+    }}
+    .bundle-form label {{ display: grid; gap: 6px; font-size: .9rem; }}
+    .bundle-form input, .bundle-form select, .bundle-form textarea {{
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: var(--bg);
+      color: var(--text);
+      font: inherit;
+    }}
+    .bundle-form textarea {{ min-height: 92px; resize: vertical; }}
+    .bundle-form .wide {{ grid-column: 1 / -1; }}
+    .bundle-form button {{
+      grid-column: 1 / -1;
+      border-color: color-mix(in srgb, var(--accent), var(--line) 20%);
+      background: color-mix(in srgb, var(--accent), var(--panel) 78%);
+      font-weight: 800;
+    }}
+    .report-visual {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(145deg, var(--panel-strong), var(--panel));
+      padding: clamp(16px, 3vw, 24px);
+      box-shadow: var(--shadow);
+    }}
+    .report-top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }}
+    .status-pill {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      border: 1px solid color-mix(in srgb, var(--good), var(--line));
+      border-radius: 999px;
+      padding: 5px 10px;
+      color: var(--good);
+      font-size: .82rem;
+      font-weight: 800;
+    }}
+    .score-ring {{
+      display: grid;
+      place-items: center;
+      width: 74px;
+      aspect-ratio: 1;
+      border: 8px solid color-mix(in srgb, var(--accent), var(--panel) 45%);
+      border-right-color: var(--line);
+      border-radius: 50%;
+      color: var(--text);
+      font-weight: 900;
+    }}
+    .report-lines {{ display: grid; gap: 10px; }}
+    .evidence-row {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 92px minmax(0, 1fr);
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--bg), var(--panel) 32%);
+    }}
+    .evidence-row strong {{ color: var(--text); }}
+    .bar {{
+      height: 9px;
+      border-radius: 999px;
+      background: var(--line);
+      overflow: hidden;
+    }}
+    .bar span {{ display: block; height: 100%; background: var(--accent); }}
+    .package-grid, .price-grid, .proof-steps {{
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 18px 0;
+    }}
+    .path-card, .price-card, .step {{
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: var(--panel);
+    }}
+    .path-card strong, .price-card strong, .step strong {{
+      display: block;
+      margin-bottom: 6px;
+      color: var(--text);
+      font-size: 1rem;
+    }}
+    .path-card a, .price-card a {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-weight: 750;
+    }}
+    .path-card:first-child a {{
+      border-color: color-mix(in srgb, var(--accent), var(--line) 25%);
+      background: color-mix(in srgb, var(--accent), var(--panel) 82%);
+    }}
+    .price {{
+      color: var(--price);
+      font-size: 2rem;
+      font-weight: 900;
+      line-height: 1;
+    }}
+    .price .currency {{
+      color: var(--price-muted);
+      font-size: 1.1rem;
+      vertical-align: .25rem;
+    }}
+    .price small {{
+      color: var(--muted);
+      font-size: .86rem;
+      font-weight: 700;
+    }}
+    .price-card.featured {{
+      border-color: color-mix(in srgb, var(--accent), var(--line) 25%);
+      background: color-mix(in srgb, var(--panel), var(--accent) 8%);
+    }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      margin-bottom: 10px;
+      border: 1px solid color-mix(in srgb, var(--accent), var(--line) 30%);
+      border-radius: 999px;
+      padding: 4px 9px;
+      color: var(--accent);
+      font-size: .78rem;
+      font-weight: 900;
+    }}
+    .agent-strip {{
+      display: grid;
+      gap: 14px;
+      grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+      align-items: center;
+      margin-top: 28px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: color-mix(in srgb, var(--panel), var(--bg) 20%);
+    }}
+    code {{
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--code);
+      color: var(--text);
+      border-radius: 4px;
+      padding: 2px 5px;
+    }}
+    @media (max-width: 860px) {{
+      .hero, .agent-strip {{ grid-template-columns: 1fr; }}
+      .bundle-form, .package-grid, .price-grid, .proof-steps {{ grid-template-columns: 1fr; }}
+      h1 {{ max-width: 14ch; }}
+    }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="hero">
+      <div>
+        <p class="eyebrow">Evidence checks for AI products</p>
+        <h1>Can these sources prove your claim?</h1>
+        <p class="summary">AxonGate turns a list of public URLs into a cited evidence report. Use it before your agent cites a page, adds sources to RAG, or repeats a claim to customers.</p>
+        <div class="hero-actions">
+          {stripe_button_html(builder_stripe, "Start Builder - $7")}
+          <a class="button secondary" href="{bundle_url}">Quote With URLs</a>
+          <a class="button secondary" href="{sample_url}">View Sample Report</a>
+        </div>
+        <form class="bundle-form" method="get" action="/proof-pack/bundle/quote" accept-charset="utf-8">
+          <label class="wide">Source URLs
+            <textarea name="target_urls" placeholder="https://example.com/source&#10;https://example.org/context" required></textarea>
+          </label>
+          <label>Claim or question to support
+            <input name="question" placeholder="Can these sources support our launch claim?">
+          </label>
+          <label>Bundle
+            <select name="bundle" aria-label="Evidence Bundle">{bundle_options}</select>
+          </label>
+          <input type="hidden" name="source" value="homepage">
+          <button type="submit">Get Evidence Quote</button>
+        </form>
+      </div>
+      <aside class="report-visual" aria-label="Sample evidence report preview">
+        <div class="report-top">
+          <div>
+            <p class="eyebrow">Bundle output</p>
+            <strong>Claim supported across sources</strong>
+          </div>
+          <div class="score-ring">82</div>
+        </div>
+        <div class="report-lines">
+          <div class="evidence-row"><strong>Evidence</strong><div class="bar"><span style="width:82%"></span></div></div>
+          <div class="evidence-row"><strong>Citations</strong><div class="bar"><span style="width:74%"></span></div></div>
+          <div class="evidence-row"><strong>Noise</strong><div class="bar"><span style="width:31%; background:var(--bad)"></span></div></div>
+        </div>
+        <p><span class="status-pill">Citation-ready</span></p>
+        <p>Reports include source quality, risk notes, evidence IDs, JSON, PDF, and recovery links.</p>
+      </aside>
+    </section>
+
+    <section>
+      <h2>Choose the evidence check</h2>
+      <div class="package-grid">
+        <div class="path-card">
+          <strong>Scout</strong>
+          <p>Quickly screen a few URLs and see whether the source material is usable.</p>
+          <a href="{bundle_url}?bundle=scout&source=homepage">Add URLs</a>
+        </div>
+        <div class="path-card">
+          <strong>Builder</strong>
+          <p>Best first purchase for teams preparing source-backed agent workflows.</p>
+          <a href="{bundle_url}?bundle={html.escape(DEFAULT_PROOF_BUNDLE)}&source=homepage">Start Builder</a>
+        </div>
+        <div class="path-card">
+          <strong>Audit</strong>
+          <p>Use this for launch reviews, higher-risk claims, and broader source sets.</p>
+          <a href="{contact_url}">Contact</a>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Stripe pricing</h2>
+      <div class="price-grid">
+        <div class="price-card">
+          <strong>Scout</strong>
+          <div class="price"><span class="currency">$</span>{scout_price} <small>USD</small></div>
+          <p>Up to {scout_limit} public URLs. Quick claim-support and source-quality check.</p>
+          {stripe_button_html(scout_stripe, "Pay $2 with Stripe")}
+          <a href="{bundle_url}?bundle=scout&source=homepage">Quote first</a>
+        </div>
+        <div class="price-card featured">
+          <span class="badge">Best first buy</span>
+          <strong>Builder</strong>
+          <div class="price"><span class="currency">$</span>{builder_price} <small>USD</small></div>
+          <p>Up to {builder_limit} public URLs. Cited evidence bundle for product and agent teams.</p>
+          {stripe_button_html(builder_stripe, "Pay $7 with Stripe")}
+          <a href="{bundle_url}?bundle={html.escape(DEFAULT_PROOF_BUNDLE)}&source=homepage">Quote first</a>
+        </div>
+        <div class="price-card">
+          <strong>Audit</strong>
+          <div class="price"><span class="currency">$</span>{audit_price} <small>USD</small></div>
+          <p>Up to {audit_limit} public URLs. Deeper review for launches, vendors, and sensitive claims.</p>
+          {stripe_button_html(audit_stripe, "Pay $20 with Stripe")}
+          <a href="{bundle_url}?bundle=audit&source=homepage">Quote first</a>
+        </div>
+      </div>
+      <p>Checkout opens Stripe. If you want to add URLs first, use the quote path and the selected bundle stays attached to your request.</p>
+    </section>
+
+    <section>
+      <h2>What happens after Stripe</h2>
+      <div class="proof-steps">
+        <div class="step"><strong>1. Pay or quote</strong><p>Choose Scout, Builder, or Audit. Add URLs before payment or provide them through Stripe custom fields.</p></div>
+        <div class="step"><strong>2. Evidence is generated</strong><p>AxonGate checks source support, citation quality, risk, and weak evidence patterns.</p></div>
+        <div class="step"><strong>3. Delivery is recoverable</strong><p>Reports are delivered with recovery links, JSON/PDF output, and source metadata.</p></div>
+      </div>
+    </section>
+
+    <section class="agent-strip" aria-label="Agent API access">
+      <div>
+        <strong>Need the agent API?</strong>
+        <p>Autonomous agents can buy single-source Source Trust Reports through the x402 Proof Pack endpoint.</p>
+      </div>
+      <a class="button secondary" href="{agent_api_url}">Agent API / x402</a>
+      <a class="button secondary" href="{docs_url}">Docs</a>
+      <a class="button secondary" href="{sample_url}">Sample</a>
+    </section>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
 
 
 def build_about_html() -> str:
@@ -7743,12 +8173,12 @@ def build_about_html() -> str:
     <div class="grid">
       <div class="box"><strong>For agent builders</strong><br><p>Use AxonGate before RAG ingestion, autonomous web actions, customer-facing citations, and launch audits.</p></div>
       <div class="box"><strong>For evidence workflows</strong><br><p>Get cited findings, source hashes, confidence, risks, JSON, PDF, and delivery links instead of unjudged page text.</p></div>
-      <div class="box"><strong>For paid automation</strong><br><p>x402 endpoints let agents buy source checks directly, while Stripe links capture human demand for bundles.</p></div>
+      <div class="box"><strong>For paid automation</strong><br><p>x402 endpoints let agents buy source checks directly, while Stripe links capture bundle demand.</p></div>
     </div>
     <h2>Why this exists</h2>
     <p>Most web tooling answers, "What text is on this page?" AxonGate answers the more valuable question: "Can my agent rely on this source for this claim?" That difference matters when an agent is about to cite a page, update a knowledge base, or produce a customer-visible answer.</p>
     <h2>What AxonGate returns</h2>
-    <p>Proof Packs and Evidence Bundles return a trust decision with supported claims, citation IDs, excerpts, confidence, source quality notes, delivery metadata, and risks. The output is built to be read by humans and consumed by agent workflows.</p>
+    <p>Proof Packs and Evidence Bundles return a trust decision with supported claims, citation IDs, excerpts, confidence, source quality notes, delivery metadata, and risks. The output is built for buyers, operators, and agent workflows.</p>
     {site_footer_html()}
   </main>
 </body>
@@ -7777,7 +8207,7 @@ def build_faq_html() -> str:
         ),
         (
             "How does payment work?",
-            "Agent calls use x402 on Base USDC. Human bundle requests use Stripe payment links and then deliver the report through a secure delivery page and email when email delivery is configured.",
+            "Agent calls use x402 on Base USDC. Bundle requests use Stripe payment links and then deliver the report through a secure delivery page and email when email delivery is configured.",
         ),
         (
             "Can I try it without paying?",
@@ -8194,14 +8624,13 @@ def build_proof_pack_preview_html(preview: dict[str, Any]) -> str:
     actions = action_bar_html(
         [
             ("Get Quote", quote_url),
-            ("Probe Payment Terms", probe_url),
             ("Request This Report", request_url),
+            ("Probe Payment Terms", probe_url),
         ],
         [
             ("Open Preview JSON", preview_api),
             ("Sample Report", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
             ("Docs", f"{PUBLIC_BASE_URL}/docs"),
-            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
         ],
     )
 
@@ -8368,15 +8797,14 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     nav = site_nav_html("Proof Packs")
     actions = action_bar_html(
         [
-            ("Probe Payment Terms", probe_url),
-            ("Try Mini Preview", preview_url),
             ("Request This Report", request_url),
+            ("Try Mini Preview", preview_url),
+            ("Probe Payment Terms", probe_url),
         ],
         [
             ("Open JSON Quote", api_url),
             ("View Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
             ("Docs", f"{PUBLIC_BASE_URL}/docs"),
-            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
         ],
     )
 
@@ -8560,12 +8988,11 @@ def build_proof_pack_request_html(
         [
             ("Open Quote", quote_url),
             ("Try Mini Preview", preview_url),
-            ("Probe Payment Terms", probe_url),
+            ("View Sample", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
         ],
         [
-            ("Sample Report", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
+            ("Probe Payment Terms", probe_url),
             ("Docs", f"{PUBLIC_BASE_URL}/docs"),
-            ("Operator", f"{PUBLIC_BASE_URL}/operator"),
         ],
     )
 
@@ -8684,12 +9111,15 @@ def build_proof_pack_request_html(
       <button type="submit">Send Request</button>
     </form>
     {actions}
-    <h2>Full Paid Endpoint</h2>
-    <pre>{paid_endpoint}</pre>
-    <h2>JSON Lead API</h2>
-    <pre>curl -X POST {public}/v1/proof-pack/leads \\
+    <details class="developer-details">
+      <summary>Developer and API details</summary>
+      <h2>Full Paid Endpoint</h2>
+      <pre>{paid_endpoint}</pre>
+      <h2>JSON Lead API</h2>
+      <pre>curl -X POST {public}/v1/proof-pack/leads \\
   -H "Content-Type: application/json" \\
   -d '{api_example}'</pre>
+    </details>
   </main>
 </body>
 </html>"""
@@ -8727,6 +9157,7 @@ def build_proof_bundle_html(
     notes = clean_lead_text(values.get("notes"), 500)
     price = price_for_proof_bundle(bundle)
     amount_units = str(usdc_units(price))
+    selected_targets = split_bundle_target_urls(target_urls)
     quote_url = html.escape(
         f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote?"
         f"target_urls={url_quote(target_urls, safe='')}"
@@ -8734,7 +9165,8 @@ def build_proof_bundle_html(
         f"&bundle={url_quote(bundle, safe='')}"
         f"&source={url_quote(source, safe='')}"
     )
-    payment_url = html.escape(proof_bundle_checkout_url(split_bundle_target_urls(target_urls), question, bundle, source))
+    stripe_checkout_href = proof_bundle_checkout_path(selected_targets, question, bundle, source)
+    payment_url = html.escape(stripe_checkout_href)
     payment_link_state = "configured" if proof_bundle_payment_url(bundle) else "routes to request capture"
     bundle_options = "\n".join(
         f'<option value="{html.escape(bundle_name)}"{" selected" if bundle_name == bundle else ""}>{html.escape(bundle_name)}</option>'
@@ -8787,12 +9219,11 @@ def build_proof_bundle_html(
         [
             ("Quote Bundle", quote_url),
             ("Request Bundle", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
-            ("Payment Link", payment_url),
+            ("Contact", f"{PUBLIC_BASE_URL}/contact"),
         ],
         [
             ("Single-Source Request", f"{PUBLIC_BASE_URL}/proof-pack/request"),
             ("Sample Report", f"{PUBLIC_BASE_URL}/proof-pack/sample"),
-            ("Private Leads", f"{PUBLIC_BASE_URL}/operator/leads"),
             ("Docs", f"{PUBLIC_BASE_URL}/docs"),
         ],
     )
@@ -8893,6 +9324,10 @@ def build_proof_bundle_html(
     {error_html}
     {success_html}
     {actions}
+    <div class="action-row">
+      {stripe_button_html(stripe_checkout_href)}
+      <small class="stripe-note">Redirects to Stripe when the selected bundle has a configured Payment Link; otherwise it opens the request form with your details preserved.</small>
+    </div>
     <div class="grid">
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Indicative Price</strong><br>{html.escape(str(price))} USDC<br><code>{html.escape(amount_units)}</code> units</div>
@@ -8950,10 +9385,13 @@ def build_proof_bundle_html(
       <tbody>{bundle_rows}</tbody>
     </table>
     </div>
-    <h2>JSON Lead API</h2>
-    <pre>curl -X POST {public}/v1/proof-pack/bundle/leads \\
+    <details class="developer-details">
+      <summary>Developer and API details</summary>
+      <h2>JSON Lead API</h2>
+      <pre>curl -X POST {public}/v1/proof-pack/bundle/leads \\
   -H "Content-Type: application/json" \\
   -d '{api_example}'</pre>
+    </details>
     {site_footer_html()}
   </main>
 </body>
@@ -8986,7 +9424,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
         f"<td>{html.escape(str(info['amount_units']))}</td>"
         f"<td>{html.escape(str(info['source_limit']))}</td>"
         f"<td>{html.escape(str(info['policy']))}</td>"
-        f"<td><a href=\"{html.escape(str(info['checkout_url']))}\">Checkout</a></td>"
+        f"<td><a href=\"{html.escape(str(info['checkout_url']))}\">Pay with Stripe</a></td>"
         f"<td><a href=\"{html.escape(str(info['quote_page']))}\">Quote</a></td>"
         "</tr>"
         for bundle_name, info in quote["bundles"].items()
@@ -8994,19 +9432,20 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     request_page = html.escape(str(quote["next_steps"]["request_page"]))
     quote_api = html.escape(str(quote["next_steps"]["quote_api"]))
     payment_url = html.escape(str(quote["next_steps"]["payment_url"]))
+    stripe_checkout_href = proof_bundle_checkout_path(list(quote["target_urls"]), question, bundle, source)
     checkout_state = "configured payment link" if quote["next_steps"].get("payment_link_configured") else "request capture fallback"
     single_source_endpoint = html.escape(str(quote["next_steps"]["single_source_proof_pack_endpoint"]))
     nav = site_nav_html("Bundles")
     actions = action_bar_html(
         [
             ("Request Bundle", request_page),
-            ("Payment Link", payment_url),
-            ("JSON Quote", quote_api),
+            ("Change Quote", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+            ("Contact", f"{PUBLIC_BASE_URL}/contact"),
         ],
         [
+            ("JSON Quote", quote_api),
             ("Proof Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
             ("Proof Packs", f"{PUBLIC_BASE_URL}/proof-pack"),
-            ("Private Leads", f"{PUBLIC_BASE_URL}/operator/leads"),
             ("Docs", f"{PUBLIC_BASE_URL}/docs"),
         ],
     )
@@ -9105,6 +9544,10 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       </div>
     </form>
     {actions}
+    <div class="action-row">
+      {stripe_button_html(stripe_checkout_href)}
+      <small class="stripe-note">Uses the selected bundle, source URLs, and question from this quote.</small>
+    </div>
     <div class="grid">
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Price</strong><br>{html.escape(str(quote["price_usdc"]))} USDC<br><code>{html.escape(str(quote["amount_units"]))}</code> units</div>
@@ -9135,7 +9578,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
 
 
 def build_proof_pack_html() -> str:
-    """Render the human-facing Proof Pack product page."""
+    """Render the public Proof Pack product page."""
     public = html.escape(PUBLIC_BASE_URL)
     pro_url = html.escape(PROOF_PRO_PAYMENT_URL or f"{PUBLIC_BASE_URL}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard")
     team_url = html.escape(PROOF_TEAM_PAYMENT_URL or f"{PUBLIC_BASE_URL}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=deep")
@@ -9143,12 +9586,12 @@ def build_proof_pack_html() -> str:
     preview_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&pack=quick")
     request_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick")
     bundle_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/bundle?source=proof-pack")
+    bundle_stripe_href = proof_bundle_checkout_path([], "", DEFAULT_PROOF_BUNDLE, "proof-pack-stripe")
     bundle_quote_url = html.escape(
         f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout"
     )
     sample_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/sample")
     sample_api_url = html.escape(f"{PUBLIC_BASE_URL}/v1/proof-pack/sample")
-    hero_quote_url = html.escape(f"{PUBLIC_BASE_URL}/proof-pack/quote")
     request_json = html.escape(json.dumps(build_proof_pack_request_example(DEFAULT_PROOF_PACK), indent=2))
     response_json = html.escape(json.dumps(build_proof_pack_response_example(DEFAULT_PROOF_PACK), indent=2))
     pack_rows = "\n".join(
@@ -9163,19 +9606,17 @@ def build_proof_pack_html() -> str:
     nav = site_nav_html("Proof Packs")
     actions = action_bar_html(
         [
+            ("Get Instant Quote", quote_url),
+            ("Request Report", request_url),
             ("View Sample", sample_url),
-            ("Get Quote", quote_url),
-            ("Request Proof Pack", request_url),
-            ("Quote Bundle", bundle_quote_url),
         ],
         [
             ("Try Mini Preview", preview_url),
-            ("Proof Bundles", bundle_url),
+            ("Evidence Bundles", bundle_url),
+            ("Quote Bundle", bundle_quote_url),
             ("Proof Pro", pro_url),
             ("Proof Team", team_url),
-            ("Quote API", f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard"),
-            ("x402 Discovery", f"{PUBLIC_BASE_URL}/.well-known/x402"),
-            ("Resources", f"{PUBLIC_BASE_URL}/discovery/resources"),
+            ("API Docs", f"{PUBLIC_BASE_URL}/docs"),
         ],
     )
 
@@ -9299,7 +9740,7 @@ def build_proof_pack_html() -> str:
         <h1>Can your agent safely cite this source?</h1>
         <p class="summary">AxonGate checks whether a public URL actually supports a claim, extracts citation-ready evidence, and flags weak or noisy sources before an AI agent relies on them.</p>
       </div>
-      <form class="trust-form" method="get" action="{hero_quote_url}">
+      <form class="trust-form" method="get" action="/proof-pack/quote">
         <label>Source URL
           <input name="target_url" inputmode="url" placeholder="example.com/source" required>
         </label>
@@ -9342,26 +9783,41 @@ def build_proof_pack_html() -> str:
     </table>
     </div>
 
-    <h2>Quote</h2>
-    <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;question=What%20does%20this%20source%20establish%3F&amp;pack=standard&amp;source=docs"</pre>
-
     <h2>Proof Bundles</h2>
     <p>When a buyer has several sources or wants an agent-launch evidence set, route them to Proof Bundles. Bundles quote multi-source work clearly and capture demand before batch delivery is automated.</p>
-    <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
+    <div class="action-row">
+      {stripe_button_html(bundle_stripe_href)}
+      <a class="button secondary" href="{bundle_url}">Add source URLs first</a>
+      <small class="stripe-note">Stripe checkout is for Evidence Bundles. Single-source agent calls remain x402.</small>
+    </div>
+    <div class="grid">
+      <div class="box"><strong>Single source</strong><br>Use the instant quote when one URL needs a trust decision.</div>
+      <div class="box"><strong>Several sources</strong><br>Use Evidence Bundles when a claim needs support across multiple pages.</div>
+      <div class="box"><strong>Unsure</strong><br>Send a request and AxonGate will route it to the right report path.</div>
+    </div>
 
-    <h2>No-Spend Sample</h2>
-    <pre>curl "{sample_api_url}?source=docs"</pre>
+    <details class="developer-details">
+      <summary>Developer and API details</summary>
+      <h2>Quote</h2>
+      <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;question=What%20does%20this%20source%20establish%3F&amp;pack=standard&amp;source=docs"</pre>
 
-    <h2>Paid Endpoint</h2>
-    <pre>POST {public}/v1/x402/proof-pack?pack=standard
+      <h2>Bundle Quote</h2>
+      <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
+
+      <h2>No-Spend Sample</h2>
+      <pre>curl "{sample_api_url}?source=docs"</pre>
+
+      <h2>Paid Endpoint</h2>
+      <pre>POST {public}/v1/x402/proof-pack?pack=standard
 Header: PAYMENT-SIGNATURE: &lt;x402-payment-proof&gt;
 Header: X-AxonGate-Pack: standard</pre>
 
-    <h2>Request</h2>
-    <pre>{request_json}</pre>
+      <h2>Request</h2>
+      <pre>{request_json}</pre>
 
-    <h2>Response Shape</h2>
-    <pre>{response_json}</pre>
+      <h2>Response Shape</h2>
+      <pre>{response_json}</pre>
+    </details>
     {site_footer_html()}
   </main>
 </body>
@@ -9517,7 +9973,7 @@ def build_llms_txt() -> str:
     Return a compact agent-readable service brief.
 
     The goal is to help crawler agents, planners, and LLM tool routers decide
-    when AxonGate is useful without scraping a human docs page. It intentionally
+    when AxonGate is useful without scraping a docs page. It intentionally
     avoids secrets and includes only public contract details.
     """
     request_example = json.dumps(
@@ -9551,7 +10007,7 @@ Name: AxonGate
 Basename: axongate.base.eth
 Summary: x402-paid source trust layer that checks whether public web evidence is safe for AI agents to cite or act on. Clean markdown extraction is available, but the main value is evidence quality, claim support, and citation-ready trust decisions.
 Canonical base URL: {PUBLIC_BASE_URL}
-Human docs: {public_url("/docs")}
+Public docs: {public_url("/docs")}
 About: {public_url("/about")}
 FAQ: {public_url("/faq")}
 Contact: {public_url("/contact")}
@@ -9695,7 +10151,7 @@ AxonGate rejects private, loopback, multicast, and link-local target hosts; perf
 
 
 def build_docs_html() -> str:
-    """Return a small self-contained human docs page for agent operators."""
+    """Return a small self-contained docs page for agent operators."""
     public = html.escape(PUBLIC_BASE_URL)
     vault = html.escape(load_vault_address())
     usdc_address = html.escape(BASE_USDC_ADDRESS)
@@ -9937,7 +10393,7 @@ def build_docs_html() -> str:
     <pre>curl "{public}/v1/proof-pack/sample?source=docs"</pre>
     <p>Mini preview page: <a href="{public}/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs">{public}/proof-pack/preview</a></p>
     <pre>curl "{public}/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs"</pre>
-    <p>Human quote page: <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/proof-pack/quote</a></p>
+    <p>Quote page: <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/proof-pack/quote</a></p>
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
     <p>Request capture page: <a href="{public}/proof-pack/request?target_url=https%3A%2F%2Fexample.com&amp;pack=quick&amp;source=docs">{public}/proof-pack/request</a></p>
     <pre>curl -X POST "{public}/v1/proof-pack/leads" \\
@@ -9956,7 +10412,7 @@ def build_docs_html() -> str:
       <tbody>{proof_bundle_rows}</tbody>
     </table>
     </div>
-    <p>Human bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
+    <p>Bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
     <p>Tracked checkout route: <code>{public}/proof-pack/bundle/pay</code>. Configure payment URLs with <code>AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL</code>, <code>AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL</code>, and <code>AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL</code>.</p>
     <p>Stripe fulfillment webhook: <code>{public}/v1/stripe/webhook</code>. Configure Stripe to send <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, and <code>checkout.session.async_payment_failed</code>, then set <code>AXONGATE_STRIPE_WEBHOOK_SECRET</code> from the Stripe signing secret.</p>
     <p>Stripe Payment Links should redirect after payment to <code>{public}/proof-pack/bundle/delivery?session_id={{CHECKOUT_SESSION_ID}}</code>. The webhook still handles fulfillment if the buyer closes Stripe before redirecting, and buyers can recover delivery at <code>{public}/proof-pack/bundle/recover</code> with their checkout email and one submitted target URL.</p>
@@ -11180,7 +11636,7 @@ Sitemap: {public_url("/sitemap.xml")}
 
 
 def build_sitemap_xml() -> str:
-    """Return a small XML sitemap for human and agent discovery URLs."""
+    """Return a small XML sitemap for public and agent discovery URLs."""
     now = time.strftime("%Y-%m-%d", time.gmtime())
     entries = [
         ("/", "1.0"),
@@ -11242,8 +11698,8 @@ async def llms_txt(request: Request):
     return build_llms_txt()
 
 
-@app.get("/docs", response_class=HTMLResponse, tags=["discovery"], summary="Human-readable AxonGate docs")
-async def human_docs(request: Request):
+@app.get("/docs", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate docs")
+async def docs_page(request: Request):
     """Serve a lightweight docs page; Swagger remains available at /swagger."""
     inc_discovery_hit("discovery_docs_hits_total", attribution_source_from_request(request))
     return build_docs_html()
@@ -11471,7 +11927,7 @@ async def paid_test_guide(request: Request):
 
 @app.get("/proof-pack", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate Proof Pack product page")
 async def proof_pack_page(request: Request):
-    """Serve the Proof Pack product page for human buyers and agent builders."""
+    """Serve the Proof Pack product page for buyers and agent builders."""
     inc_discovery_hit("discovery_proof_pack_hits_total", attribution_source_from_request(request))
     return build_proof_pack_html()
 
@@ -11505,14 +11961,14 @@ async def proof_bundle_page(
     )
 
 
-@app.get("/proof-pack/bundle/quote", response_class=HTMLResponse, tags=["discovery"], summary="Human Proof Bundle quote page")
+@app.get("/proof-pack/bundle/quote", response_class=HTMLResponse, tags=["discovery"], summary="Proof Bundle quote page")
 async def proof_bundle_quote_page(
     request: Request,
     target_urls: str = "https://www.iana.org/domains/reserved\nhttps://example.com\nhttps://example.org",
     question: Optional[str] = None,
     bundle: str = DEFAULT_PROOF_BUNDLE,
 ):
-    """Serve a no-spend multi-source bundle quote page for human buyers."""
+    """Serve a no-spend multi-source bundle quote page for buyers."""
     source = attribution_source_from_request(request)
     inc_metric("proof_bundle_quotes_total")
     inc_attribution("proof_bundle_quotes", source)
@@ -11529,7 +11985,7 @@ async def proof_bundle_quote_page(
 
 @app.post("/proof-pack/bundle/request", response_class=HTMLResponse, tags=["discovery"], summary="Submit a Proof Bundle request")
 async def proof_bundle_request_submit(request: Request):
-    """Store a human-submitted Proof Bundle request without payment or supplier work."""
+    """Store a submitted Proof Bundle request without payment or supplier work."""
     source = attribution_source_from_request(request)
     inc_discovery_hit("discovery_proof_bundle_request_hits_total", source)
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -11756,7 +12212,7 @@ async def proof_bundle_lead_api(request: Request, lead_request: ProofBundleLeadR
 
 @app.get("/proof-pack/sample", response_class=HTMLResponse, tags=["discovery"], summary="No-spend Proof Pack sample page")
 async def proof_pack_sample_page(request: Request):
-    """Serve a human-readable no-spend Proof Pack sample."""
+    """Serve a readable no-spend Proof Pack sample."""
     source = attribution_source_from_request(request)
     inc_discovery_hit("discovery_proof_pack_sample_hits_total", source)
     return build_proof_pack_sample_html(source)
@@ -11843,7 +12299,7 @@ async def proof_pack_request_page(
 
 @app.post("/proof-pack/request", response_class=HTMLResponse, tags=["discovery"], summary="Submit a Proof Pack request")
 async def proof_pack_request_submit(request: Request):
-    """Store a human-submitted Proof Pack request without payment or supplier work."""
+    """Store a submitted Proof Pack request without payment or supplier work."""
     source = attribution_source_from_request(request)
     inc_discovery_hit("discovery_proof_pack_request_hits_total", source)
     content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -11883,14 +12339,14 @@ async def proof_pack_lead_api(request: Request, lead_request: ProofPackLeadReque
     return proof_pack_lead_public_response(lead)
 
 
-@app.get("/proof-pack/quote", response_class=HTMLResponse, tags=["discovery"], summary="Human Proof Pack quote page")
+@app.get("/proof-pack/quote", response_class=HTMLResponse, tags=["discovery"], summary="Proof Pack quote page")
 async def proof_pack_quote_page(
     request: Request,
     target_url: str = PROOF_PACK_SAMPLE_TARGET_URL,
     question: Optional[str] = None,
     pack: str = PROOF_PACK_SAMPLE_PACK,
 ):
-    """Serve a no-spend Proof Pack quote page for human buyers."""
+    """Serve a no-spend Proof Pack quote page for buyers."""
     source = attribution_source_from_request(request)
     inc_metric("proof_pack_quotes_total")
     inc_attribution("proof_pack_quotes", source)
@@ -11940,7 +12396,7 @@ async def proof_pack_quote_api(
         raise HTTPException(status_code=400, detail=exc.detail) from exc
 
 
-@app.get("/quote", response_class=HTMLResponse, tags=["discovery"], summary="Human-readable AxonGate quote")
+@app.get("/quote", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate quote page")
 async def quote_page(request: Request, target_url: str = "https://www.iana.org/domains/reserved"):
     """Serve a no-spend quote page that points buyers to the right paid tier."""
     source = attribution_source_from_request(request)
@@ -11976,10 +12432,8 @@ async def sitemap_xml(request: Request):
     return Response(content=build_sitemap_xml(), media_type="application/xml")
 
 
-@app.get("/", tags=["discovery"], summary="Discovery index")
-async def root(request: Request):
-    """Return a lightweight discovery index for crawlers and agent clients."""
-    inc_discovery_hit("discovery_root_hits_total", attribution_source_from_request(request))
+def build_discovery_index_payload() -> dict[str, Any]:
+    """Return lightweight discovery data for crawlers and agent clients."""
     return {
         "status": "alive",
         "agent": "AxonGate",
@@ -12042,6 +12496,24 @@ async def root(request: Request):
         "legacy_tx_hash_endpoint": f"{PUBLIC_BASE_URL}/v1/access",
         "retry_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
     }
+
+
+def request_prefers_json(request: Request) -> bool:
+    """Detect machine clients that explicitly ask the root route for JSON."""
+    requested_format = (request.query_params.get("format") or "").strip().lower()
+    if requested_format in {"json", "discovery"}:
+        return True
+    accept = (request.headers.get("accept") or "").lower()
+    return "application/json" in accept and "text/html" not in accept
+
+
+@app.get("/", tags=["discovery"], summary="Customer homepage")
+async def root(request: Request):
+    """Serve the customer homepage by default and discovery JSON on request."""
+    inc_discovery_hit("discovery_root_hits_total", attribution_source_from_request(request))
+    if request_prefers_json(request):
+        return build_discovery_index_payload()
+    return HTMLResponse(build_home_html())
 
 
 @app.get("/health", tags=["operations"], summary="Railway health check")
@@ -12943,7 +13415,7 @@ def custom_openapi() -> dict[str, Any]:
                     "schema": {"type": "string", "enum": list(TIER_PRICING_USDC.keys())},
                 },
                 "X-AxonGate-Paid-Test": {
-                    "description": "Human/operator guide for running a real paid smoke test.",
+                    "description": "Operator guide for running a real paid smoke test.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Quickstart": {
@@ -12987,7 +13459,7 @@ def custom_openapi() -> dict[str, Any]:
                     "schema": {"type": "string", "enum": list(PROOF_PACK_PRICING_USDC.keys())},
                 },
                 "X-AxonGate-Proof-Pack": {
-                    "description": "Human-facing Proof Pack product page.",
+                    "description": "Public Proof Pack product page.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Proof-Pack-Quote": {
@@ -12995,7 +13467,7 @@ def custom_openapi() -> dict[str, Any]:
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Proof-Pack-Request": {
-                    "description": "No-spend human Proof Pack request capture page.",
+                    "description": "No-spend Proof Pack request capture page.",
                     "schema": {"type": "string", "format": "uri"},
                 },
             }
