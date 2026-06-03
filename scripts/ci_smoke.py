@@ -106,6 +106,7 @@ async def main() -> None:
             "/proof-pack/request",
             "/proof-pack/bundle",
             "/proof-pack/bundle/quote",
+            "/proof-pack/bundle/checkout",
             "/v1/proof-pack/sample",
             "/v1/proof-pack/preview",
             "/demo",
@@ -321,15 +322,27 @@ async def main() -> None:
         assert "proof-pack/bundle/pay" in proof_bundle_quote["next_steps"]["checkout_url"], (
             "Proof Bundle quote missing tracked checkout URL"
         )
+        assert "proof-pack/bundle/checkout" in proof_bundle_quote["next_steps"]["checkout_review_url"], (
+            "Proof Bundle quote missing customer checkout review URL"
+        )
 
         proof_bundle_page = await client.get(f"/proof-pack/bundle/quote?{bundle_query}")
         assert proof_bundle_page.status_code == 200, "Proof Bundle quote page should render"
         assert "Proof Bundle Quote" in proof_bundle_page.text, "Proof Bundle quote page missing heading"
         assert "Request Bundle" in proof_bundle_page.text, "Proof Bundle quote page missing request CTA"
-        assert "Checkout" in proof_bundle_page.text, "Proof Bundle quote page missing checkout CTA"
+        assert "Review checkout" in proof_bundle_page.text, "Proof Bundle quote page missing checkout review CTA"
+        assert "Before you pay" in proof_bundle_page.text, "Proof Bundle quote page should explain value before payment"
+        assert "What This Payment Buys" in proof_bundle_page.text, "Proof Bundle quote page missing deliverables"
+        assert "After Checkout" in proof_bundle_page.text, "Proof Bundle quote page missing post-payment flow"
         assert "POST https://api.axongate.one/v1/x402/proof-pack?pack=standard" in proof_bundle_page.text, (
             "Proof Bundle quote should keep immediate x402 fallback in a scroll-safe block"
         )
+        proof_bundle_checkout_review = await client.get(f"/proof-pack/bundle/checkout?{bundle_query}")
+        assert proof_bundle_checkout_review.status_code == 200, "Proof Bundle checkout review should render"
+        assert "Review your Evidence Bundle" in proof_bundle_checkout_review.text, "Checkout review missing heading"
+        assert "Continue to" in proof_bundle_checkout_review.text, "Checkout review missing final continue CTA"
+        assert "What This Payment Buys" in proof_bundle_checkout_review.text, "Checkout review missing value section"
+        assert "/proof-pack/bundle/pay" in proof_bundle_checkout_review.text, "Checkout review should preserve tracked pay redirect"
         proof_bundle_checkout = await client.get(f"/proof-pack/bundle/pay?{bundle_query}", follow_redirects=False)
         assert proof_bundle_checkout.status_code == 302, "Proof Bundle checkout should redirect"
         assert "/proof-pack/bundle" in proof_bundle_checkout.headers["location"], (

@@ -1723,6 +1723,7 @@ def build_x402_resource() -> dict[str, Any]:
             "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
             "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "proofBundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
             "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "proofBundleDelivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
             "proofBundleDeliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
@@ -1802,6 +1803,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "bundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "bundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
             "bundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "bundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "bundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
@@ -1864,6 +1866,7 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "contact": f"{PUBLIC_BASE_URL}/contact",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+            "checkoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
             "checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
             "delivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
             "recovery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/recover",
@@ -1978,6 +1981,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proofBundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
         "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proofBundleDelivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
         "proofBundleDeliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
@@ -2204,6 +2208,7 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proofBundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
         "proofBundleCheckout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proofBundleDelivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
         "proofBundleDeliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
@@ -6559,8 +6564,8 @@ def proof_bundle_checkout_url(target_urls: list[str], question: str, bundle: str
     return f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay?{query}"
 
 
-def proof_bundle_checkout_path(target_urls: list[str], question: str, bundle: str, source: str) -> str:
-    """Return a same-host checkout path for customer-facing Stripe buttons."""
+def proof_bundle_payment_path(target_urls: list[str], question: str, bundle: str, source: str) -> str:
+    """Return the same-host tracked payment redirect path."""
     normalized_bundle = normalize_proof_bundle(bundle)
     normalized_source = normalize_attribution_source(source)
     parts = [
@@ -6572,6 +6577,55 @@ def proof_bundle_checkout_path(target_urls: list[str], question: str, bundle: st
     if question:
         parts.insert(-2, f"question={url_quote(question, safe='')}")
     return f"/proof-pack/bundle/pay?{'&'.join(parts)}"
+
+
+def proof_bundle_checkout_path(target_urls: list[str], question: str, bundle: str, source: str) -> str:
+    """Return a same-host checkout review path for customer-facing Stripe buttons."""
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_source = normalize_attribution_source(source)
+    parts = [
+        f"bundle={url_quote(normalized_bundle, safe='')}",
+        f"source={url_quote(normalized_source, safe='')}",
+    ]
+    if target_urls:
+        parts.insert(0, f"target_urls={proof_bundle_target_query(target_urls)}")
+    if question:
+        parts.insert(-2, f"question={url_quote(question, safe='')}")
+    return f"/proof-pack/bundle/checkout?{'&'.join(parts)}"
+
+
+def proof_bundle_report_preview(bundle: str, target_count: int = 0) -> dict[str, Any]:
+    """Return buyer-facing value promises for checkout and quote pages."""
+    normalized_bundle = normalize_proof_bundle(bundle)
+    source_limit = proof_bundle_source_limit(normalized_bundle)
+    count_label = f"{target_count} submitted source{'s' if target_count != 1 else ''}" if target_count else (
+        f"up to {source_limit} sources collected at Stripe"
+    )
+    return {
+        "decision_label": "Evidence decision before your agent cites",
+        "decision_summary": (
+            "AxonGate turns public URLs into a report that separates supported findings, weak evidence, and source risks before an AI workflow relies on them."
+        ),
+        "source_coverage": count_label,
+        "deliverables": [
+            "Plain-English evidence decision",
+            "Claim-to-citation map",
+            "Source quality audit",
+            "Risks and gaps",
+            "Source hashes for repeatability",
+            "PDF, JSON, browser, and email delivery",
+        ],
+        "after_checkout": [
+            "Stripe confirms payment and passes the checkout email, source URLs, and question.",
+            "AxonGate fetches public source material, removes provider noise, and scores evidence quality.",
+            "The report opens in-browser and is emailed when the checkout email is available.",
+        ],
+        "trust_notes": [
+            "No supplier or LLM spend happens on the quote page.",
+            "Weak evidence is shown as weak instead of inflated into a claim.",
+            "Delivery can be recovered by checkout email and one submitted target URL.",
+        ],
+    }
 
 
 async def validate_proof_bundle_targets(target_urls: list[str], bundle: str) -> list[str]:
@@ -6629,6 +6683,7 @@ async def build_proof_bundle_quote(
     quote_page = proof_bundle_quote_page_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
     request_page = proof_bundle_request_page_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
     checkout_url = proof_bundle_checkout_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
+    checkout_review_url = f"{PUBLIC_BASE_URL}{proof_bundle_checkout_path(normalized_targets, normalized_question, normalized_bundle, normalized_source)}"
     quote_api = (
         f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote?"
         f"target_urls={proof_bundle_target_query(normalized_targets)}"
@@ -6669,12 +6724,14 @@ async def build_proof_bundle_quote(
         "source_limit": proof_bundle_source_limit(normalized_bundle),
         "cached_sources_count": cached_sources_count,
         "source_profiles": source_profiles,
+        "report_preview": proof_bundle_report_preview(normalized_bundle, len(normalized_targets)),
         "bundles": bundles,
         "next_steps": {
             "bundle_page": public_url("/proof-pack/bundle"),
             "quote_page": quote_page,
             "quote_api": quote_api,
             "request_page": request_page,
+            "checkout_review_url": checkout_review_url,
             "checkout_url": checkout_url,
             "payment_url": checkout_url,
             "payment_link_configured": bool(payment_url),
@@ -9598,6 +9655,212 @@ def build_proof_bundle_html(
 </html>"""
 
 
+def checkout_value_cards_html(preview: dict[str, Any]) -> str:
+    deliverables = preview.get("deliverables") if isinstance(preview.get("deliverables"), list) else []
+    cards = []
+    for item in deliverables[:6]:
+        cards.append(
+            f"""
+      <article class="value-card">
+        <span>Included</span>
+        <strong>{html.escape(str(item))}</strong>
+      </article>
+            """
+        )
+    return "\n".join(cards)
+
+
+def checkout_steps_html(preview: dict[str, Any]) -> str:
+    steps = preview.get("after_checkout") if isinstance(preview.get("after_checkout"), list) else []
+    return "\n".join(
+        f"""
+      <article class="step-card">
+        <span>{index}</span>
+        <p>{html.escape(str(step))}</p>
+      </article>
+        """
+        for index, step in enumerate(steps[:4], start=1)
+        if str(step).strip()
+    )
+
+
+def checkout_trust_notes_html(preview: dict[str, Any]) -> str:
+    notes = preview.get("trust_notes") if isinstance(preview.get("trust_notes"), list) else []
+    items = "".join(f"<li>{html.escape(str(note))}</li>" for note in notes if str(note).strip())
+    return f"<ul>{items}</ul>" if items else '<p class="muted">No checkout notes are available.</p>'
+
+
+def checkout_source_rows_html(source_profiles: list[dict[str, Any]]) -> str:
+    if not source_profiles:
+        return (
+            "<tr><td>Collected at Stripe</td><td>Target URLs and the question are collected by the Stripe checkout form.</td>"
+            "<td>Review after payment</td></tr>"
+        )
+    return "\n".join(
+        "<tr>"
+        f"<td><a href=\"{html.escape(str(profile.get('target_url') or ''), quote=True)}\">{html.escape(str(profile.get('target_url') or ''))}</a></td>"
+        f"<td>{'yes' if profile.get('cached_source_available') else 'no'}</td>"
+        f"<td>{'sample/cache ready' if profile.get('starter_sample_available') or profile.get('basic_cache_available') else 'fresh fetch after payment'}</td>"
+        "</tr>"
+        for profile in source_profiles
+    )
+
+
+def build_proof_bundle_checkout_html(
+    target_urls: list[str],
+    question: str,
+    bundle: str,
+    source: str,
+    quote: Optional[dict[str, Any]] = None,
+) -> str:
+    """Render the final customer review step before the tracked Stripe redirect."""
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_source = normalize_attribution_source(source)
+    normalized_question = proof_bundle_question(question)
+    selected_price = price_for_proof_bundle(normalized_bundle)
+    amount_units = str(usdc_units(selected_price))
+    source_limit = proof_bundle_source_limit(normalized_bundle)
+    target_count = len(target_urls)
+    preview = (
+        quote.get("report_preview")
+        if isinstance(quote, dict) and isinstance(quote.get("report_preview"), dict)
+        else proof_bundle_report_preview(normalized_bundle, target_count)
+    )
+    source_profiles = (
+        quote.get("source_profiles")
+        if isinstance(quote, dict) and isinstance(quote.get("source_profiles"), list)
+        else []
+    )
+    value_cards = checkout_value_cards_html(preview)
+    checkout_steps = checkout_steps_html(preview)
+    trust_notes = checkout_trust_notes_html(preview)
+    source_rows = checkout_source_rows_html(source_profiles)
+    payment_path = proof_bundle_payment_path(target_urls, normalized_question, normalized_bundle, normalized_source)
+    checkout_state = "Stripe Payment Link is configured" if proof_bundle_payment_url(normalized_bundle) else "Stripe link is not configured; this continues to request capture"
+    source_label = f"{target_count} of {source_limit} sources" if target_count else f"Stripe will collect up to {source_limit} source URLs"
+    target_text = "\n".join(target_urls) if target_urls else "Collected in Stripe checkout custom fields"
+    quote_page = (
+        proof_bundle_quote_page_url(target_urls, normalized_question, normalized_bundle, normalized_source)
+        if target_urls
+        else public_url(f"/proof-pack/bundle?bundle={url_quote(normalized_bundle, safe='')}&source={url_quote(normalized_source, safe='')}")
+    )
+    nav = site_nav_html("Bundles")
+    actions = action_bar_html(
+        [
+            ("Change Quote", quote_page),
+            ("Sample Report", public_url("/proof-pack/sample")),
+            ("Contact", public_url("/contact")),
+        ],
+        [
+            ("Evidence Bundles", public_url("/proof-pack/bundle")),
+            ("Recover Delivery", public_url("/proof-pack/bundle/recover")),
+            ("Docs", public_url("/docs")),
+        ],
+    )
+    continue_label = "Continue to Stripe" if proof_bundle_payment_url(normalized_bundle) else "Continue to request form"
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review Evidence Bundle Checkout | AxonGate</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; background: var(--bg); color: var(--text); }}
+    main {{ max-width: 1120px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ margin: 0 0 12px; font-size: clamp(2.1rem, 4vw, 3.4rem); line-height: 1.05; }}
+    h2 {{ margin: 0 0 12px; font-size: 1.3rem; }}
+    p, li, td, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: clamp(16px, 3vw, 26px); margin: 0 0 16px; }}
+    .hero {{ border-left: 5px solid var(--accent); }}
+    .hero p {{ max-width: 82ch; }}
+    .eyebrow {{ margin: 0 0 8px; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0; }}
+    .checkout-actions {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }}
+    .checkout-actions small {{ max-width: 66ch; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }}
+    .box {{ border: 1px solid var(--line); border-radius: 8px; background: #131722; padding: 14px; min-width: 0; }}
+    .box span, .value-card span {{ display: block; color: var(--accent); font-size: .75rem; font-weight: 800; text-transform: uppercase; }}
+    .box strong, .value-card strong {{ display: block; margin-top: 5px; overflow-wrap: anywhere; }}
+    .value-grid {{ display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+    .value-card {{ border: 1px solid var(--line); border-radius: 8px; background: #131722; padding: 13px; min-width: 0; }}
+    .step-grid {{ display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+    .step-card {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; }}
+    .step-card span {{ width: 28px; height: 28px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent), var(--panel) 72%); color: var(--text); font-weight: 800; }}
+    .step-card p {{ margin: 0; }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ display: inline-block; max-width: 100%; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; overflow-x: auto; white-space: pre-wrap; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--panel); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }}
+    th {{ color: var(--text); }}
+    .table-wrap {{ max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
+    .table-wrap table {{ min-width: 560px; border: 0; }}
+    @media (max-width: 760px) {{
+      main {{ padding: 24px 14px 52px; }}
+      .grid, .value-grid, .step-grid {{ grid-template-columns: 1fr; }}
+      .checkout-actions .button {{ width: 100%; }}
+    }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="panel hero">
+      <p class="eyebrow">Checkout review</p>
+      <h1>Review your Evidence Bundle</h1>
+      <p>{html.escape(str(preview.get("decision_summary") or "AxonGate turns public URLs into a cited evidence report before your agent relies on them."))}</p>
+      <div class="grid">
+        <div class="box"><span>Bundle</span><strong>{html.escape(normalized_bundle)}</strong></div>
+        <div class="box"><span>Price</span><strong>{html.escape(str(selected_price))} USDC</strong><small><code>{html.escape(amount_units)}</code> units</small></div>
+        <div class="box"><span>Sources</span><strong>{html.escape(source_label)}</strong></div>
+        <div class="box"><span>Checkout</span><strong>{html.escape(checkout_state)}</strong></div>
+      </div>
+      <div class="checkout-actions">
+        {stripe_button_html(payment_path, continue_label)}
+        <small>This button records checkout intent and then redirects through <code>/proof-pack/bundle/pay</code>. Supplier work starts only after Stripe confirms payment.</small>
+      </div>
+    </section>
+    {actions}
+    <section class="panel">
+      <h2>What This Payment Buys</h2>
+      <div class="value-grid">{value_cards}</div>
+    </section>
+    <section class="panel">
+      <h2>After Checkout</h2>
+      <div class="step-grid">{checkout_steps}</div>
+    </section>
+    <section class="panel">
+      <h2>Source Review</h2>
+      <pre>{html.escape(target_text)}</pre>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>URL</th><th>Cached</th><th>Delivery note</th></tr></thead>
+          <tbody>{source_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Trust Notes</h2>
+      {trust_notes}
+    </section>
+  </main>
+</body>
+</html>"""
+
+
 def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     """Render a no-spend Proof Bundle quote page."""
     public = html.escape(PUBLIC_BASE_URL)
@@ -9605,18 +9868,15 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     target_text = "\n".join(str(target) for target in quote["target_urls"])
     question = str(quote["question"])
     source = str(quote["source"])
+    preview = quote.get("report_preview") if isinstance(quote.get("report_preview"), dict) else proof_bundle_report_preview(bundle, int(quote.get("target_count") or 0))
+    value_cards = checkout_value_cards_html(preview)
+    checkout_steps = checkout_steps_html(preview)
+    trust_notes = checkout_trust_notes_html(preview)
     bundle_options = "\n".join(
         f'<option value="{html.escape(bundle_name)}"{" selected" if bundle_name == bundle else ""}>{html.escape(bundle_name)}</option>'
         for bundle_name in PROOF_BUNDLE_PRICING_USDC
     )
-    source_rows = "\n".join(
-        "<tr>"
-        f"<td><a href=\"{html.escape(str(profile['target_url']))}\">{html.escape(str(profile['target_url']))}</a></td>"
-        f"<td>{'yes' if profile['cached_source_available'] else 'no'}</td>"
-        f"<td>{'yes' if profile['starter_sample_available'] else 'no'}</td>"
-        "</tr>"
-        for profile in quote["source_profiles"]
-    )
+    source_rows = checkout_source_rows_html(quote["source_profiles"])
     bundle_rows = "\n".join(
         "<tr>"
         f"<td><code>{html.escape(bundle_name)}</code></td>"
@@ -9633,7 +9893,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     quote_api = html.escape(str(quote["next_steps"]["quote_api"]))
     payment_url = html.escape(str(quote["next_steps"]["payment_url"]))
     stripe_checkout_href = proof_bundle_checkout_path(list(quote["target_urls"]), question, bundle, source)
-    checkout_state = "configured payment link" if quote["next_steps"].get("payment_link_configured") else "request capture fallback"
+    checkout_state = "Stripe Payment Link configured" if quote["next_steps"].get("payment_link_configured") else "request capture fallback"
     single_source_endpoint = html.escape(str(quote["next_steps"]["single_source_proof_pack_endpoint"]))
     nav = site_nav_html("Bundles")
     actions = action_bar_html(
@@ -9704,8 +9964,22 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       cursor: pointer;
     }}
     .summary {{ max-width: 820px; font-size: 1.06rem; }}
+    .eyebrow {{ margin: 0 0 8px; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0; }}
     .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
     .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: clamp(16px, 3vw, 24px); margin: 0 0 16px; }}
+    .checkout-panel {{ border-left: 5px solid var(--accent); }}
+    .checkout-panel h2 {{ margin-top: 0; font-size: clamp(1.35rem, 3vw, 2rem); }}
+    .checkout-actions {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; }}
+    .checkout-actions small {{ max-width: 64ch; }}
+    .value-grid {{ display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+    .value-card {{ border: 1px solid var(--line); border-radius: 8px; background: #131722; padding: 13px; min-width: 0; }}
+    .value-card span {{ display: block; color: var(--accent); font-size: .75rem; font-weight: 800; text-transform: uppercase; }}
+    .value-card strong {{ display: block; margin-top: 5px; overflow-wrap: anywhere; }}
+    .step-grid {{ display: grid; gap: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+    .step-card {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; }}
+    .step-card span {{ width: 28px; height: 28px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--accent), var(--panel) 72%); color: var(--text); font-weight: 800; }}
+    .step-card p {{ margin: 0; }}
     .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0; }}
     .box {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
     code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
@@ -9719,6 +9993,8 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     .table-wrap table {{ min-width: 560px; border: 0; }}
     @media (max-width: 760px) {{
       .row {{ grid-template-columns: 1fr; }}
+      .value-grid, .step-grid {{ grid-template-columns: 1fr; }}
+      .checkout-actions .button {{ width: 100%; }}
     }}
     {shared_ui_css()}
   </style>
@@ -9744,10 +10020,27 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       </div>
     </form>
     {actions}
-    <div class="action-row">
-      {stripe_button_html(stripe_checkout_href)}
-      <small class="stripe-note">Uses the selected bundle, source URLs, and question from this quote.</small>
-    </div>
+    <section class="panel checkout-panel">
+      <p class="eyebrow">Before you pay</p>
+      <h2>{html.escape(str(preview.get("decision_label") or "Evidence decision before your agent cites"))}</h2>
+      <p>{html.escape(str(preview.get("decision_summary") or "AxonGate turns public URLs into a cited evidence report."))}</p>
+      <div class="checkout-actions">
+        {stripe_button_html(stripe_checkout_href, "Review checkout")}
+        <small>Review the selected bundle and delivery promise, then continue to Stripe. The final tracked payment redirect remains <code>/proof-pack/bundle/pay</code>.</small>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>What This Payment Buys</h2>
+      <div class="value-grid">{value_cards}</div>
+    </section>
+    <section class="panel">
+      <h2>After Checkout</h2>
+      <div class="step-grid">{checkout_steps}</div>
+    </section>
+    <section class="panel">
+      <h2>Trust Notes</h2>
+      {trust_notes}
+    </section>
     <div class="grid">
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Price</strong><br>{html.escape(str(quote["price_usdc"]))} USDC<br><code>{html.escape(str(quote["amount_units"]))}</code> units</div>
@@ -11937,6 +12230,7 @@ def build_sitemap_xml() -> str:
         ("/proof-pack/request", "0.9"),
         ("/proof-pack/bundle", "0.9"),
         ("/proof-pack/bundle/quote", "0.9"),
+        ("/proof-pack/bundle/checkout", "0.85"),
         ("/proof-pack/bundle/pay", "0.8"),
         ("/proof-pack/bundle/recover", "0.8"),
         ("/v1/proof-pack/sample", "0.85"),
@@ -12310,6 +12604,33 @@ async def proof_bundle_quote_api(
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
+@app.get("/proof-pack/bundle/checkout", response_class=HTMLResponse, tags=["discovery"], summary="Review Proof Bundle checkout")
+async def proof_bundle_checkout_review(
+    request: Request,
+    target_urls: str = "",
+    question: Optional[str] = None,
+    bundle: str = DEFAULT_PROOF_BUNDLE,
+):
+    """Show a customer-facing review step before the tracked Stripe redirect."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_proof_bundle_hits_total", source)
+    raw_targets = split_bundle_target_urls(target_urls)
+    try:
+        normalized_bundle = normalize_proof_bundle(bundle)
+        normalized_question = proof_bundle_question(question)
+        quote = None
+        normalized_targets = raw_targets
+        if raw_targets:
+            await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+            quote = await build_proof_bundle_quote(raw_targets, normalized_question, normalized_bundle, source)
+            normalized_targets = list(quote["target_urls"])
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    return build_proof_bundle_checkout_html(normalized_targets, normalized_question, normalized_bundle, source, quote)
 
 
 @app.get("/proof-pack/bundle/pay", response_class=RedirectResponse, tags=["discovery"], summary="Tracked Proof Bundle checkout")
@@ -12754,6 +13075,7 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "proof_pack_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "proof_bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proof_bundle_quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
+        "proof_bundle_checkout_review": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
         "proof_bundle_checkout": f"{PUBLIC_BASE_URL}/proof-pack/bundle/pay",
         "proof_bundle_delivery": f"{PUBLIC_BASE_URL}/proof-pack/bundle/delivery",
         "proof_bundle_delivery_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
