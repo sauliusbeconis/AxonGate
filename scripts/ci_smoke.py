@@ -122,6 +122,12 @@ async def main() -> None:
         root_page = await client.get("/")
         assert "Can these sources prove your claim?" in root_page.text, "Homepage missing evidence-check headline"
         assert "Start Builder - $7" in root_page.text, "Homepage missing primary Stripe CTA"
+        assert "Parser returns text. AxonGate returns a decision." in root_page.text, (
+            "Homepage should explain why AxonGate is more than parsing"
+        )
+        assert "Make the deliverable visible before checkout." in root_page.text, (
+            "Homepage should expose buyer-facing report examples"
+        )
         legacy_checkout_copy = "Hu" + "man checkout " + "funnel"
         legacy_package_copy = "Choose the " + "h" + "uman package"
         assert legacy_checkout_copy not in root_page.text, "Homepage should not expose internal funnel wording"
@@ -334,6 +340,13 @@ async def main() -> None:
         assert "Before you pay" in proof_bundle_page.text, "Proof Bundle quote page should explain value before payment"
         assert "What This Payment Buys" in proof_bundle_page.text, "Proof Bundle quote page missing deliverables"
         assert "After Checkout" in proof_bundle_page.text, "Proof Bundle quote page missing post-payment flow"
+        assert "Parser returns text. AxonGate returns a decision." in proof_bundle_page.text, (
+            "Proof Bundle quote page should explain the buyer value beyond parsing"
+        )
+        assert "Delivery promise" in proof_bundle_page.text, "Proof Bundle quote page missing delivery promise"
+        assert "Make the deliverable visible before checkout." in proof_bundle_page.text, (
+            "Proof Bundle quote page should show report examples before checkout"
+        )
         assert "POST https://api.axongate.one/v1/x402/proof-pack?pack=standard" in proof_bundle_page.text, (
             "Proof Bundle quote should keep immediate x402 fallback in a scroll-safe block"
         )
@@ -342,6 +355,10 @@ async def main() -> None:
         assert "Review your Evidence Bundle" in proof_bundle_checkout_review.text, "Checkout review missing heading"
         assert "Continue to" in proof_bundle_checkout_review.text, "Checkout review missing final continue CTA"
         assert "What This Payment Buys" in proof_bundle_checkout_review.text, "Checkout review missing value section"
+        assert "Parser returns text. AxonGate returns a decision." in proof_bundle_checkout_review.text, (
+            "Checkout review should keep parser contrast before payment"
+        )
+        assert "Delivery promise" in proof_bundle_checkout_review.text, "Checkout review missing delivery promise"
         assert "/proof-pack/bundle/pay" in proof_bundle_checkout_review.text, "Checkout review should preserve tracked pay redirect"
         proof_bundle_checkout = await client.get(f"/proof-pack/bundle/pay?{bundle_query}", follow_redirects=False)
         assert proof_bundle_checkout.status_code == 302, "Proof Bundle checkout should redirect"

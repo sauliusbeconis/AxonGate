@@ -7732,6 +7732,150 @@ def shared_ui_css() -> str:
     .developer-details h2 {
       margin-top: 22px;
     }
+    .ag-proof-section {
+      margin: 38px 0;
+    }
+    .ag-proof-section h2 {
+      margin-top: 0;
+    }
+    .ag-section-head {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .ag-section-head p {
+      margin: 0;
+      color: var(--muted);
+    }
+    .ag-decision-section {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 0.82fr);
+      align-items: stretch;
+    }
+    .ag-metric-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-top: 18px;
+    }
+    .ag-metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: color-mix(in srgb, var(--panel), var(--bg) 18%);
+      min-width: 0;
+    }
+    .ag-metric strong {
+      display: block;
+      color: var(--text);
+      font-size: 1.4rem;
+      line-height: 1.1;
+    }
+    .ag-metric span {
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    .ag-mini-report,
+    .ag-sample-card,
+    .ag-compare-card,
+    .ag-promise-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--panel), var(--bg) 12%);
+      padding: 16px;
+      min-width: 0;
+    }
+    .ag-mini-report {
+      display: grid;
+      gap: 13px;
+    }
+    .ag-report-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .ag-report-head strong,
+    .ag-sample-card strong,
+    .ag-compare-card strong,
+    .ag-promise-card strong {
+      color: var(--text);
+    }
+    .ag-score {
+      display: inline-grid;
+      place-items: center;
+      width: 58px;
+      aspect-ratio: 1;
+      border: 6px solid color-mix(in srgb, var(--accent), var(--panel) 45%);
+      border-right-color: var(--line);
+      border-radius: 50%;
+      color: var(--text);
+      font-weight: 900;
+    }
+    .ag-status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      width: fit-content;
+      border: 1px solid color-mix(in srgb, var(--accent), var(--line) 25%);
+      border-radius: 999px;
+      padding: 4px 9px;
+      color: var(--accent);
+      font-size: 0.76rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .ag-mini-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .ag-mini-list li {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: color-mix(in srgb, var(--bg), var(--panel) 28%);
+    }
+    .ag-comparison-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .ag-compare-card {
+      border-left: 5px solid var(--line);
+    }
+    .ag-compare-card.ag-strong {
+      border-left-color: var(--accent);
+    }
+    .ag-compare-card span,
+    .ag-sample-card span,
+    .ag-promise-card span {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 900;
+      text-transform: uppercase;
+    }
+    .ag-sample-gallery,
+    .ag-promise-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .ag-sample-card p,
+    .ag-compare-card p,
+    .ag-promise-card p {
+      margin: 8px 0 0;
+    }
+    .ag-sample-card a {
+      display: inline-flex;
+      margin-top: 12px;
+      font-weight: 800;
+    }
     .site-footer {
       margin-top: 52px;
       padding-top: 28px;
@@ -7804,6 +7948,15 @@ def shared_ui_css() -> str:
         box-shadow: none;
       }
       .footer-grid {
+        grid-template-columns: 1fr;
+      }
+      .ag-decision-section,
+      .ag-comparison-grid,
+      .ag-sample-gallery,
+      .ag-promise-grid {
+        grid-template-columns: 1fr;
+      }
+      .ag-metric-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -7990,6 +8143,148 @@ def link_cluster_html(groups: list[tuple[str, list[tuple[str, Any]]]]) -> str:
       </details>"""
         )
     return '<section class="link-cluster" aria-label="Discovery links">' + "\n".join(rendered_groups) + "\n    </section>"
+
+
+def premium_decision_section_html() -> str:
+    """Render the high-value evidence decision framing used by buyer pages."""
+    return f"""
+    <section class="ag-proof-section ag-decision-section" aria-label="Evidence decision preview">
+      <div>
+        <p class="eyebrow">Evidence decision</p>
+        <h2>Not scraped text. A decision your team can act on.</h2>
+        <p>AxonGate answers the question a parser skips: can these public sources actually support the claim well enough for an agent, launch page, or RAG workflow to rely on them?</p>
+        <div class="ag-metric-grid" aria-label="Evidence bundle outputs">
+          <div class="ag-metric"><strong>Support</strong><span>supported, weak, or unsupported</span></div>
+          <div class="ag-metric"><strong>Trace</strong><span>citation IDs, excerpts, and source hashes</span></div>
+          <div class="ag-metric"><strong>Deliver</strong><span>email, browser report, PDF, and JSON</span></div>
+        </div>
+      </div>
+      <aside class="ag-mini-report" aria-label="Sample AxonGate decision card">
+        <div class="ag-report-head">
+          <div>
+            <span class="ag-status">Decision-ready</span>
+            <strong>Launch claim has usable support</strong>
+          </div>
+          <div class="ag-score">82</div>
+        </div>
+        <ul class="ag-mini-list">
+          <li><strong>Evidence:</strong> two sources directly support the claim.</li>
+          <li><strong>Risk:</strong> one page is mostly boilerplate and should not be cited alone.</li>
+          <li><strong>Output:</strong> buyer gets a cited report plus PDF and JSON exports.</li>
+        </ul>
+      </aside>
+    </section>
+    """
+
+
+def parser_comparison_html() -> str:
+    """Render the parser-vs-AxonGate buyer comparison."""
+    return """
+    <section class="ag-proof-section" aria-label="Parser comparison">
+      <div class="ag-section-head">
+        <p class="eyebrow">Why buyers pay</p>
+        <h2>Parser returns text. AxonGate returns a decision.</h2>
+        <p>Extraction is only the raw material. The paid value is the judgment layer: support, citation quality, source noise, risks, and a delivery artifact the buyer can share.</p>
+      </div>
+      <div class="ag-comparison-grid">
+        <article class="ag-compare-card">
+          <span>Plain parser</span>
+          <strong>Raw page text</strong>
+          <p>Leaves the buyer to decide whether navigation, boilerplate, ads, or vague copy are evidence.</p>
+        </article>
+        <article class="ag-compare-card ag-strong">
+          <span>AxonGate</span>
+          <strong>Claim-support decision</strong>
+          <p>Labels the evidence as supported, weak, or unsupported and keeps every useful claim tied to citations.</p>
+        </article>
+        <article class="ag-compare-card">
+          <span>Plain parser</span>
+          <strong>No buyer artifact</strong>
+          <p>A text dump is hard to send to a teammate, customer, or agent workflow without more work.</p>
+        </article>
+        <article class="ag-compare-card ag-strong">
+          <span>AxonGate</span>
+          <strong>Ready-to-use report</strong>
+          <p>Delivers browser view, email, PDF, JSON, recovery link, source hashes, and risk notes after checkout.</p>
+        </article>
+      </div>
+    </section>
+    """
+
+
+def sample_gallery_html() -> str:
+    """Render concrete buyer examples for the public funnel."""
+    launch_quote = public_url(
+        "/proof-pack/bundle/quote?"
+        "target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com"
+        "&question=Can%20these%20sources%20support%20our%20launch%20claim%3F"
+        "&bundle=scout&source=sample-gallery"
+    )
+    audit_checkout = public_url(
+        "/proof-pack/bundle/checkout?"
+        "target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com"
+        "&question=Which%20sources%20are%20safe%20to%20cite%3F"
+        "&bundle=audit&source=sample-gallery"
+    )
+    return f"""
+    <section class="ag-proof-section" aria-label="Evidence report examples">
+      <div class="ag-section-head">
+        <p class="eyebrow">Report examples</p>
+        <h2>Make the deliverable visible before checkout.</h2>
+        <p>Buyers should see that AxonGate sells a defensible evidence workflow, not a hidden scrape. These examples show where the report fits.</p>
+      </div>
+      <div class="ag-sample-gallery">
+        <article class="ag-sample-card">
+          <span>Example 1</span>
+          <strong>Launch claim check</strong>
+          <p>Can our public sources support the claim we are about to publish?</p>
+          <a href="{html.escape(launch_quote, quote=True)}">Open quote</a>
+        </article>
+        <article class="ag-sample-card">
+          <span>Example 2</span>
+          <strong>RAG source audit</strong>
+          <p>Which URLs are substantive enough to ingest, cite, or hand to an agent?</p>
+          <a href="{html.escape(audit_checkout, quote=True)}">Review checkout</a>
+        </article>
+        <article class="ag-sample-card">
+          <span>Example 3</span>
+          <strong>Single-source sample</strong>
+          <p>See the citation IDs, risks, source hash, confidence, and JSON shape.</p>
+          <a href="{html.escape(public_url('/proof-pack/sample'), quote=True)}">View sample report</a>
+        </article>
+      </div>
+    </section>
+    """
+
+
+def delivery_promise_html() -> str:
+    """Render the checkout delivery promise and buyer reassurance."""
+    return """
+    <section class="ag-proof-section" aria-label="Delivery promise">
+      <div class="ag-section-head">
+        <p class="eyebrow">Delivery promise</p>
+        <h2>What happens after payment is concrete.</h2>
+        <p>The buyer gets a report they can open, recover, export, and forward. Weak evidence stays labeled weak instead of being inflated into a confident answer.</p>
+      </div>
+      <div class="ag-promise-grid">
+        <article class="ag-promise-card">
+          <span>1</span>
+          <strong>Stripe confirms payment</strong>
+          <p>AxonGate stores the paid request and starts the report from the submitted public URLs.</p>
+        </article>
+        <article class="ag-promise-card">
+          <span>2</span>
+          <strong>Email and recovery link</strong>
+          <p>The report is delivered by email when available, and the buyer can recover it from the site.</p>
+        </article>
+        <article class="ag-promise-card">
+          <span>3</span>
+          <strong>PDF and JSON exports</strong>
+          <p>Human readers get a clean report, and technical teams get structured output for workflows.</p>
+        </article>
+      </div>
+    </section>
+    """
 
 
 def build_home_html() -> str:
@@ -8295,6 +8590,9 @@ def build_home_html() -> str:
       </aside>
     </section>
 
+    {premium_decision_section_html()}
+    {parser_comparison_html()}
+
     <section>
       <h2>Choose the evidence check</h2>
       <div class="package-grid">
@@ -8344,6 +8642,8 @@ def build_home_html() -> str:
       </div>
       <p>Checkout opens Stripe. If you want to add URLs first, use the quote path and the selected bundle stays attached to your request.</p>
     </section>
+
+    {sample_gallery_html()}
 
     <section>
       <h2>What happens after Stripe</h2>
@@ -9578,6 +9878,8 @@ def build_proof_bundle_html(
       <div class="decision-card"><strong>Evidence quality</strong><p>Which pages are substantive, and which are mostly boilerplate or navigation?</p></div>
       <div class="decision-card"><strong>Agent-safe output</strong><p>Return cited findings, risks, source hashes, PDF, and JSON for downstream workflows.</p></div>
     </div>
+    {parser_comparison_html()}
+    {sample_gallery_html()}
     {error_html}
     {success_html}
     {actions}
@@ -9834,6 +10136,8 @@ def build_proof_bundle_checkout_html(
       </div>
     </section>
     {actions}
+    {parser_comparison_html()}
+    {delivery_promise_html()}
     <section class="panel">
       <h2>What This Payment Buys</h2>
       <div class="value-grid">{value_cards}</div>
@@ -9856,6 +10160,7 @@ def build_proof_bundle_checkout_html(
       <h2>Trust Notes</h2>
       {trust_notes}
     </section>
+    {site_footer_html()}
   </main>
 </body>
 </html>"""
@@ -10029,6 +10334,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
         <small>Review the selected bundle and delivery promise, then continue to Stripe. The final tracked payment redirect remains <code>/proof-pack/bundle/pay</code>.</small>
       </div>
     </section>
+    {parser_comparison_html()}
     <section class="panel">
       <h2>What This Payment Buys</h2>
       <div class="value-grid">{value_cards}</div>
@@ -10041,6 +10347,8 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       <h2>Trust Notes</h2>
       {trust_notes}
     </section>
+    {delivery_promise_html()}
+    {sample_gallery_html()}
     <div class="grid">
       <div class="box"><strong>Selected Bundle</strong><br><code>{html.escape(bundle)}</code></div>
       <div class="box"><strong>Price</strong><br>{html.escape(str(quote["price_usdc"]))} USDC<br><code>{html.escape(str(quote["amount_units"]))}</code> units</div>
@@ -10065,6 +10373,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       <tbody>{bundle_rows}</tbody>
     </table>
     </div>
+    {site_footer_html()}
   </main>
 </body>
 </html>"""
