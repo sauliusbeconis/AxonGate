@@ -509,12 +509,20 @@ async def main() -> None:
         assert stripe_delivery_json["report"]["successful_sources"] >= 1, "Stripe delivery report should include sources"
         assert stripe_delivery_json["delivery"]["version"] == "delivery-v2", "Stripe delivery should expose Delivery v2 model"
         assert stripe_delivery_json["delivery"]["quality_label"], "Delivery v2 should include an evidence quality label"
+        assert stripe_delivery_json["delivery"]["evidence_matrix"], "Delivery v2 should include source verdict matrix"
+        assert stripe_delivery_json["delivery"]["evidence_matrix"][0]["verdict"], (
+            "Evidence matrix should include a source verdict"
+        )
+        assert stripe_delivery_json["delivery"]["evidence_matrix"][0]["next_action"], (
+            "Evidence matrix should include a next action"
+        )
         assert "download_pdf" in stripe_delivery_json["delivery"]["actions"], "Delivery v2 should include PDF action"
         assert "download_json" in stripe_delivery_json["delivery"]["actions"], "Delivery v2 should include JSON action"
         assert sent_delivery_emails, "Stripe delivery should send a customer report email when configured"
         assert sent_delivery_emails[-1]["to"] == ["stripe-buyer@example.invalid"], "Delivery email recipient mismatch"
         assert "Open report" in sent_delivery_emails[-1]["html"], "Delivery email should include report link"
         assert "Evidence decision" in sent_delivery_emails[-1]["html"], "Delivery email should include decision signal"
+        assert "Evidence Matrix" in sent_delivery_emails[-1]["html"], "Delivery email should include source verdict matrix"
         assert "Evidence quality" in sent_delivery_emails[-1]["html"], "Delivery email should include quality signal"
         assert "Download PDF" in sent_delivery_emails[-1]["html"], "Delivery email should include PDF download"
         assert "](" not in sent_delivery_emails[-1]["html"], "Delivery email should not expose raw markdown links"
@@ -525,6 +533,8 @@ async def main() -> None:
         assert stripe_delivery_page.status_code == 200, "Stripe delivery page should render"
         assert "Proof Bundle Report" in stripe_delivery_page.text, "Stripe delivery page missing report heading"
         assert "Evidence decision" in stripe_delivery_page.text, "Stripe delivery page missing decision section"
+        assert "Evidence Matrix" in stripe_delivery_page.text, "Stripe delivery page missing evidence matrix"
+        assert "Next action:" in stripe_delivery_page.text, "Stripe delivery page missing source next action"
         assert "What You Paid For" in stripe_delivery_page.text, "Stripe delivery page missing value section"
         assert "What This Establishes" in stripe_delivery_page.text, "Stripe delivery page missing findings section"
         assert "Recommended Next Actions" in stripe_delivery_page.text, "Stripe delivery page missing next actions"
@@ -539,6 +549,7 @@ async def main() -> None:
             "JSON download should include attachment filename"
         )
         assert stripe_json_download.json()["delivery"]["version"] == "delivery-v2", "JSON download should include Delivery v2"
+        assert stripe_json_download.json()["delivery"]["evidence_matrix"], "JSON download should include evidence matrix"
 
         stripe_pdf_download = await client.get(
             "/proof-pack/bundle/delivery.pdf?session_id=cs_ci_axongate_paid"
@@ -554,6 +565,7 @@ async def main() -> None:
         )
         assert stripe_print_page.status_code == 200, "Stripe delivery print page should render"
         assert "Proof Bundle Report" in stripe_print_page.text, "Print page missing report heading"
+        assert "Evidence Matrix" in stripe_print_page.text, "Print page missing evidence matrix"
 
         recovery_form = await client.get("/proof-pack/bundle/recover")
         assert recovery_form.status_code == 200, "Proof Bundle recovery form should render"

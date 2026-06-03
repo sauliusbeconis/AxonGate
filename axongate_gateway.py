@@ -5405,6 +5405,24 @@ def source_quality_label(level: str) -> str:
     }.get(level, "Low evidence quality")
 
 
+def source_verdict_label(level: str, substantive_count: int) -> str:
+    """Return a buyer-facing verdict for one source."""
+    if level == "strong":
+        return "Use as supporting evidence"
+    if level == "usable" and substantive_count >= 1:
+        return "Use with context review"
+    return "Do not cite as proof"
+
+
+def source_verdict_action(level: str, substantive_count: int) -> str:
+    """Return the clearest next action for one source verdict."""
+    if level == "strong":
+        return "Keep this source in the report and cite it with its evidence IDs."
+    if level == "usable" and substantive_count >= 1:
+        return "Review the cited excerpts before using this source in customer-facing output."
+    return "Replace this URL with a more specific article, docs page, filing, transcript, or evidence page."
+
+
 def citation_lookup(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
     citations = report.get("citations") if isinstance(report.get("citations"), list) else []
     return {str(citation.get("id") or ""): citation for citation in citations if isinstance(citation, dict)}
@@ -5490,6 +5508,40 @@ def proof_bundle_source_quality(source_report: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def proof_bundle_evidence_matrix(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build the scan-friendly source verdict table for the delivered report."""
+    matrix = []
+    for source in sources:
+        level = str(source.get("quality_level") or "low")
+        substantive_count = int(source.get("substantive_claim_count") or 0)
+        clean_claims = source.get("clean_claims") if isinstance(source.get("clean_claims"), list) else []
+        best_claim = ""
+        for claim in clean_claims:
+            if not isinstance(claim, dict):
+                continue
+            if claim.get("is_substantive") and claim.get("claim"):
+                best_claim = clean_report_text(claim.get("claim"), 220)
+                break
+        if not best_claim:
+            best_claim = clean_report_text(source.get("summary"), 220)
+        matrix.append(
+            {
+                "source_id": source.get("source_id"),
+                "target_url": source.get("target_url"),
+                "source": report_text_from_url(str(source.get("target_url") or "")),
+                "verdict": source_verdict_label(level, substantive_count),
+                "quality_label": source.get("quality_label") or source_quality_label(level),
+                "quality_level": level,
+                "quality_score": source.get("quality_score"),
+                "usable_claims": substantive_count,
+                "citations": source.get("citation_count") or 0,
+                "best_evidence": best_claim,
+                "next_action": source_verdict_action(level, substantive_count),
+            }
+        )
+    return matrix
+
+
 def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
     """Build the polished, customer-facing Delivery v2 model from a stored report."""
     report = lead.get("proof_bundle_report") if isinstance(lead.get("proof_bundle_report"), dict) else {}
@@ -5504,6 +5556,7 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
             "what_this_establishes": [],
             "clean_claims": [],
             "clean_citations": [],
+            "evidence_matrix": [],
             "source_quality": [],
             "risks": [],
             "recommended_next_actions": [
@@ -5612,11 +5665,19 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
         risks.append(f"{report.get('failed_sources')} submitted source failed during delivery.")
     risks = list(dict.fromkeys(risk for risk in risks if risk))[:8]
     top_claims = clean_claims[:8] if quality_level != "low" else clean_claims[:3]
+    evidence_matrix = proof_bundle_evidence_matrix(sources)
     copy_lines = [
         "AxonGate Proof Bundle Report",
         f"Decision: {decision_label}",
         f"Quality: {quality_label}",
         f"Summary: {summary}",
+        "",
+        "Evidence matrix:",
+        *[
+            f"- {item.get('source_id')}: {item.get('verdict')} "
+            f"({item.get('quality_label')}, {item.get('citations')} citations) - {item.get('next_action')}"
+            for item in evidence_matrix
+        ],
         "",
         "What this establishes:",
         *[f"- {item}" for item in what_this_establishes],
@@ -5640,6 +5701,7 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
         "what_this_establishes": what_this_establishes,
         "clean_claims": top_claims,
         "clean_citations": clean_citations[:20],
+        "evidence_matrix": evidence_matrix,
         "source_quality": sources,
         "risks": risks,
         "recommended_next_actions": recommended_next_actions,
@@ -5713,6 +5775,28 @@ def build_proof_bundle_delivery_email(lead: dict[str, Any]) -> dict[str, str]:
     actions = delivery.get("actions") if isinstance(delivery.get("actions"), dict) else {}
     claims = delivery.get("clean_claims") if isinstance(delivery.get("clean_claims"), list) else []
     establishes = delivery.get("what_this_establishes") if isinstance(delivery.get("what_this_establishes"), list) else []
+    evidence_matrix = delivery.get("evidence_matrix") if isinstance(delivery.get("evidence_matrix"), list) else []
+    matrix_lines = [
+        (
+            f"- {clean_evidence_excerpt(str(item.get('source_id') or 'source'), 24)}: "
+            f"{clean_evidence_excerpt(str(item.get('verdict') or ''), 90)} "
+            f"({clean_evidence_excerpt(str(item.get('quality_label') or ''), 90)}, "
+            f"{clean_evidence_excerpt(str(item.get('citations') or 0), 20)} citations)"
+        )
+        for item in evidence_matrix[:6]
+        if isinstance(item, dict)
+    ]
+    matrix_text = "\n".join(matrix_lines) if matrix_lines else "- Source-level verdicts are available in the full report."
+    matrix_html = "".join(
+        "<li>"
+        f"<strong>{html.escape(clean_evidence_excerpt(str(item.get('source_id') or 'source'), 24))}</strong>: "
+        f"{html.escape(clean_evidence_excerpt(str(item.get('verdict') or ''), 120))} "
+        f"<span style=\"color:#6b7280\">({html.escape(clean_evidence_excerpt(str(item.get('quality_label') or ''), 90))}, "
+        f"{html.escape(clean_evidence_excerpt(str(item.get('citations') or 0), 20))} citations)</span>"
+        "</li>"
+        for item in evidence_matrix[:6]
+        if isinstance(item, dict)
+    ) or "<li>Source-level verdicts are available in the full report.</li>"
     claim_lines = [
         f"- {clean_evidence_excerpt(str(claim.get('claim') or ''), 240)}"
         for claim in claims[:5]
@@ -5742,6 +5826,9 @@ Evidence quality:
 Summary:
 {summary}
 
+Evidence matrix:
+{matrix_text}
+
 What this establishes:
 {claim_text}
 
@@ -5763,6 +5850,8 @@ AxonGate
   <p><a href="{html.escape(delivery_url, quote=True)}" style="display:inline-block;background:#0f766e;color:white;padding:10px 14px;border-radius:6px;text-decoration:none">Open report</a></p>
   <h2 style="font-size:16px;margin-top:22px">Summary</h2>
   <p style="color:#374151">{html.escape(summary)}</p>
+  <h2 style="font-size:16px;margin-top:22px">Evidence Matrix</h2>
+  <ul>{matrix_html}</ul>
   <h2 style="font-size:16px;margin-top:22px">What this establishes</h2>
   <ul>{claim_html}</ul>
   <p style="margin-top:22px">
@@ -5921,6 +6010,39 @@ def delivery_html_list(items: list[Any], empty: str) -> str:
     return f"<ul>{''.join(rows)}</ul>" if rows else f"<p class=\"muted\">{html.escape(empty)}</p>"
 
 
+def delivery_matrix_cards(matrix: list[dict[str, Any]]) -> str:
+    if not matrix:
+        return '<p class="muted">Source-level evidence verdicts are not available yet.</p>'
+    cards = []
+    for item in matrix:
+        if not isinstance(item, dict):
+            continue
+        level = str(item.get("quality_level") or "low")
+        target_url = str(item.get("target_url") or "")
+        cards.append(
+            f"""
+        <article class="matrix-item">
+          <div class="matrix-top">
+            <div>
+              <span>{html.escape(str(item.get('source_id') or 'source'))}</span>
+              <h3>{html.escape(str(item.get('verdict') or 'Evidence reviewed'))}</h3>
+            </div>
+            <span class="quality-pill {delivery_quality_class(level)}">{html.escape(str(item.get('quality_label') or source_quality_label(level)))}</span>
+          </div>
+          <p>{html.escape(str(item.get('best_evidence') or 'No clean evidence excerpt was strong enough for the matrix.'))}</p>
+          <div class="mini-meta">
+            <span>{html.escape(str(item.get('usable_claims') or 0))} usable claims</span>
+            <span>{html.escape(str(item.get('citations') or 0))} citations</span>
+            <span>quality {html.escape(str(item.get('quality_score')))}</span>
+          </div>
+          <p class="matrix-action"><strong>Next action:</strong> {html.escape(str(item.get('next_action') or 'Review the full source notes.'))}</p>
+          <a href="{html.escape(target_url, quote=True)}" rel="noopener noreferrer">{html.escape(str(item.get('source') or report_text_from_url(target_url)))}</a>
+        </article>
+            """
+        )
+    return "\n".join(cards) if cards else '<p class="muted">Source-level evidence verdicts are not available yet.</p>'
+
+
 def delivery_claim_cards(claims: list[dict[str, Any]]) -> str:
     if not claims:
         return '<p class="muted">No clean customer-facing claims were strong enough to show as primary findings.</p>'
@@ -6070,6 +6192,7 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
             establishes = delivery.get("what_this_establishes") if isinstance(delivery.get("what_this_establishes"), list) else []
             clean_claims = delivery.get("clean_claims") if isinstance(delivery.get("clean_claims"), list) else []
             clean_citations = delivery.get("clean_citations") if isinstance(delivery.get("clean_citations"), list) else []
+            evidence_matrix = delivery.get("evidence_matrix") if isinstance(delivery.get("evidence_matrix"), list) else []
             source_quality = delivery.get("source_quality") if isinstance(delivery.get("source_quality"), list) else []
             risks = delivery.get("risks") if isinstance(delivery.get("risks"), list) else []
             recommended_next_actions = (
@@ -6130,6 +6253,10 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
         <h2>{html.escape(str(delivery.get('decision_label') or 'Evidence reviewed'))}</h2>
         <p>{html.escape(str(delivery.get('decision_summary') or 'AxonGate separated supported findings from weak or noisy source text.'))}</p>
       </div>
+    </section>
+    <section class="panel">
+      <h2>Evidence Matrix</h2>
+      <div class="matrix-list">{delivery_matrix_cards(evidence_matrix)}</div>
     </section>
     <section class="panel">
       <h2>What You Paid For</h2>
@@ -6242,9 +6369,16 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
     .value-card span {{ display: block; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; }}
     .value-card strong {{ display: block; margin: 4px 0 6px; overflow-wrap: anywhere; }}
     .value-card p {{ margin: 0; }}
-    .claim-list, .citation-list, .source-list {{ display: grid; gap: 10px; }}
-    .claim-item, .citation-item, .source-item {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; overflow-wrap: anywhere; }}
+    .claim-list, .citation-list, .source-list, .matrix-list {{ display: grid; gap: 10px; }}
+    .matrix-list {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .claim-item, .citation-item, .source-item, .matrix-item {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; overflow-wrap: anywhere; }}
     .claim-item p, .citation-item p, .source-item p {{ margin: 0 0 9px; }}
+    .matrix-item p {{ margin: 0 0 9px; }}
+    .matrix-top {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }}
+    .matrix-top span:first-child {{ display: block; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; }}
+    .matrix-top h3 {{ margin: 0; font-size: 1.05rem; }}
+    .matrix-action {{ margin-top: 10px !important; }}
+    .matrix-action strong {{ color: var(--text); }}
     .mini-meta {{ display: flex; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: .88rem; }}
     .mini-meta span {{ border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; }}
     .citation-head, .source-top {{ display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 8px; }}
@@ -6258,7 +6392,8 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
     @media (max-width: 760px) {{
       .hero-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .value-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-      .citation-head, .source-top {{ display: grid; }}
+      .matrix-list {{ grid-template-columns: 1fr; }}
+      .citation-head, .source-top, .matrix-top {{ display: grid; }}
       .quality-pill {{ width: fit-content; }}
       .action-menu {{ width: 100%; }}
       .action-menu-panel {{ position: static; min-width: 0; }}
@@ -6311,12 +6446,26 @@ def proof_bundle_pdf_lines(lead: dict[str, Any]) -> list[str]:
         "Executive Summary",
         str(delivery.get("summary") or report.get("answer") or "Report ready."),
         "",
-        "What This Establishes",
+        "Evidence Matrix",
     ]
     establishes = delivery.get("what_this_establishes") if isinstance(delivery.get("what_this_establishes"), list) else []
     clean_claims = delivery.get("clean_claims") if isinstance(delivery.get("clean_claims"), list) else []
+    evidence_matrix = delivery.get("evidence_matrix") if isinstance(delivery.get("evidence_matrix"), list) else []
     risks = delivery.get("risks") if isinstance(delivery.get("risks"), list) else []
     source_quality = delivery.get("source_quality") if isinstance(delivery.get("source_quality"), list) else []
+    for item in evidence_matrix:
+        if isinstance(item, dict):
+            lines.append(
+                f"- {item.get('source_id')}: {item.get('verdict')} | {item.get('quality_label')} | "
+                f"{item.get('usable_claims')} usable claims | {item.get('citations')} citations"
+            )
+            lines.append(f"  next: {clean_report_text(item.get('next_action'), 220)}")
+            if item.get("best_evidence"):
+                lines.append(f"  evidence: {clean_report_text(item.get('best_evidence'), 220)}")
+    lines.extend([
+        "",
+        "What This Establishes",
+    ])
     for item in establishes:
         lines.append(f"- {clean_report_text(item, 260)}")
     lines.extend(["", "Clean Findings"])
