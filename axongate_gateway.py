@@ -1337,19 +1337,18 @@ def cache_policy_for_tier(tier: str) -> str:
 
 STARTER_SAMPLE_MARKDOWN = """# IANA-managed Reserved Domains
 
-This starter sample demonstrates AxonGate's paid delivery shape without spending
-supplier budget. The source page describes domains reserved for documentation
-and examples, including `example.com`, `example.net`, `example.org`, and the
-`invalid`, `localhost`, `test`, and `example` top-level domains.
+IANA explains that certain domain names and top-level domains are reserved for
+documentation, examples, testing, and local use.
 
-## Why Agents Use This
+The reserved second-level domain names include `example.com`, `example.net`,
+and `example.org`. These names are intended for documentation and examples.
 
-- Validate x402 payment plumbing with a tiny paid call.
-- Confirm AxonGate returns clean Markdown in a stable JSON contract.
-- Verify source attribution and replay protection before production spend.
+The reserved top-level domains include `example`, `invalid`, `localhost`, and
+`test`. These labels are not meant to be treated as ordinary production domains.
 
-For live, current web context, use the `fresh` tier with the target URL your
-agent actually needs to read.
+The source supports claims about reserved naming conventions, documentation
+fixtures, and examples. It does not establish live DNS ownership, customer
+identity, or the current production behavior of any external service.
 """
 
 STARTER_SAMPLE_TARGETS = {
@@ -4188,6 +4187,27 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
             "sample": True,
             "source_material": "embedded_starter_sample",
         },
+        "report_card": {
+            "decision_label": "Supported for documentation and test-domain claims",
+            "decision_summary": (
+                "The sample source supports claims that IANA reserves specific domain names and labels for documentation, "
+                "examples, testing, and local use. It does not prove current DNS ownership or live service behavior."
+            ),
+            "what_this_establishes": [
+                "example.com, example.net, and example.org are reserved for documentation and examples.",
+                "example, invalid, localhost, and test are reserved labels, not ordinary production domains.",
+                "The source is appropriate for agent documentation, test fixtures, and citation-backed explanations about reserved domains.",
+            ],
+            "what_it_does_not_establish": [
+                "It does not verify a customer's current DNS setup.",
+                "It does not prove ownership of a domain or the behavior of a live external service.",
+            ],
+            "buyer_value": [
+                "A plain-English evidence decision instead of raw page text.",
+                "Claim-to-citation mapping that an operator or agent can inspect.",
+                "Risks, limits, cache metadata, source hash, and export-ready JSON.",
+            ],
+        },
         "cache": {
             "hit": True,
             "sample": True,
@@ -5246,6 +5266,12 @@ REPORT_NAVIGATION_TERMS = (
     "cookie",
     "privacy",
     "terms",
+    "url source",
+    "markdown content",
+    "published time",
+    "cached snapshot",
+    "learn more",
+    "warning:",
 )
 REPORT_MARKDOWN_NOISE_RE = re.compile(r"!\[[^\]]*\]\([^)]+\)|\[[^\]]*\]\([^)]+\)|https?://\S+")
 
@@ -5297,6 +5323,25 @@ def report_text_from_url(value: str) -> str:
 def clean_report_text(value: Any, max_chars: int = 420) -> str:
     """Convert markdown-heavy extracted evidence into readable report text."""
     text = html.unescape(str(value or ""))
+    replacements = {
+        "â": "\"",
+        "â": "\"",
+        "â": "'",
+        "â": "-",
+        "â": "-",
+        "â¦": "...",
+    }
+    for bad, good in replacements.items():
+        text = text.replace(bad, good)
+    text = re.sub(r"\bURL Source:\s*https?://[^\s]+", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bMarkdown Content:\s*", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bPublished Time:\s*[^.|\n]+(?:GMT|UTC)?", " ", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\bWarning:\s*This is a cached snapshot[^.|\n]*\.?",
+        " ",
+        text,
+        flags=re.IGNORECASE,
+    )
 
     def replace_markdown_link(match: re.Match[str]) -> str:
         label = clean_evidence_excerpt(match.group(1), 160)
@@ -5448,12 +5493,24 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
             "version": "delivery-v2",
             "quality_level": "processing",
             "quality_label": "Generating report",
+            "decision_label": "Generating evidence decision",
+            "decision_summary": "Payment received. AxonGate is still checking the submitted public sources before issuing a verdict.",
             "summary": "Payment received. AxonGate is generating your cited Proof Bundle report.",
             "what_this_establishes": [],
             "clean_claims": [],
             "clean_citations": [],
             "source_quality": [],
             "risks": [],
+            "recommended_next_actions": [
+                "Refresh the delivery page in a moment.",
+                "Use the recovery page if the Stripe redirect was closed before delivery completed.",
+            ],
+            "report_deliverables": [
+                "Evidence decision",
+                "Citation-backed findings",
+                "Risk notes",
+                "PDF and JSON exports",
+            ],
             "actions": proof_bundle_delivery_action_urls(lead, None),
             "copy_text": "",
         }
@@ -5498,15 +5555,34 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
             "AxonGate received payment and inspected the submitted public source material, but the extracted evidence is mostly "
             "navigation, boilerplate, or low-context text. Treat this as a weak evidence result rather than a substantive proof report."
         )
+        decision_label = "Weak evidence - do not cite as proof"
+        decision_summary = (
+            "The source was reachable, but the useful public evidence is too thin or noisy to support the claim without better source material."
+        )
         what_this_establishes = [
             "The submitted source was reachable and returned public text.",
             "The available public text did not establish a clean, substantive answer to the buyer question.",
             "A better result likely needs a more specific source URL, article page, documentation page, transcript, or public evidence page.",
         ]
+        recommended_next_actions = [
+            "Replace broad homepages with exact articles, docs, changelogs, public filings, or transcripts.",
+            "Use this report as a rejection record before adding the source to an agent knowledge base.",
+            "Download the JSON or PDF to keep the citation IDs, source hash, and risk notes together.",
+        ]
     else:
         summary = clean_report_text(report.get("executive_summary") or report.get("answer") or "", 900)
         if not summary:
             summary = "AxonGate generated a cited Proof Bundle report from the submitted public sources."
+        if quality_level == "strong":
+            decision_label = "Cite-ready with review"
+            decision_summary = (
+                "The submitted source material contains substantive, citation-backed support. Use the cited findings with the listed risks."
+            )
+        else:
+            decision_label = "Usable evidence - verify context"
+            decision_summary = (
+                "The submitted source material supports part of the question, but the report should be reviewed before a customer-facing agent cites it."
+            )
         what_this_establishes = [
             claim["claim"]
             for claim in clean_claims
@@ -5514,6 +5590,11 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
         ][:5]
         if not what_this_establishes:
             what_this_establishes = [summary]
+        recommended_next_actions = [
+            "Use the cited findings in prompts, RAG metadata, or customer-facing notes only with the citation IDs attached.",
+            "Keep the source hash with your internal record so future checks can detect source drift.",
+            "Download the PDF for review and the JSON for agent or workflow ingestion.",
+        ]
 
     risks = [
         clean_report_text(risk, 260)
@@ -5528,11 +5609,15 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
     top_claims = clean_claims[:8] if quality_level != "low" else clean_claims[:3]
     copy_lines = [
         "AxonGate Proof Bundle Report",
+        f"Decision: {decision_label}",
         f"Quality: {quality_label}",
         f"Summary: {summary}",
         "",
         "What this establishes:",
         *[f"- {item}" for item in what_this_establishes],
+        "",
+        "Recommended next actions:",
+        *[f"- {item}" for item in recommended_next_actions],
     ]
     return {
         "version": "delivery-v2",
@@ -5543,6 +5628,8 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
         "quality_score": clamp_confidence(average_quality, 0.0),
         "quality_level": quality_level,
         "quality_label": quality_label,
+        "decision_label": decision_label,
+        "decision_summary": decision_summary,
         "confidence_score": clamp_confidence(report.get("confidence_score"), 0.0),
         "summary": summary,
         "what_this_establishes": what_this_establishes,
@@ -5550,6 +5637,15 @@ def proof_bundle_report_view_model(lead: dict[str, Any]) -> dict[str, Any]:
         "clean_citations": clean_citations[:20],
         "source_quality": sources,
         "risks": risks,
+        "recommended_next_actions": recommended_next_actions,
+        "report_deliverables": [
+            "Evidence decision",
+            "Claim-to-citation map",
+            "Source quality audit",
+            "Risks and gaps",
+            "Reproducible source hashes",
+            "PDF and JSON exports",
+        ],
         "actions": proof_bundle_delivery_action_urls(lead, report),
         "copy_text": "\n".join(copy_lines),
     }
@@ -5607,6 +5703,8 @@ def build_proof_bundle_delivery_email(lead: dict[str, Any]) -> dict[str, str]:
     summary = clean_evidence_excerpt(str(delivery.get("summary") or report.get("answer") or "Your AxonGate report is ready."), 900)
     quality_label = str(delivery.get("quality_label") or "Evidence reviewed")
     quality_score = delivery.get("quality_score")
+    decision_label = str(delivery.get("decision_label") or quality_label)
+    decision_summary = clean_evidence_excerpt(str(delivery.get("decision_summary") or ""), 500)
     actions = delivery.get("actions") if isinstance(delivery.get("actions"), dict) else {}
     claims = delivery.get("clean_claims") if isinstance(delivery.get("clean_claims"), list) else []
     establishes = delivery.get("what_this_establishes") if isinstance(delivery.get("what_this_establishes"), list) else []
@@ -5629,6 +5727,10 @@ def build_proof_bundle_delivery_email(lead: dict[str, Any]) -> dict[str, str]:
 Open report:
 {delivery_url}
 
+Evidence decision:
+{decision_label}
+{decision_summary}
+
 Evidence quality:
 {quality_label}{f" ({quality_score})" if quality_score is not None else ""}
 
@@ -5650,6 +5752,8 @@ AxonGate
   <div style="max-width:680px;margin:0 auto;padding:24px">
   <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:22px">
   <h1 style="font-size:22px;margin:0 0 12px">Your AxonGate Proof Bundle report is ready</h1>
+  <p style="margin:0 0 8px;color:#111827">Evidence decision: <strong>{html.escape(decision_label)}</strong></p>
+  <p style="margin:0 0 16px;color:#374151">{html.escape(decision_summary or 'AxonGate separated supported findings from weak or noisy source text.')}</p>
   <p style="margin:0 0 16px;color:#374151">Evidence quality: <strong>{html.escape(quality_label)}</strong>{html.escape(f" ({quality_score})" if quality_score is not None else "")}</p>
   <p><a href="{html.escape(delivery_url, quote=True)}" style="display:inline-block;background:#0f766e;color:white;padding:10px 14px;border-radius:6px;text-decoration:none">Open report</a></p>
   <h2 style="font-size:16px;margin-top:22px">Summary</h2>
@@ -5890,6 +5994,52 @@ def delivery_source_cards(sources: list[dict[str, Any]]) -> str:
     return "\n".join(cards)
 
 
+def delivery_value_cards(delivery: dict[str, Any], report: dict[str, Any]) -> str:
+    citations = delivery.get("clean_citations") if isinstance(delivery.get("clean_citations"), list) else []
+    sources = delivery.get("source_quality") if isinstance(delivery.get("source_quality"), list) else []
+    deliverables = delivery.get("report_deliverables") if isinstance(delivery.get("report_deliverables"), list) else []
+    cards = [
+        (
+            "Decision",
+            str(delivery.get("decision_label") or delivery.get("quality_label") or "Evidence reviewed"),
+            str(delivery.get("decision_summary") or "AxonGate separates supported findings from weak or noisy source text."),
+        ),
+        (
+            "Traceability",
+            f"{len(citations)} cited excerpts",
+            "Each finding points back to evidence IDs so a buyer or agent can inspect the source trail.",
+        ),
+        (
+            "Source Audit",
+            f"{len(sources)} sources scored",
+            "The report calls out source quality, cache status, content hashes, and source-specific risks.",
+        ),
+        (
+            "Exports",
+            ", ".join(str(item) for item in deliverables[-2:]) or "PDF and JSON",
+            "Use the PDF for review and the JSON for agent ingestion, logging, or workflow automation.",
+        ),
+    ]
+    if report.get("failed_sources"):
+        cards.append(
+            (
+                "Coverage",
+                f"{report.get('failed_sources')} source failed",
+                "Failed sources are shown as gaps instead of being silently ignored.",
+            )
+        )
+    return "\n".join(
+        f"""
+        <article class="value-card">
+          <span>{html.escape(label)}</span>
+          <strong>{html.escape(value)}</strong>
+          <p>{html.escape(description)}</p>
+        </article>
+        """
+        for label, value, description in cards
+    )
+
+
 def delivery_json_script(value: Any) -> str:
     return json.dumps(str(value or ""), ensure_ascii=True).replace("</", "<\\/")
 
@@ -5917,15 +6067,27 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
             clean_citations = delivery.get("clean_citations") if isinstance(delivery.get("clean_citations"), list) else []
             source_quality = delivery.get("source_quality") if isinstance(delivery.get("source_quality"), list) else []
             risks = delivery.get("risks") if isinstance(delivery.get("risks"), list) else []
+            recommended_next_actions = (
+                delivery.get("recommended_next_actions")
+                if isinstance(delivery.get("recommended_next_actions"), list)
+                else []
+            )
+            value_cards = delivery_value_cards(delivery, report)
             copy_text = delivery_json_script(delivery.get("copy_text"))
             action_bar = "" if print_mode else f"""
       <div class="actions" aria-label="Report actions">
         <a class="button primary" href="{html.escape(str(actions.get('download_pdf') or '#'), quote=True)}">Download PDF</a>
         <a class="button" href="{html.escape(str(actions.get('download_json') or '#'), quote=True)}">Download JSON</a>
         <button class="button" type="button" data-copy-summary>Copy summary</button>
-        <a class="button" href="{html.escape(str(actions.get('refine') or public_url('/proof-pack/bundle')), quote=True)}">Request refinement</a>
-        <a class="button" href="{html.escape(str(actions.get('analyze_another') or public_url('/proof-pack/bundle')), quote=True)}">Analyze another source</a>
-        <a class="button" href="{html.escape(str(actions.get('upgrade') or public_url('/proof-pack/bundle')), quote=True)}">Upgrade bundle</a>
+        <details class="action-menu">
+          <summary class="button">More actions</summary>
+          <div class="action-menu-panel">
+            <a href="{html.escape(str(actions.get('refine') or public_url('/proof-pack/bundle')), quote=True)}">Request refinement</a>
+            <a href="{html.escape(str(actions.get('analyze_another') or public_url('/proof-pack/bundle')), quote=True)}">Analyze another source</a>
+            <a href="{html.escape(str(actions.get('upgrade') or public_url('/proof-pack/bundle')), quote=True)}">Upgrade bundle</a>
+            <a href="{html.escape(str(actions.get('print') or '#'), quote=True)}">Print view</a>
+          </div>
+        </details>
       </div>
             """
             content = f"""
@@ -5957,6 +6119,17 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
       </div>
       {action_bar}
     </section>
+    <section class="panel decision-panel">
+      <div>
+        <p class="eyebrow">Evidence decision</p>
+        <h2>{html.escape(str(delivery.get('decision_label') or 'Evidence reviewed'))}</h2>
+        <p>{html.escape(str(delivery.get('decision_summary') or 'AxonGate separated supported findings from weak or noisy source text.'))}</p>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>What You Paid For</h2>
+      <div class="value-grid">{value_cards}</div>
+    </section>
     <section class="panel">
       <h2>What This Establishes</h2>
       {delivery_html_list(establishes, "The submitted material did not establish a clean substantive finding.")}
@@ -5968,6 +6141,10 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
     <section class="panel">
       <h2>Risks and Gaps</h2>
       {delivery_html_list(risks, "No delivery risks were recorded.")}
+    </section>
+    <section class="panel">
+      <h2>Recommended Next Actions</h2>
+      {delivery_html_list(recommended_next_actions, "No next actions were recorded.")}
     </section>
     <section class="panel">
       <h2>Evidence Citations</h2>
@@ -6047,6 +6224,19 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
     .actions {{ display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }}
     .button, button.button {{ display: inline-flex; align-items: center; justify-content: center; min-height: 40px; border: 1px solid var(--line); border-radius: 8px; background: #10141d; color: var(--text); padding: 9px 12px; font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; }}
     .button.primary {{ background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }}
+    .action-menu {{ position: relative; }}
+    .action-menu summary {{ list-style: none; }}
+    .action-menu summary::-webkit-details-marker {{ display: none; }}
+    .action-menu-panel {{ position: absolute; right: 0; z-index: 5; min-width: 220px; margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; background: #10141d; box-shadow: 0 18px 45px rgba(0,0,0,.28); padding: 8px; }}
+    .action-menu-panel a {{ display: block; border-radius: 6px; padding: 9px 10px; color: var(--text); }}
+    .action-menu-panel a:hover {{ background: rgba(115,218,202,.12); text-decoration: none; }}
+    .decision-panel {{ border-left: 5px solid var(--accent); }}
+    .decision-panel h2 {{ font-size: clamp(1.45rem, 3vw, 2rem); margin-bottom: 8px; }}
+    .value-grid {{ display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+    .value-card {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; background: #131722; min-width: 0; }}
+    .value-card span {{ display: block; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; }}
+    .value-card strong {{ display: block; margin: 4px 0 6px; overflow-wrap: anywhere; }}
+    .value-card p {{ margin: 0; }}
     .claim-list, .citation-list, .source-list {{ display: grid; gap: 10px; }}
     .claim-item, .citation-item, .source-item {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; overflow-wrap: anywhere; }}
     .claim-item p, .citation-item p, .source-item p {{ margin: 0 0 9px; }}
@@ -6062,12 +6252,16 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
     code {{ background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--text); }}
     @media (max-width: 760px) {{
       .hero-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .value-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .citation-head, .source-top {{ display: grid; }}
       .quality-pill {{ width: fit-content; }}
+      .action-menu {{ width: 100%; }}
+      .action-menu-panel {{ position: static; min-width: 0; }}
     }}
     @media (max-width: 520px) {{
       main {{ padding: 20px 12px 44px; }}
       .hero-grid {{ grid-template-columns: 1fr; }}
+      .value-grid {{ grid-template-columns: 1fr; }}
       .actions .button {{ width: 100%; }}
     }}
     @media print {{
@@ -6103,6 +6297,8 @@ def proof_bundle_pdf_lines(lead: dict[str, Any]) -> list[str]:
         "",
         f"Bundle: {delivery.get('bundle') or payload.get('bundle') or 'proof'}",
         f"Generated: {delivery.get('generated_at_label') or 'unknown'}",
+        f"Evidence decision: {delivery.get('decision_label') or 'Evidence reviewed'}",
+        f"Decision summary: {delivery.get('decision_summary') or ''}",
         f"Evidence quality: {delivery.get('quality_label') or 'Evidence reviewed'} ({delivery.get('quality_score')})",
         f"Confidence: {delivery.get('confidence_score')}",
         f"Sources delivered: {report.get('successful_sources') or 0}",
@@ -6126,6 +6322,10 @@ def proof_bundle_pdf_lines(lead: dict[str, Any]) -> list[str]:
     lines.extend(["", "Risks and Gaps"])
     for risk in risks:
         lines.append(f"- {clean_report_text(risk, 260)}")
+    next_actions = delivery.get("recommended_next_actions") if isinstance(delivery.get("recommended_next_actions"), list) else []
+    lines.extend(["", "Recommended Next Actions"])
+    for action in next_actions:
+        lines.append(f"- {clean_report_text(action, 260)}")
     lines.extend(["", "Source Quality Audit"])
     for source in source_quality:
         if isinstance(source, dict):
@@ -9858,6 +10058,43 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
         for citation in sample["citations"]
     )
     risk_items = "\n".join(f"<li>{html.escape(risk)}</li>" for risk in sample["risks"])
+    report_card = sample.get("report_card") if isinstance(sample.get("report_card"), dict) else {}
+    establishes_items = "\n".join(
+        f"<li>{html.escape(str(item))}</li>"
+        for item in report_card.get("what_this_establishes", [])
+        if str(item).strip()
+    )
+    limits_items = "\n".join(
+        f"<li>{html.escape(str(item))}</li>"
+        for item in report_card.get("what_it_does_not_establish", [])
+        if str(item).strip()
+    )
+    buyer_value_cards = "\n".join(
+        f"<article class=\"value-card\"><span>Value</span><strong>{html.escape(str(item))}</strong></article>"
+        for item in report_card.get("buyer_value", [])
+        if str(item).strip()
+    )
+    claim_cards = "\n".join(
+        f"""
+        <article class="claim-card">
+          <p>{html.escape(str(claim.get('claim') or ''))}</p>
+          <div class="mini-meta">
+            <span>{html.escape(', '.join(str(item) for item in claim.get('citation_ids', [])))}</span>
+            <span>confidence {html.escape(str(claim.get('confidence')))}</span>
+          </div>
+        </article>
+        """
+        for claim in sample["key_claims"]
+    )
+    citation_cards = "\n".join(
+        f"""
+        <article class="citation-card">
+          <div><code>{html.escape(str(citation.get('id') or ''))}</code></div>
+          <p>{html.escape(str(citation.get('excerpt') or ''))}</p>
+        </article>
+        """
+        for citation in sample["citations"]
+    )
     nav = site_nav_html("Proof Packs")
     actions = action_bar_html(
         [
@@ -9879,7 +10116,7 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AxonGate Proof Pack Sample</title>
+  <title>Sample Evidence Report | AxonGate</title>
   <style>
     :root {{
       color-scheme: light dark;
@@ -9899,70 +10136,114 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
       background: var(--bg);
       color: var(--text);
     }}
-    main {{ max-width: 1040px; margin: 0 auto; padding: 44px 22px 72px; }}
+    main {{ max-width: 1120px; margin: 0 auto; padding: 44px 22px 72px; }}
     h1 {{ font-size: clamp(2.1rem, 4vw, 3.3rem); line-height: 1.05; margin: 0 0 12px; }}
-    h2 {{ margin: 38px 0 12px; font-size: 1.3rem; }}
+    h2 {{ margin: 0 0 12px; font-size: 1.3rem; }}
     p, li, td {{ color: var(--muted); }}
     a {{ color: var(--accent); text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: clamp(18px, 3vw, 28px); margin: 0 0 16px; }}
+    .hero {{ padding: clamp(22px, 4vw, 38px); }}
+    .eyebrow {{ color: var(--accent); text-transform: uppercase; letter-spacing: 0; font-size: .78rem; font-weight: 800; margin: 0 0 8px; }}
     .summary {{ max-width: 820px; font-size: 1.08rem; }}
     .links a, .cta a {{ display: inline-block; margin: 0 12px 10px 0; }}
     .cta a {{ border: 1px solid var(--accent); border-radius: 6px; padding: 10px 12px; }}
-    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 18px 0 0; }}
     .box {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 15px; }}
+    .decision {{ border-left: 5px solid var(--accent); }}
+    .decision h2 {{ font-size: clamp(1.45rem, 3vw, 2.1rem); }}
+    .value-grid {{ display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+    .value-card {{ border: 1px solid var(--line); border-radius: 8px; background: #131722; padding: 14px; min-width: 0; }}
+    .value-card span {{ display: block; color: var(--accent); font-size: .75rem; font-weight: 800; text-transform: uppercase; }}
+    .value-card strong {{ display: block; margin-top: 5px; overflow-wrap: anywhere; }}
+    .split {{ display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }}
+    .claim-list, .citation-list {{ display: grid; gap: 10px; }}
+    .claim-card, .citation-card {{ border: 1px solid var(--line); border-radius: 8px; padding: 13px; overflow-wrap: anywhere; }}
+    .claim-card p, .citation-card p {{ margin: 0 0 8px; }}
+    .mini-meta {{ display: flex; flex-wrap: wrap; gap: 7px; color: var(--muted); font-size: .88rem; }}
+    .mini-meta span {{ border: 1px solid var(--line); border-radius: 999px; padding: 3px 8px; }}
+    details.technical {{ border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 14px; margin: 0 0 16px; }}
+    details.technical summary {{ cursor: pointer; color: var(--accent); font-weight: 800; }}
     code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
     code {{ padding: 2px 5px; border-radius: 4px; }}
     pre {{ overflow-x: auto; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
     table {{ width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
     th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
     th {{ color: var(--text); }}
+    @media (max-width: 760px) {{
+      main {{ padding: 24px 14px 52px; }}
+      .value-grid, .split {{ grid-template-columns: 1fr; }}
+    }}
     {shared_ui_css()}
   </style>
 </head>
 <body>
   <main>
     {nav}
-    <h1>Proof Pack Sample</h1>
-    <p class="summary">This is a no-spend preview of the report shape buyers get from the paid Proof Pack endpoint. It uses embedded sample source material, skips supplier work, and never calls the LLM.</p>
-    {actions}
+    <section class="panel hero">
+      <p class="eyebrow">No-spend sample report</p>
+      <h1>Sample Evidence Decision</h1>
+      <p class="summary">See the report shape buyers get before spending: a plain-English decision, supported findings, citation IDs, risks, source metadata, and export-ready JSON. This sample uses embedded source material, skips supplier work, and never calls the LLM.</p>
+      {actions}
+      <div class="grid">
+        <div class="box"><strong>Status</strong><br><code>{html.escape(sample["status"])}</code></div>
+        <div class="box"><strong>Pack</strong><br><code>{html.escape(sample["pack"])}</code></div>
+        <div class="box"><strong>Live Price</strong><br>{html.escape(str(sample["payment"]["live_pack_amount_usdc"]))} USDC</div>
+        <div class="box"><strong>Source Hash</strong><br><code>{html.escape(sample["source_profile"]["content_sha256"][:16])}...</code></div>
+      </div>
+    </section>
 
-    <div class="grid">
-      <div class="box"><strong>Status</strong><br><code>{html.escape(sample["status"])}</code></div>
-      <div class="box"><strong>Pack</strong><br><code>{html.escape(sample["pack"])}</code></div>
-      <div class="box"><strong>Live Price</strong><br>{html.escape(str(sample["payment"]["live_pack_amount_usdc"]))} USDC</div>
-      <div class="box"><strong>Source Hash</strong><br><code>{html.escape(sample["source_profile"]["content_sha256"][:16])}...</code></div>
-    </div>
+    <section class="panel decision">
+      <p class="eyebrow">Evidence decision</p>
+      <h2>{html.escape(str(report_card.get("decision_label") or "Evidence reviewed"))}</h2>
+      <p>{html.escape(str(report_card.get("decision_summary") or sample["executive_summary"]))}</p>
+    </section>
 
-    <h2>Answer</h2>
-    <p>{html.escape(sample["answer"])}</p>
+    <section class="panel">
+      <h2>Why This Is Worth Buying</h2>
+      <div class="value-grid">{buyer_value_cards}</div>
+    </section>
 
-    <h2>Executive Summary</h2>
-    <p>{html.escape(sample["executive_summary"])}</p>
+    <section class="split">
+      <div class="panel">
+        <h2>What This Establishes</h2>
+        <ul>{establishes_items}</ul>
+      </div>
+      <div class="panel">
+        <h2>What It Does Not Establish</h2>
+        <ul>{limits_items}</ul>
+      </div>
+    </section>
 
-    <h2>Key Claims</h2>
-    <div class="table-wrap">
-    <table>
-      <thead><tr><th>Claim</th><th>Citations</th><th>Confidence</th></tr></thead>
-      <tbody>{claim_rows}</tbody>
-    </table>
-    </div>
+    <section class="panel">
+      <h2>Executive Summary</h2>
+      <p>{html.escape(sample["executive_summary"])}</p>
+    </section>
 
-    <h2>Citations</h2>
-    <div class="table-wrap">
-    <table>
-      <thead><tr><th>ID</th><th>Excerpt</th></tr></thead>
-      <tbody>{citation_rows}</tbody>
-    </table>
-    </div>
+    <section class="panel">
+      <h2>Key Findings</h2>
+      <div class="claim-list">{claim_cards}</div>
+    </section>
 
-    <h2>Risks</h2>
-    <ul>{risk_items}</ul>
+    <section class="panel">
+      <h2>Evidence Citations</h2>
+      <div class="citation-list">{citation_cards}</div>
+    </section>
 
-    <h2>Buyer Command</h2>
-    <pre>{buyer_command}</pre>
+    <section class="panel">
+      <h2>Risks and Limits</h2>
+      <ul>{risk_items}</ul>
+    </section>
 
-    <h2>Full JSON</h2>
-    <pre>{raw_json}</pre>
+    <details class="technical">
+      <summary>View buyer command</summary>
+      <pre>{buyer_command}</pre>
+    </details>
+
+    <details class="technical">
+      <summary>View full API JSON</summary>
+      <pre>{raw_json}</pre>
+    </details>
   </main>
 </body>
 </html>"""

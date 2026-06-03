@@ -133,6 +133,10 @@ async def main() -> None:
         assert "<link rel=\"canonical\"" in proof_pack_page.text, "Proof Pack page missing canonical link"
         assert "Contact</a>" in proof_pack_page.text, "Proof Pack page footer should include Contact"
         assert "A parser returns text" in proof_pack_page.text, "Proof Pack page should keep parser contrast"
+        proof_sample_page = await client.get("/proof-pack/sample")
+        assert "Sample Evidence Decision" in proof_sample_page.text, "Sample page should lead with evidence decision"
+        assert "Why This Is Worth Buying" in proof_sample_page.text, "Sample page should explain buyer value"
+        assert "View full API JSON" in proof_sample_page.text, "Sample page should keep technical JSON available"
         faq_page = await client.get("/faq")
         assert "Is AxonGate just a page parser?" in faq_page.text, "FAQ page missing parser question"
         contact_page = await client.get("/contact")
@@ -480,6 +484,7 @@ async def main() -> None:
         assert sent_delivery_emails, "Stripe delivery should send a customer report email when configured"
         assert sent_delivery_emails[-1]["to"] == ["stripe-buyer@example.invalid"], "Delivery email recipient mismatch"
         assert "Open report" in sent_delivery_emails[-1]["html"], "Delivery email should include report link"
+        assert "Evidence decision" in sent_delivery_emails[-1]["html"], "Delivery email should include decision signal"
         assert "Evidence quality" in sent_delivery_emails[-1]["html"], "Delivery email should include quality signal"
         assert "Download PDF" in sent_delivery_emails[-1]["html"], "Delivery email should include PDF download"
         assert "](" not in sent_delivery_emails[-1]["html"], "Delivery email should not expose raw markdown links"
@@ -489,7 +494,10 @@ async def main() -> None:
         )
         assert stripe_delivery_page.status_code == 200, "Stripe delivery page should render"
         assert "Proof Bundle Report" in stripe_delivery_page.text, "Stripe delivery page missing report heading"
+        assert "Evidence decision" in stripe_delivery_page.text, "Stripe delivery page missing decision section"
+        assert "What You Paid For" in stripe_delivery_page.text, "Stripe delivery page missing value section"
         assert "What This Establishes" in stripe_delivery_page.text, "Stripe delivery page missing findings section"
+        assert "Recommended Next Actions" in stripe_delivery_page.text, "Stripe delivery page missing next actions"
         assert "Source Quality Audit" in stripe_delivery_page.text, "Stripe delivery page missing source audit"
         assert "Download PDF" in stripe_delivery_page.text, "Stripe delivery page missing PDF action"
 
@@ -739,6 +747,8 @@ async def main() -> None:
         assert proof_sample["cache"]["sample"] is True, "Proof Pack sample should identify embedded cache material"
         assert proof_sample["llm_used"] is False, "Proof Pack sample must not call the LLM"
         assert proof_sample["citations"], "Proof Pack sample missing citations"
+        assert proof_sample["report_card"]["decision_label"], "Proof Pack sample should expose a buyer decision"
+        assert proof_sample["report_card"]["buyer_value"], "Proof Pack sample should expose buyer value"
 
         proof_probe = await client.get("/v1/x402/proof-pack?pack=standard")
         assert proof_probe.status_code == 402, f"Proof Pack probe returned {proof_probe.status_code}"
