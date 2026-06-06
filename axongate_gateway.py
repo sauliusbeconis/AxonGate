@@ -214,6 +214,109 @@ SOURCE_ALIAS_PATHS = (
     "402agents",
     "github",
 )
+EVIDENCE_LIBRARY_ENTRIES: tuple[dict[str, Any], ...] = (
+    {
+        "slug": "source-trust-for-agent-builders",
+        "title": "Source Trust For Agent Builders",
+        "category": "Agent launch",
+        "verdict": "usable support with citation limits",
+        "confidence": 0.82,
+        "question": "Can these public sources support an AI product claim before launch?",
+        "description": "A buyer-facing example showing how AxonGate separates supported findings from weak evidence before an agent cites public pages.",
+        "summary": "The source set can support a narrow launch claim, but one page should be treated as context rather than direct evidence.",
+        "target_urls": [
+            "https://www.iana.org/domains/reserved",
+            "https://example.com",
+        ],
+        "bundle": "scout",
+        "audience": "AI agent builders, RAG operators, and product teams preparing citation-backed launch copy.",
+        "tags": ["agent builders", "source trust", "launch evidence", "RAG"],
+        "claims": [
+            "The sources contain citation-ready material for a narrow, public-facing technical claim.",
+            "The evidence should be quoted with limits rather than treated as proof of broader product behavior.",
+            "A source-quality pass before ingestion reduces weak citations in downstream agent answers.",
+        ],
+        "risks": [
+            "One URL may be suitable as context but not as direct proof.",
+            "The report does not prove private implementation details or live production state.",
+        ],
+    },
+    {
+        "slug": "rag-source-audit-before-ingestion",
+        "title": "RAG Source Audit Before Ingestion",
+        "category": "RAG quality",
+        "verdict": "ingest selectively",
+        "confidence": 0.76,
+        "question": "Which public URLs are substantive enough to feed into an agent knowledge base?",
+        "description": "A sample workflow for teams that need to filter public pages before adding them to a RAG or agent memory pipeline.",
+        "summary": "The report identifies which URLs carry useful evidence, which are mostly boilerplate, and what claims should be excluded.",
+        "target_urls": [
+            "https://www.iana.org/domains/reserved",
+            "https://example.org",
+            "https://example.net",
+        ],
+        "bundle": "builder",
+        "audience": "Teams building RAG pipelines, agent memory, and customer-facing answer systems.",
+        "tags": ["RAG", "knowledge base", "source filtering", "citations"],
+        "claims": [
+            "Public source pages should be scored before ingestion, not only parsed.",
+            "Weak pages can be retained as context while being blocked from high-confidence citations.",
+            "Source hashes and citation IDs make later report reviews repeatable.",
+        ],
+        "risks": [
+            "RAG ingestion can amplify boilerplate if source quality is not checked.",
+            "A parser-only flow does not distinguish evidence from navigation or promotional copy.",
+        ],
+    },
+    {
+        "slug": "vendor-claim-evidence-check",
+        "title": "Vendor Claim Evidence Check",
+        "category": "Due diligence",
+        "verdict": "needs stronger sources",
+        "confidence": 0.68,
+        "question": "Do public vendor pages prove the claim well enough for an agent to repeat it?",
+        "description": "An example of using AxonGate to review vendor or partner claims before an automated assistant repeats them to users.",
+        "summary": "The evidence set can support a basic description, but stronger independent sources are needed for a high-confidence recommendation.",
+        "target_urls": [
+            "https://example.com",
+            "https://example.org",
+        ],
+        "bundle": "audit",
+        "audience": "Operators reviewing vendor pages, integrations, partner claims, and AI assistant responses.",
+        "tags": ["vendor review", "due diligence", "risk", "AI assistant"],
+        "claims": [
+            "A vendor page can establish what the vendor says, but not always whether the claim is independently true.",
+            "Citations should preserve the difference between first-party claims and neutral evidence.",
+            "Weakness notes help teams decide whether to buy deeper research or ask for better sources.",
+        ],
+        "risks": [
+            "First-party marketing pages can overstate evidence quality.",
+            "The claim may require neutral or primary documentation before agent use.",
+        ],
+    },
+)
+SOURCE_LANDING_COPY: dict[str, dict[str, str]] = {
+    "x402-list": {
+        "name": "x402-list",
+        "headline": "x402 source trust endpoint for listed agents",
+        "description": "AxonGate gives x402 directories a paid endpoint that returns citation-backed evidence decisions, not only parsed page text.",
+    },
+    "payanagent": {
+        "name": "PayanAgent",
+        "headline": "Base USDC evidence checks for PayanAgent builders",
+        "description": "Use AxonGate when an agent needs to decide whether a public URL is safe to cite, ingest, or act on before spending supplier budget.",
+    },
+    "agent-bazaar": {
+        "name": "Agent Bazaar",
+        "headline": "Discovery-ready evidence reports for agent marketplaces",
+        "description": "AxonGate exposes quote, sample, bundle, and x402 resources so marketplaces can route builders to paid source-trust checks.",
+    },
+    "github": {
+        "name": "GitHub",
+        "headline": "Open developer workflow for source evidence checks",
+        "description": "AxonGate turns public URLs into cited reports that can be reviewed by humans and consumed by agent workflows.",
+    },
+}
 REQUIRED_USDC_AMOUNT = int(REQUIRED_USDC_FEE * (Decimal(10) ** USDC_DECIMALS))
 STARTER_TIER = "starter"
 CACHE_ONLY_TIER = "cached"
@@ -377,6 +480,9 @@ metrics: dict[str, int] = {
     "discovery_proof_bundle_hits_total": 0,
     "discovery_proof_bundle_quote_hits_total": 0,
     "discovery_proof_bundle_request_hits_total": 0,
+    "discovery_evidence_library_hits_total": 0,
+    "discovery_share_page_hits_total": 0,
+    "discovery_source_landing_hits_total": 0,
     "discovery_demo_hits_total": 0,
     "discovery_robots_hits_total": 0,
     "discovery_sitemap_hits_total": 0,
@@ -1770,6 +1876,8 @@ def build_x402_resource() -> dict[str, Any]:
             "quote": f"{PUBLIC_BASE_URL}/quote",
             "quoteApi": f"{PUBLIC_BASE_URL}/v1/x402/quote",
             "proofPack": f"{PUBLIC_BASE_URL}/proof-pack",
+            "proofPackLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
+            "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
             "proofPackSample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "proofPackSampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
             "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
@@ -1799,6 +1907,7 @@ def build_x402_resource() -> dict[str, Any]:
             "retryEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
             "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/access",
             "proofPackSourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
+            "sourceLandingPattern": f"{PUBLIC_BASE_URL}/from/{{source}}",
             "recommendedTier": RECOMMENDED_TIER,
             "supplyGuards": {
                 "dnsSsrfProtection": True,
@@ -1846,6 +1955,8 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "tags": ["x402", "base", "usdc", "source-trust", "proof-pack", "citations", "agent-builders", "evidence"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
+            "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
+            "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
             "about": f"{PUBLIC_BASE_URL}/about",
             "faq": f"{PUBLIC_BASE_URL}/faq",
             "contact": f"{PUBLIC_BASE_URL}/contact",
@@ -1864,6 +1975,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "bundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "bundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
+            "sourceLandingPattern": f"{PUBLIC_BASE_URL}/from/{{source}}",
             "packHeader": "X-AxonGate-Pack",
             "defaultPack": DEFAULT_PROOF_PACK,
             "llm": {
@@ -1920,6 +2032,8 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "description": "No-spend quote, tracked checkout, and delivery pipeline for multi-source claim support checks aimed at agent builders.",
             "tags": ["source-trust", "proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
+            "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
+            "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
             "contact": f"{PUBLIC_BASE_URL}/contact",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
             "checkoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
@@ -2024,6 +2138,8 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quoteApi": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "proofPack": f"{PUBLIC_BASE_URL}/proof-pack",
+        "proofPackLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
+        "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proofPackSample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
         "proofPackSampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
         "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
@@ -2055,6 +2171,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "facilitator": PAYAI_FACILITATOR_URL,
         "sourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/access",
         "proofPackSourceAliasPattern": f"{PUBLIC_BASE_URL}/from/{{source}}/v1/x402/proof-pack",
+        "sourceLandingPattern": f"{PUBLIC_BASE_URL}/from/{{source}}",
         "resources": [
             f"{PUBLIC_BASE_URL}/v1/x402/access",
             f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
@@ -2253,6 +2370,8 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "x402Version": 2,
         "endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        "proofPackLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
+        "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proofPackSample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
         "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
         "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
@@ -2268,6 +2387,7 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
+        "sourceLandingPattern": f"{PUBLIC_BASE_URL}/from/{{source}}",
         "paymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
         "tierQueryParam": "tier",
@@ -5401,6 +5521,7 @@ def proof_bundle_delivery_action_urls(lead: dict[str, Any], report: Optional[dic
         "upgrade": proof_bundle_quote_page_url(target_urls, question, upgrade_bundle, "delivery-upgrade")
         if target_urls
         else public_url("/proof-pack/bundle"),
+        "share_sample": evidence_library_share_url(EVIDENCE_LIBRARY_ENTRIES[0]),
     }
 
 
@@ -6299,6 +6420,7 @@ def build_proof_bundle_delivery_html(lead: Optional[dict[str, Any]], *, error: s
             <a href="{html.escape(str(actions.get('refine') or public_url('/proof-pack/bundle')), quote=True)}">Request refinement</a>
             <a href="{html.escape(str(actions.get('analyze_another') or public_url('/proof-pack/bundle')), quote=True)}">Analyze another source</a>
             <a href="{html.escape(str(actions.get('upgrade') or public_url('/proof-pack/bundle')), quote=True)}">Upgrade bundle</a>
+            <a href="{html.escape(str(actions.get('share_sample') or public_url('/proof-pack/library')), quote=True)}">Share public example</a>
             <a href="{html.escape(str(actions.get('print') or '#'), quote=True)}">Print view</a>
           </div>
         </details>
@@ -8261,11 +8383,13 @@ def site_footer_html() -> str:
           <a href="{html.escape(public_url('/'), quote=True)}">Start Here</a>
           <a href="{html.escape(public_url('/proof-pack/quote'), quote=True)}">Instant Quote</a>
           <a href="{html.escape(public_url('/proof-pack/bundle'), quote=True)}">Evidence Bundles</a>
+          <a href="{html.escape(public_url('/proof-pack/library'), quote=True)}">Evidence Library</a>
           <a href="{html.escape(public_url('/contact'), quote=True)}">Talk To Us</a>
         </div>
         <div class="footer-group">
           <strong>Learn</strong>
           <a href="{html.escape(public_url('/proof-pack/sample'), quote=True)}">Sample Report</a>
+          <a href="{html.escape(public_url('/proof-pack/share/source-trust-for-agent-builders'), quote=True)}">Share Public Example</a>
           <a href="{html.escape(public_url('/faq'), quote=True)}">FAQ</a>
           <a href="{html.escape(public_url('/about'), quote=True)}">About</a>
           <a href="{html.escape(public_url('/proof-pack/bundle/recover'), quote=True)}">Recover Delivery</a>
@@ -8301,6 +8425,7 @@ def site_nav_html(active: str = "") -> str:
     nav_items = [
         ("Home", public_url("/"), "Home"),
         ("Evidence Bundles", public_url("/proof-pack/bundle"), "Bundles"),
+        ("Library", public_url("/proof-pack/library"), "Library"),
         ("Sample", public_url("/proof-pack/sample"), "Sample"),
         ("Contact", public_url("/contact"), "Contact"),
         ("Developers", public_url("/docs"), "Docs"),
@@ -8321,6 +8446,7 @@ def site_nav_html(active: str = "") -> str:
             ("Request Report", public_url("/proof-pack/request")),
             ("Recover Delivery", public_url("/proof-pack/bundle/recover")),
             ("Agent API / x402", public_url("/proof-pack")),
+            ("Share Public Example", public_url("/proof-pack/share/source-trust-for-agent-builders")),
             ("Quickstart", public_url("/quickstart")),
             ("About", public_url("/about")),
             ("FAQ", public_url("/faq")),
@@ -8376,6 +8502,499 @@ def link_cluster_html(groups: list[tuple[str, list[tuple[str, Any]]]]) -> str:
       </details>"""
         )
     return '<section class="link-cluster" aria-label="Discovery links">' + "\n".join(rendered_groups) + "\n    </section>"
+
+
+def evidence_library_entry(slug: str) -> Optional[dict[str, Any]]:
+    """Return a public-safe static evidence library entry by slug."""
+    normalized = re.sub(r"[^a-z0-9-]+", "-", str(slug or "").strip().lower()).strip("-")
+    for entry in EVIDENCE_LIBRARY_ENTRIES:
+        if entry["slug"] == normalized:
+            return entry
+    return None
+
+
+def evidence_library_quote_url(entry: dict[str, Any], source: str = "evidence-library") -> str:
+    targets = [str(target) for target in entry.get("target_urls", []) if str(target).strip()]
+    return proof_bundle_quote_page_url(
+        targets,
+        str(entry.get("question") or ""),
+        str(entry.get("bundle") or "scout"),
+        source,
+    )
+
+
+def evidence_library_share_url(entry: dict[str, Any]) -> str:
+    return public_url(f"/proof-pack/share/{entry['slug']}")
+
+
+def evidence_library_entry_url(entry: dict[str, Any]) -> str:
+    return public_url(f"/proof-pack/library/{entry['slug']}")
+
+
+def evidence_library_embed_snippet(entry: dict[str, Any]) -> str:
+    share_url = evidence_library_share_url(entry)
+    return (
+        f'<a href="{html.escape(share_url, quote=True)}" '
+        'rel="noopener">Evidence checked by AxonGate</a>'
+    )
+
+
+def evidence_tags_html(entry: dict[str, Any]) -> str:
+    tags = entry.get("tags") if isinstance(entry.get("tags"), list) else []
+    return "".join(f"<span>{html.escape(str(tag))}</span>" for tag in tags if str(tag).strip())
+
+
+def evidence_claim_cards_html(entry: dict[str, Any]) -> str:
+    claims = entry.get("claims") if isinstance(entry.get("claims"), list) else []
+    if not claims:
+        return '<p class="muted">No public sample claims are available.</p>'
+    return "\n".join(
+        f"""
+        <article class="library-mini-card">
+          <span>c{index}</span>
+          <p>{html.escape(str(claim))}</p>
+        </article>
+        """
+        for index, claim in enumerate(claims, start=1)
+    )
+
+
+def evidence_risk_list_html(entry: dict[str, Any]) -> str:
+    risks = entry.get("risks") if isinstance(entry.get("risks"), list) else []
+    items = "".join(f"<li>{html.escape(str(risk))}</li>" for risk in risks if str(risk).strip())
+    return f"<ul>{items}</ul>" if items else '<p class="muted">No public sample risks are listed.</p>'
+
+
+def evidence_target_list_html(entry: dict[str, Any]) -> str:
+    targets = entry.get("target_urls") if isinstance(entry.get("target_urls"), list) else []
+    if not targets:
+        return '<p class="muted">No sample targets are listed.</p>'
+    return "\n".join(
+        f'<li><a href="{html.escape(str(target), quote=True)}">{html.escape(str(target))}</a></li>'
+        for target in targets
+        if str(target).strip()
+    )
+
+
+def evidence_library_css() -> str:
+    return """
+    :root {
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --panel-soft: #131722;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --good: #86efac;
+      --warn: #f6c177;
+      --code: #0a0d13;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background:
+        linear-gradient(180deg, color-mix(in srgb, var(--panel), var(--bg) 38%) 0, var(--bg) 360px),
+        var(--bg);
+      color: var(--text);
+    }
+    main { max-width: 1120px; margin: 0 auto; padding: 44px 22px 72px; }
+    h1 { font-size: clamp(2.2rem, 5vw, 4rem); line-height: 1.02; margin: 0 0 12px; }
+    h2 { margin: 38px 0 12px; font-size: clamp(1.35rem, 3vw, 2rem); line-height: 1.15; }
+    h3 { margin: 0 0 8px; font-size: 1.05rem; }
+    p, li, td, small { color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .eyebrow { margin: 0 0 8px; color: var(--accent); font-size: .78rem; font-weight: 850; text-transform: uppercase; }
+    .summary { max-width: 820px; font-size: 1.08rem; }
+    .library-hero {
+      display: grid;
+      gap: 18px;
+      margin-bottom: 24px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: clamp(20px, 4vw, 34px);
+      background: color-mix(in srgb, var(--panel), var(--bg) 16%);
+    }
+    .library-grid {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 22px 0;
+    }
+    .library-card,
+    .library-panel,
+    .share-card,
+    .library-mini-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 16px;
+      min-width: 0;
+    }
+    .library-card {
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }
+    .library-card strong,
+    .library-panel strong,
+    .share-card strong {
+      color: var(--text);
+    }
+    .library-card .category,
+    .library-mini-card span,
+    .tag-row span {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 26px;
+      align-items: center;
+      border: 1px solid color-mix(in srgb, var(--accent), var(--line) 28%);
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: var(--accent);
+      font-size: .75rem;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+    .confidence {
+      display: inline-grid;
+      place-items: center;
+      width: 68px;
+      aspect-ratio: 1;
+      border: 7px solid color-mix(in srgb, var(--accent), var(--panel) 42%);
+      border-right-color: var(--line);
+      border-radius: 50%;
+      color: var(--text);
+      font-weight: 900;
+    }
+    .library-meta {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin: 20px 0;
+    }
+    .library-meta > div {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--panel-soft);
+    }
+    .library-meta span { display: block; color: var(--muted); font-size: .82rem; }
+    .library-meta strong { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+    .split {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      margin: 18px 0;
+    }
+    .claim-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .library-mini-card p { margin: 8px 0 0; }
+    .tag-row { display: flex; flex-wrap: wrap; gap: 7px; }
+    .share-card {
+      max-width: 760px;
+      margin: 20px 0;
+      border-left: 5px solid var(--accent);
+    }
+    .share-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: start;
+    }
+    .embed-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--panel-soft);
+    }
+    code, pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--code);
+      color: var(--text);
+    }
+    code { display: inline-block; max-width: 100%; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+    pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+    .muted { color: var(--muted); }
+    @media (max-width: 860px) {
+      .library-grid,
+      .library-meta,
+      .claim-grid,
+      .split { grid-template-columns: 1fr; }
+      .share-top { display: grid; }
+    }
+    """ + shared_ui_css()
+
+
+def build_evidence_library_html() -> str:
+    """Render the public evidence library index."""
+    cards = "\n".join(
+        f"""
+        <article class="library-card">
+          <span class="category">{html.escape(str(entry.get('category')))}</span>
+          <h2>{html.escape(str(entry.get('title')))}</h2>
+          <p>{html.escape(str(entry.get('description')))}</p>
+          <div class="tag-row">{evidence_tags_html(entry)}</div>
+          <div class="action-row">
+            {ui_link("View Example", evidence_library_entry_url(entry), class_name="button primary")}
+            {ui_link("Share Proof Card", evidence_library_share_url(entry), class_name="button secondary")}
+          </div>
+        </article>
+        """
+        for entry in EVIDENCE_LIBRARY_ENTRIES
+    )
+    nav = site_nav_html("Library")
+    actions = action_bar_html(
+        [
+            ("Quote Similar Report", evidence_library_quote_url(EVIDENCE_LIBRARY_ENTRIES[0], "library-index")),
+            ("Share Public Example", evidence_library_share_url(EVIDENCE_LIBRARY_ENTRIES[0])),
+            ("Start Bundle", public_url("/proof-pack/bundle")),
+        ],
+        [
+            ("Sample Report", public_url("/proof-pack/sample")),
+            ("Agent API / x402", public_url("/proof-pack")),
+            ("Contact", public_url("/contact")),
+        ],
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html("AxonGate Evidence Library", "Public examples of citation-backed source trust checks for AI agent builders, RAG teams, vendor reviews, and launch evidence workflows.", "/proof-pack/library", schema_type="CollectionPage")}
+  <style>{evidence_library_css()}</style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="library-hero">
+      <p class="eyebrow">Evidence Library</p>
+      <h1>Public source-trust examples for agent builders.</h1>
+      <p class="summary">These public-safe examples show what AxonGate sells: a decision about whether public sources support a claim, plus citations, risks, source quality, and a clear path to buy a similar report.</p>
+      {actions}
+    </section>
+    <section class="library-grid">{cards}</section>
+    <section class="library-panel">
+      <h2>Why this exists</h2>
+      <p>Public examples make AxonGate easier to evaluate from search, marketplaces, and shared links. Each page shows the decision layer a buyer receives: supported claims, weak evidence, risks, citations, and a clear route from example to checkout.</p>
+    </section>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
+
+
+def build_evidence_library_entry_html(entry: dict[str, Any]) -> str:
+    """Render a public-safe evidence library report example."""
+    nav = site_nav_html("Library")
+    quote_url = evidence_library_quote_url(entry, f"library-{entry['slug']}")
+    share_url = evidence_library_share_url(entry)
+    confidence = float(entry.get("confidence") or 0)
+    confidence_label = f"{confidence:.2f}"
+    target_items = evidence_target_list_html(entry)
+    actions = action_bar_html(
+        [
+            ("Quote Similar Report", quote_url),
+            ("Share Public Example", share_url),
+            ("Start Bundle", public_url("/proof-pack/bundle")),
+        ],
+        [
+            ("Library", public_url("/proof-pack/library")),
+            ("Sample Report", public_url("/proof-pack/sample")),
+            ("Contact", public_url("/contact")),
+        ],
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html(str(entry.get("title")), str(entry.get("description")), f"/proof-pack/library/{entry['slug']}", schema_type="Article")}
+  <style>{evidence_library_css()}</style>
+</head>
+<body>
+  <main>
+    {nav}
+    <article class="library-hero">
+      <p class="eyebrow">{html.escape(str(entry.get('category')))}</p>
+      <h1>{html.escape(str(entry.get('title')))}</h1>
+      <p class="summary">{html.escape(str(entry.get('description')))}</p>
+      {actions}
+      <div class="library-meta">
+        <div><span>Verdict</span><strong>{html.escape(str(entry.get('verdict')))}</strong></div>
+        <div><span>Confidence</span><strong>{html.escape(confidence_label)}</strong></div>
+        <div><span>Bundle</span><strong>{html.escape(str(entry.get('bundle')))}</strong></div>
+        <div><span>Audience</span><strong>{html.escape(str(entry.get('audience')))}</strong></div>
+      </div>
+    </article>
+    <section class="split">
+      <div class="library-panel">
+        <p class="eyebrow">Question</p>
+        <h2>{html.escape(str(entry.get('question')))}</h2>
+        <p>{html.escape(str(entry.get('summary')))}</p>
+        <div class="tag-row">{evidence_tags_html(entry)}</div>
+      </div>
+      <div class="library-panel">
+        <p class="eyebrow">Sources</p>
+        <h2>Public URLs in the sample set</h2>
+        <ul>{target_items}</ul>
+      </div>
+    </section>
+    <section class="library-panel">
+      <p class="eyebrow">Claim map</p>
+      <h2>What an AxonGate report makes inspectable</h2>
+      <div class="claim-grid">{evidence_claim_cards_html(entry)}</div>
+    </section>
+    <section class="library-panel">
+      <p class="eyebrow">Risks</p>
+      <h2>Limits are part of the value</h2>
+      {evidence_risk_list_html(entry)}
+    </section>
+    <section class="library-panel">
+      <p class="eyebrow">Embed</p>
+      <h2>Use this sample as a public trust badge</h2>
+      <pre>{html.escape(evidence_library_embed_snippet(entry))}</pre>
+    </section>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
+
+
+def build_evidence_share_html(entry: dict[str, Any]) -> str:
+    """Render a concise public share card for a library entry."""
+    nav = site_nav_html("Library")
+    quote_url = evidence_library_quote_url(entry, f"share-{entry['slug']}")
+    entry_url = evidence_library_entry_url(entry)
+    embed = evidence_library_embed_snippet(entry)
+    confidence = float(entry.get("confidence") or 0)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html(f"Share: {entry.get('title')}", str(entry.get("summary") or entry.get("description")), f"/proof-pack/share/{entry['slug']}", schema_type="WebPage")}
+  <style>{evidence_library_css()}</style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="share-card">
+      <div class="share-top">
+        <div>
+          <p class="eyebrow">AxonGate evidence check</p>
+          <h1>{html.escape(str(entry.get('title')))}</h1>
+          <p class="summary">{html.escape(str(entry.get('summary')))}</p>
+        </div>
+        <div class="confidence">{html.escape(f"{confidence:.0%}")}</div>
+      </div>
+      <div class="library-meta">
+        <div><span>Verdict</span><strong>{html.escape(str(entry.get('verdict')))}</strong></div>
+        <div><span>Category</span><strong>{html.escape(str(entry.get('category')))}</strong></div>
+        <div><span>Bundle</span><strong>{html.escape(str(entry.get('bundle')))}</strong></div>
+        <div><span>Public sample</span><strong>safe to share</strong></div>
+      </div>
+      <div class="action-row">
+        {ui_link("Open Full Example", entry_url, class_name="button primary")}
+        {ui_link("Quote Similar Report", quote_url, class_name="button secondary")}
+        {ui_link("Start Bundle", public_url("/proof-pack/bundle"), class_name="button secondary")}
+      </div>
+    </section>
+    <section class="embed-box">
+      <h2>Embed badge</h2>
+      <p>Use this public-safe snippet in a README, launch note, or internal doc to explain the evidence workflow.</p>
+      <pre>{html.escape(embed)}</pre>
+    </section>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
+
+
+def build_source_landing_html(source: str) -> str:
+    """Render a source-specific landing page for marketplace and crawler traffic."""
+    normalized_source = normalize_attribution_source(source)
+    copy = SOURCE_LANDING_COPY.get(
+        normalized_source,
+        {
+            "name": normalized_source,
+            "headline": "Source trust checks for agent discovery traffic",
+            "description": "AxonGate turns public URLs into citation-backed evidence decisions for AI agents and product teams.",
+        },
+    )
+    sample_entry = EVIDENCE_LIBRARY_ENTRIES[0]
+    proof_pack_endpoint = public_url(f"/from/{normalized_source}/v1/x402/proof-pack?pack=standard")
+    context_endpoint = public_url(f"/from/{normalized_source}/v1/x402/access?tier={RECOMMENDED_TIER}")
+    preview_url = (
+        public_url("/proof-pack/preview")
+        + f"?target_url={url_quote(PROOF_PACK_SAMPLE_TARGET_URL, safe='')}"
+        + f"&pack=quick&source={url_quote(normalized_source, safe='')}"
+    )
+    quote_url = evidence_library_quote_url(sample_entry, normalized_source)
+    nav = site_nav_html("")
+    actions = action_bar_html(
+        [
+            ("View Evidence Library", public_url("/proof-pack/library")),
+            ("Quote Similar Report", quote_url),
+            ("Try Preview", preview_url),
+        ],
+        [
+            ("Proof Pack x402", proof_pack_endpoint),
+            ("Context x402", context_endpoint),
+            ("Discovery JSON", public_url("/discovery/resources")),
+            ("Docs", public_url("/docs")),
+        ],
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html(f"AxonGate for {copy['name']}", copy["description"], f"/from/{normalized_source}", schema_type="WebPage")}
+  <style>{evidence_library_css()}</style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="library-hero">
+      <p class="eyebrow">Source landing</p>
+      <h1>{html.escape(copy['headline'])}</h1>
+      <p class="summary">{html.escape(copy['description'])}</p>
+      {actions}
+    </section>
+    <section class="split">
+      <div class="library-panel">
+        <h2>What agents get</h2>
+        <ul>
+          <li>Supplier-free quote paths before payment.</li>
+          <li>x402 payment terms for single-source Proof Packs.</li>
+          <li>Evidence Bundles when a claim needs multiple public URLs.</li>
+          <li>Public sample and library pages that explain the category clearly.</li>
+        </ul>
+      </div>
+      <div class="library-panel">
+        <h2>Listing payload</h2>
+        <pre>Proof Pack endpoint: {html.escape(proof_pack_endpoint)}
+Context endpoint: {html.escape(context_endpoint)}
+Sample: {html.escape(public_url('/proof-pack/sample'))}
+Library: {html.escape(public_url('/proof-pack/library'))}</pre>
+      </div>
+    </section>
+    <section class="library-panel">
+      <h2>Why this should convert better</h2>
+      <p>Directory traffic usually wants a machine-readable endpoint. This page adds the missing human layer: what AxonGate is, why the output is worth paying for, and where to see a shareable report before checkout.</p>
+    </section>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
 
 
 def premium_decision_section_html() -> str:
@@ -11134,6 +11753,8 @@ Paid smoke test guide: {public_url("/paid-test")}
 Quote API: {public_url("/v1/x402/quote")}
 Quote page: {public_url("/quote")}
 Proof Pack page: {public_url("/proof-pack")}
+Evidence Library: {public_url("/proof-pack/library")}
+Shareable evidence example: {public_url("/proof-pack/share/source-trust-for-agent-builders")}
 Proof Pack sample page: {public_url("/proof-pack/sample")}
 Proof Pack sample API: {public_url("/v1/proof-pack/sample")}
 Proof Pack mini preview page: {public_url("/proof-pack/preview")}
@@ -11161,6 +11782,7 @@ Agent card alias: {public_url("/.well-known/agent-card.json")}
 x402 discovery: {public_url("/.well-known/x402")}
 x402 JSON alias: {public_url("/.well-known/x402.json")}
 Resource listing: {public_url("/discovery/resources")}
+Source-specific landing page pattern: {public_url("/from/<source>")}
 Sitemap: {public_url("/sitemap.xml")}
 Python client example: {GITHUB_REPO_URL}/blob/main/examples/python_client.py
 cURL examples: {GITHUB_REPO_URL}/blob/main/examples/curl.md
@@ -11210,6 +11832,9 @@ Use only when AxonGate returns a retryable 503 with X-AxonGate-Retry-Credit afte
 ## Source Trust Reports
 
 GET {public_url("/proof-pack")}
+GET {public_url("/proof-pack/library")}
+GET {public_url("/proof-pack/library/source-trust-for-agent-builders")}
+GET {public_url("/proof-pack/share/source-trust-for-agent-builders")}
 GET {public_url("/proof-pack/sample")}
 GET {public_url("/v1/proof-pack/sample")}
 GET {public_url("/proof-pack/preview")}?target_url=<url>&question=<question>&pack=quick|standard|deep
@@ -11356,6 +11981,8 @@ def build_docs_html() -> str:
                 "Product",
                 [
                     ("Source Trust Check", f"{PUBLIC_BASE_URL}/proof-pack"),
+                    ("Evidence Library", f"{PUBLIC_BASE_URL}/proof-pack/library"),
+                    ("Share Public Example", f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders"),
                     ("Evidence Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
                     ("About", f"{PUBLIC_BASE_URL}/about"),
                     ("FAQ", f"{PUBLIC_BASE_URL}/faq"),
@@ -11374,6 +12001,7 @@ def build_docs_html() -> str:
                     ("Agent card", f"{PUBLIC_BASE_URL}/.well-known/agent.json"),
                     ("x402 discovery", f"{PUBLIC_BASE_URL}/.well-known/x402"),
                     ("Resource listing", f"{PUBLIC_BASE_URL}/discovery/resources"),
+                    ("Source landing", f"{PUBLIC_BASE_URL}/from/x402-list"),
                     ("llms.txt", f"{PUBLIC_BASE_URL}/llms.txt"),
                     ("Sitemap", f"{PUBLIC_BASE_URL}/sitemap.xml"),
                 ],
@@ -13200,6 +13828,7 @@ def build_sitemap_xml() -> str:
         ("/quote", "0.9"),
         ("/v1/x402/quote", "0.8"),
         ("/proof-pack", "0.95"),
+        ("/proof-pack/library", "0.95"),
         ("/proof-pack/sample", "0.9"),
         ("/proof-pack/preview", "0.9"),
         ("/proof-pack/quote", "0.9"),
@@ -13226,6 +13855,9 @@ def build_sitemap_xml() -> str:
         ("/openapi.json", "0.7"),
         ("/swagger", "0.7"),
     ]
+    entries.extend((f"/proof-pack/library/{entry['slug']}", "0.9") for entry in EVIDENCE_LIBRARY_ENTRIES)
+    entries.extend((f"/proof-pack/share/{entry['slug']}", "0.85") for entry in EVIDENCE_LIBRARY_ENTRIES)
+    entries.extend((f"/from/{source}", "0.85") for source in SOURCE_ALIAS_PATHS[:6])
     url_entries = "\n".join(
         "  <url>"
         f"<loc>{html.escape(public_url(path), quote=True)}</loc>"
@@ -13614,6 +14246,40 @@ async def proof_pack_page(request: Request):
     """Serve the Proof Pack product page for buyers and agent builders."""
     inc_discovery_hit("discovery_proof_pack_hits_total", attribution_source_from_request(request))
     return build_proof_pack_html()
+
+
+@app.get("/proof-pack/library", response_class=HTMLResponse, tags=["discovery"], summary="Public Evidence Library")
+async def proof_pack_library_page(request: Request):
+    """Serve indexable public-safe evidence report examples."""
+    inc_discovery_hit("discovery_evidence_library_hits_total", attribution_source_from_request(request))
+    return build_evidence_library_html()
+
+
+@app.get("/proof-pack/library/{slug}", response_class=HTMLResponse, tags=["discovery"], summary="Public Evidence Library example")
+async def proof_pack_library_entry_page(request: Request, slug: str):
+    """Serve a public-safe evidence report example by slug."""
+    inc_discovery_hit("discovery_evidence_library_hits_total", attribution_source_from_request(request))
+    entry = evidence_library_entry(slug)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Evidence library example not found.")
+    return build_evidence_library_entry_html(entry)
+
+
+@app.get("/proof-pack/share/{slug}", response_class=HTMLResponse, tags=["discovery"], summary="Shareable AxonGate evidence card")
+async def proof_pack_share_page(request: Request, slug: str):
+    """Serve a concise shareable public-safe evidence card."""
+    inc_discovery_hit("discovery_share_page_hits_total", attribution_source_from_request(request))
+    entry = evidence_library_entry(slug)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Evidence share example not found.")
+    return build_evidence_share_html(entry)
+
+
+@app.get("/from/{source}", response_class=HTMLResponse, tags=["discovery"], summary="Source-specific AxonGate landing page")
+async def source_landing_page(request: Request, source: str):
+    """Serve a landing page tailored to discovery or marketplace source traffic."""
+    inc_discovery_hit("discovery_source_landing_hits_total", attribution_source_from_request(request))
+    return build_source_landing_html(source)
 
 
 @app.get("/proof-pack/bundle", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate Proof Bundle product page")
@@ -14175,6 +14841,9 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quote_api": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
+        "proof_pack_library": f"{PUBLIC_BASE_URL}/proof-pack/library",
+        "proof_pack_share_example": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
+        "proof_pack_share_pattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proof_pack_sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
         "proof_pack_sample_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
         "proof_pack_preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
@@ -14209,6 +14878,7 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "standard_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "legacy_tx_hash_endpoint": f"{PUBLIC_BASE_URL}/v1/access",
         "retry_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/retry",
+        "source_landing_pattern": f"{PUBLIC_BASE_URL}/from/{{source}}",
     }
 
 

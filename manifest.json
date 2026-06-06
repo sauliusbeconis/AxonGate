@@ -171,6 +171,8 @@
     "quote": "https://api.axongate.one/quote",
     "quote_api": "https://api.axongate.one/v1/x402/quote",
     "proof_pack": "https://api.axongate.one/proof-pack",
+    "proof_pack_library": "https://api.axongate.one/proof-pack/library",
+    "proof_pack_share_example": "https://api.axongate.one/proof-pack/share/source-trust-for-agent-builders",
     "proof_pack_sample": "https://api.axongate.one/proof-pack/sample",
     "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
     "proof_pack_preview": "https://api.axongate.one/proof-pack/preview",
@@ -201,6 +203,7 @@
     "x402": "https://api.axongate.one/.well-known/x402",
     "x402_json": "https://api.axongate.one/.well-known/x402.json",
     "discovery": "https://api.axongate.one/discovery/resources",
+    "source_landing_example": "https://api.axongate.one/from/x402-list",
     "metrics": "https://api.axongate.one/metrics"
   },
   "examples": {
@@ -380,6 +383,8 @@
       "openapi": "https://api.axongate.one/openapi.json",
       "quote": "https://api.axongate.one/v1/x402/quote",
       "proof_pack": "https://api.axongate.one/proof-pack",
+      "proof_pack_library": "https://api.axongate.one/proof-pack/library",
+      "proof_pack_share_example": "https://api.axongate.one/proof-pack/share/source-trust-for-agent-builders",
       "proof_pack_sample": "https://api.axongate.one/proof-pack/sample",
       "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
       "proof_pack_preview": "https://api.axongate.one/proof-pack/preview",
@@ -398,6 +403,7 @@
       "proof_bundle_recovery_api": "https://api.axongate.one/v1/proof-pack/bundle/recover",
       "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
       "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
+      "source_landing_example": "https://api.axongate.one/from/x402-list",
       "sitemap": "https://api.axongate.one/sitemap.xml"
     },
     "tags": [

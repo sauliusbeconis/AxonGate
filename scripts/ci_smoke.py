@@ -103,6 +103,10 @@ async def main() -> None:
             "/paid-test",
             "/quote",
             "/proof-pack",
+            "/proof-pack/library",
+            "/proof-pack/library/source-trust-for-agent-builders",
+            "/proof-pack/share/source-trust-for-agent-builders",
+            "/from/x402-list",
             "/proof-pack/sample",
             "/proof-pack/preview",
             "/proof-pack/quote",
@@ -137,12 +141,32 @@ async def main() -> None:
         assert legacy_package_copy not in root_page.text, "Homepage should not expose awkward package wording"
         root_discovery = await client.get("/?format=json")
         assert root_discovery.status_code == 200, "Root discovery JSON should still render"
-        assert root_discovery.json()["status"] == "alive", "Root discovery JSON returned wrong status"
+        root_discovery_json = root_discovery.json()
+        assert root_discovery_json["status"] == "alive", "Root discovery JSON returned wrong status"
+        assert root_discovery_json["proof_pack_library"].endswith("/proof-pack/library"), (
+            "Root discovery missing Evidence Library"
+        )
+        assert root_discovery_json["source_landing_pattern"].endswith("/from/{source}"), (
+            "Root discovery missing source landing pattern"
+        )
 
         proof_pack_page = await client.get("/proof-pack")
         assert "<link rel=\"canonical\"" in proof_pack_page.text, "Proof Pack page missing canonical link"
         assert "Contact</a>" in proof_pack_page.text, "Proof Pack page footer should include Contact"
         assert "A parser returns text" in proof_pack_page.text, "Proof Pack page should keep parser contrast"
+        assert "Evidence Library" in proof_pack_page.text, "Proof Pack page should link growth library"
+        library_page = await client.get("/proof-pack/library")
+        assert "Public source-trust examples" in library_page.text, "Evidence Library missing growth headline"
+        assert "Quote Similar Report" in library_page.text, "Evidence Library missing buyer CTA"
+        library_entry = await client.get("/proof-pack/library/source-trust-for-agent-builders")
+        assert "Source Trust For Agent Builders" in library_entry.text, "Library entry missing title"
+        assert "Embed" in library_entry.text, "Library entry missing embed snippet"
+        share_page = await client.get("/proof-pack/share/source-trust-for-agent-builders")
+        assert "AxonGate evidence check" in share_page.text, "Share page missing evidence-card framing"
+        assert "Quote Similar Report" in share_page.text, "Share page missing conversion CTA"
+        source_landing = await client.get("/from/x402-list")
+        assert "x402 source trust endpoint" in source_landing.text, "Source landing missing tailored headline"
+        assert "/from/x402-list/v1/x402/proof-pack" in source_landing.text, "Source landing missing alias endpoint"
         proof_sample_page = await client.get("/proof-pack/sample")
         assert "Sample Evidence Decision" in proof_sample_page.text, "Sample page should lead with evidence decision"
         assert "Why This Is Worth Buying" in proof_sample_page.text, "Sample page should explain buyer value"
@@ -152,6 +176,12 @@ async def main() -> None:
         contact_page = await client.get("/contact")
         assert "Contact AxonGate" in contact_page.text, "Contact page missing heading"
         assert "name=\"email\"" in contact_page.text, "Contact page missing email field"
+        sitemap_page = await client.get("/sitemap.xml")
+        assert "/proof-pack/library" in sitemap_page.text, "Sitemap missing Evidence Library"
+        assert "/proof-pack/share/source-trust-for-agent-builders" in sitemap_page.text, (
+            "Sitemap missing share example"
+        )
+        assert "/from/x402-list" in sitemap_page.text, "Sitemap missing source landing page"
 
         secure_sample = await client.get(
             "/proof-pack/sample",
@@ -962,6 +992,9 @@ async def main() -> None:
         assert "proofPackSampleApi" in x402_discovery["metadata"], "Proof Pack sample missing from public discovery"
         assert "proofPackPreview" in x402_discovery["metadata"], "Proof Pack preview page missing from public discovery"
         assert "proofPackPreviewApi" in x402_discovery["metadata"], "Proof Pack preview API missing from public discovery"
+        assert "proofPackLibrary" in x402_discovery["metadata"], "Evidence Library missing from public discovery"
+        assert "proofPackSharePattern" in x402_discovery["metadata"], "share pattern missing from public discovery"
+        assert "sourceLandingPattern" in x402_discovery["metadata"], "source landing pattern missing from public discovery"
         assert "proofPackQuote" in x402_discovery["metadata"], "Proof Pack quote page missing from public discovery"
         assert "proofPackRequest" in x402_discovery["metadata"], "Proof Pack request page missing from public discovery"
         assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
@@ -991,6 +1024,8 @@ async def main() -> None:
         )
         assert "/v1/stripe/webhook" not in openapi_paths, "OpenAPI should not advertise private Stripe webhook"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
+        assert openapi["x-payment-info"].get("proofPackLibrary"), "OpenAPI payment info missing Evidence Library"
+        assert openapi["x-payment-info"].get("sourceLandingPattern"), "OpenAPI payment info missing source landing pattern"
 
         contact_payload = {
             "name": "CI Builder",
@@ -1093,6 +1128,15 @@ async def main() -> None:
             "discovery alias hits should be counted"
         )
         assert metrics["metrics"].get("favicon_hits_total", 0) >= 1, "favicon probes should be counted"
+        assert metrics["metrics"].get("discovery_evidence_library_hits_total", 0) >= 2, (
+            "Evidence Library hits should be counted"
+        )
+        assert metrics["metrics"].get("discovery_share_page_hits_total", 0) >= 1, (
+            "share page hits should be counted"
+        )
+        assert metrics["metrics"].get("discovery_source_landing_hits_total", 0) >= 1, (
+            "source landing hits should be counted"
+        )
 
 
 if __name__ == "__main__":

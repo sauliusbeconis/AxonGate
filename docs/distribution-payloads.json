@@ -1,5 +1,7 @@
 {
   "base_url": "https://api.axongate.one",
+  "proof_pack_library": "https://api.axongate.one/proof-pack/library",
+  "proof_pack_share_example": "https://api.axongate.one/proof-pack/share/source-trust-for-agent-builders",
   "proof_pack_sample": "https://api.axongate.one/proof-pack/sample",
   "proof_pack_sample_api": "https://api.axongate.one/v1/proof-pack/sample",
   "proof_pack_preview": "https://api.axongate.one/proof-pack/preview",
@@ -16,6 +18,7 @@
   "proof_bundle_recovery_api": "https://api.axongate.one/v1/proof-pack/bundle/recover",
   "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
   "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
+  "source_landing_example": "https://api.axongate.one/from/x402-list",
   "sources": {
     "x402-list": {
       "endpoint": "https://api.axongate.one/from/x402-list/v1/x402/starter",
@@ -27,6 +30,7 @@
       "proof_bundle": "https://api.axongate.one/proof-pack/bundle?source=x402-list",
       "proof_bundle_quote": "https://api.axongate.one/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=x402-list",
       "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=x402-list",
+      "source_landing": "https://api.axongate.one/from/x402-list",
       "docs": "https://api.axongate.one/docs?source=x402-list",
       "paid_test": "https://api.axongate.one/paid-test?source=x402-list"
     },
@@ -48,6 +52,7 @@
       "proof_bundle": "https://api.axongate.one/proof-pack/bundle?source=payanagent",
       "proof_bundle_quote": "https://api.axongate.one/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=payanagent",
       "proof_bundle_checkout": "https://api.axongate.one/proof-pack/bundle/pay?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=payanagent",
+      "source_landing": "https://api.axongate.one/from/payanagent",
       "docs": "https://api.axongate.one/docs?source=payanagent",
       "paid_test": "https://api.axongate.one/paid-test?source=payanagent",
       "agent_id": "j579abv0vkymwrxw480hy19xhx85t28n",
