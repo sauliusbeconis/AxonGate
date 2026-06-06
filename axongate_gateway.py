@@ -152,6 +152,11 @@ SECURITY_HEADERS_ENABLED = os.getenv("AXONGATE_SECURITY_HEADERS_ENABLED", "true"
     "false",
     "no",
 }
+CRAWLER_GUARD_ENABLED = os.getenv("AXONGATE_CRAWLER_GUARD_ENABLED", "true").lower() not in {
+    "0",
+    "false",
+    "no",
+}
 HSTS_MAX_AGE_SECONDS = int(os.getenv("AXONGATE_HSTS_MAX_AGE_SECONDS", "31536000"))
 PREFLIGHT_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_PREFLIGHT_TIMEOUT_SECONDS", "5"))
 PREFLIGHT_MAX_REDIRECTS = int(os.getenv("AXONGATE_PREFLIGHT_MAX_REDIRECTS", "3"))
@@ -379,6 +384,11 @@ metrics: dict[str, int] = {
     "discovery_agent_card_hits_total": 0,
     "discovery_x402_hits_total": 0,
     "discovery_resources_hits_total": 0,
+    "discovery_alias_hits_total": 0,
+    "favicon_hits_total": 0,
+    "crawler_guard_no_user_agent_total": 0,
+    "legacy_access_health_hits_total": 0,
+    "legacy_access_probe_challenges_total": 0,
     "target_preflight_total": 0,
     "target_preflight_rejections_total": 0,
     "ssrf_rejections_total": 0,
@@ -456,6 +466,22 @@ PAYMENT_PROOF_HEADERS = (
     "X-Payment",
     "X-Payment-Signature",
 )
+NO_USER_AGENT_PRIVATE_PREFIXES = (
+    "/operator/leads",
+    "/operator/orders",
+    "/v1/operator",
+    "/v1/stripe/webhook",
+)
+NO_USER_AGENT_WRITE_PATHS = {
+    "/contact",
+    "/v1/contact",
+    "/proof-pack/request",
+    "/v1/proof-pack/leads",
+    "/proof-pack/bundle/request",
+    "/v1/proof-pack/bundle/leads",
+    "/v1/proof-pack/bundle/recover",
+    "/v1/stripe/webhook",
+}
 
 
 class AccessRequest(BaseModel):
@@ -1739,8 +1765,6 @@ def build_x402_resource() -> dict[str, Any]:
             "contact": f"{PUBLIC_BASE_URL}/contact",
             "contactApi": f"{PUBLIC_BASE_URL}/v1/contact",
             "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
-            "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
-            "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
             "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
             "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -1765,9 +1789,6 @@ def build_x402_resource() -> dict[str, Any]:
             "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
             "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
             "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
-            "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
-            "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
-            "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
             "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -1909,11 +1930,6 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
             "deliveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/delivery",
             "recoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
-            "operatorLeads": f"{PUBLIC_BASE_URL}/operator/leads",
-            "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
-            "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
-            "operatorStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
-            "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
             "defaultBundle": DEFAULT_PROOF_BUNDLE,
             "paymentLinkConfigured": any(bool(url) for url in PROOF_BUNDLE_PAYMENT_URLS.values()),
             "pipelineStatuses": list(PROOF_BUNDLE_LEAD_STATUSES),
@@ -2003,8 +2019,6 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
-        "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
-        "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -2029,9 +2043,6 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
-        "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
-        "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
-        "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
         "demo": f"{PUBLIC_BASE_URL}/demo",
         "llmsTxt": f"{PUBLIC_BASE_URL}/llms.txt",
         "openapi": f"{PUBLIC_BASE_URL}/openapi.json",
@@ -2257,11 +2268,6 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofBundleRecoveryApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/recover",
         "proofBundleQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote",
         "proofBundleLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/leads",
-        "operatorOrders": f"{PUBLIC_BASE_URL}/operator/orders",
-        "operatorOrdersApi": f"{PUBLIC_BASE_URL}/v1/operator/orders",
-        "operatorLeadStatusApi": f"{PUBLIC_BASE_URL}/v1/operator/leads/{{lead_id}}/status",
-        "operatorOrderEmailApi": f"{PUBLIC_BASE_URL}/v1/operator/orders/{{lead_id}}/resend-email",
-        "stripeWebhook": f"{PUBLIC_BASE_URL}/v1/stripe/webhook",
         "paymentHeader": "PAYMENT-SIGNATURE",
         "tierHeader": "X-AxonGate-Tier",
         "tierQueryParam": "tier",
@@ -3370,10 +3376,46 @@ def add_security_headers(response: Response, request: Request) -> None:
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 
 
+def has_auth_or_payment_signal(request: Request) -> bool:
+    """Detect callers that are probably legitimate even when their user agent is blank."""
+    headers = request.headers
+    if headers.get("Authorization") or headers.get("X-AxonGate-Operator-Token"):
+        return True
+    if headers.get("Stripe-Signature") or headers.get("X-AxonGate-Payment-Hash"):
+        return True
+    if headers.get("X-AxonGate-Retry-Credit"):
+        return True
+    if any(headers.get(header) for header in PAYMENT_PROOF_HEADERS):
+        return True
+    return bool(request.query_params.get("operator_token") or request.query_params.get("token"))
+
+
+def path_matches_prefix(path: str, prefixes: tuple[str, ...]) -> bool:
+    return any(path == prefix or path.startswith(f"{prefix}/") for prefix in prefixes)
+
+
+def should_guard_blank_user_agent(request: Request) -> bool:
+    """Return true for anonymous no-UA crawler hits on private or write-only surfaces."""
+    if not CRAWLER_GUARD_ENABLED:
+        return False
+    if (request.headers.get("user-agent") or "").strip():
+        return False
+    if has_auth_or_payment_signal(request):
+        return False
+
+    path = request.url.path
+    if path_matches_prefix(path, NO_USER_AGENT_PRIVATE_PREFIXES):
+        return True
+    return request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and path in NO_USER_AGENT_WRITE_PATHS
+
+
 @app.middleware("http")
 async def enforce_security_and_enrich_402_guidance(request: Request, call_next):
     if should_redirect_to_https(request):
         response = RedirectResponse(https_redirect_url(request), status_code=308)
+    elif should_guard_blank_user_agent(request):
+        inc_metric("crawler_guard_no_user_agent_total")
+        response = Response(status_code=204, headers={"X-AxonGate-Crawler-Guard": "no-user-agent"})
     else:
         response = await call_next(request)
     add_security_headers(response, request)
@@ -6931,7 +6973,6 @@ async def build_proof_bundle_quote(
             "external_payment_url_configured": bool(payment_url),
             "single_source_proof_pack_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
             "single_source_quote_api": public_url("/v1/proof-pack/quote"),
-            "operator_leads": public_url("/operator/leads"),
             "note": "Proof Bundle checkout clicks are tracked; configured payment links redirect to checkout, otherwise AxonGate falls back to request capture.",
         },
     }
@@ -7438,7 +7479,6 @@ def proof_bundle_lead_public_response(lead: dict[str, Any]) -> dict[str, Any]:
             "payment_url": lead["payment_url"],
             "checkout_url": lead.get("checkout_url") or lead["payment_url"],
             "payment_link_configured": lead["payment_link_configured"],
-            "operator_leads": public_url("/operator/leads"),
             "single_source_proof_pack_endpoint": lead["paid_endpoint"],
         },
     }
@@ -11088,8 +11128,7 @@ About: {public_url("/about")}
 FAQ: {public_url("/faq")}
 Contact: {public_url("/contact")}
 Operator dashboard: {public_url("/operator")}
-Private Proof Pack lead inbox: {public_url("/operator/leads")} (requires AXONGATE_OPERATOR_TOKEN)
-Private Proof Bundle order console: {public_url("/operator/orders")} (requires AXONGATE_OPERATOR_TOKEN)
+Private operator lead and order consoles require AXONGATE_OPERATOR_TOKEN and are reached from the operator dashboard.
 Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
 Quote API: {public_url("/v1/x402/quote")}
@@ -11112,7 +11151,7 @@ Proof Bundle delivery page: {public_url("/proof-pack/bundle/delivery")}?session_
 Proof Bundle delivery API: {public_url("/v1/proof-pack/bundle/delivery")}?session_id={{CHECKOUT_SESSION_ID}}
 Proof Bundle recovery page: {public_url("/proof-pack/bundle/recover")}
 Proof Bundle recovery API: {public_url("/v1/proof-pack/bundle/recover")}?email=<checkout-email>&target_url=<submitted-url>
-Stripe Proof Bundle fulfillment webhook: {public_url("/v1/stripe/webhook")}
+Stripe Proof Bundle fulfillment webhook: configured privately in Stripe with AXONGATE_STRIPE_WEBHOOK_SECRET.
 Interactive demo: {public_url("/demo")}
 OpenAPI JSON: {public_url("/openapi.json")}
 Swagger UI: {public_url("/swagger")}
@@ -11179,10 +11218,6 @@ GET {public_url("/proof-pack/quote")}?target_url=<url>&question=<question>&pack=
 GET {public_url("/v1/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/proof-pack/request")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 POST {public_url("/v1/proof-pack/leads")}
-GET {public_url("/operator/leads")} (private operator token required)
-GET {public_url("/v1/operator/leads")} (private operator token required)
-GET {public_url("/operator/orders")} (private operator token required)
-GET {public_url("/v1/operator/orders")} (private operator token required)
 POST {public_url("/v1/x402/proof-pack")}?pack=standard
 Header: X-AxonGate-Pack: standard
 Body example:
@@ -11201,9 +11236,6 @@ GET {public_url("/proof-pack/bundle/recover")}
 GET {public_url("/v1/proof-pack/bundle/recover")}?email=<checkout-email>&target_url=<submitted-url>
 GET {public_url("/v1/proof-pack/bundle/quote")}?target_urls=<newline-separated-urls>&question=<question>&bundle=scout|builder|audit
 POST {public_url("/v1/proof-pack/bundle/leads")}
-POST {public_url("/v1/operator/leads/<lead_id>/status")} (private operator token required; statuses: {", ".join(PROOF_BUNDLE_LEAD_STATUSES)})
-POST {public_url("/v1/operator/orders/<lead_id>/resend-email")} (private operator token required)
-POST {public_url("/v1/stripe/webhook")} (Stripe-signed Checkout events; set AXONGATE_STRIPE_WEBHOOK_SECRET)
 
 Proof Bundle prices:
 {proof_bundle_lines}
@@ -11350,8 +11382,6 @@ def build_docs_html() -> str:
                 "Operators",
                 [
                     ("Operator dashboard", f"{PUBLIC_BASE_URL}/operator"),
-                    ("Private leads", f"{PUBLIC_BASE_URL}/operator/leads"),
-                    ("Private orders", f"{PUBLIC_BASE_URL}/operator/orders"),
                     ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
                     ("Paid test guide", f"{PUBLIC_BASE_URL}/paid-test"),
                     ("Quote", f"{PUBLIC_BASE_URL}/quote"),
@@ -11480,8 +11510,7 @@ def build_docs_html() -> str:
     <pre>curl -X POST "{public}/v1/proof-pack/leads" \\
   -H "Content-Type: application/json" \\
   -d '{proof_lead_json}'</pre>
-    <p>Private lead and order consoles: <code>{public}/operator/leads</code>, <code>{public}/operator/orders</code>, <code>{public}/v1/operator/leads</code>, and <code>{public}/v1/operator/orders</code> require <code>AXONGATE_OPERATOR_TOKEN</code>. Optional notifications use <code>AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL</code>.</p>
-    <pre>curl -H "X-AxonGate-Operator-Token: &lt;token&gt;" "{public}/v1/operator/leads?limit=25"</pre>
+    <p>Private lead and order consoles require <code>AXONGATE_OPERATOR_TOKEN</code> and are reached from the operator dashboard after authentication. Optional notifications use <code>AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL</code>.</p>
     <pre>{proof_request_json}</pre>
     <pre>{proof_curl_example}</pre>
 
@@ -11495,7 +11524,7 @@ def build_docs_html() -> str:
     </div>
     <p>Bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
     <p>Tracked checkout route: <code>{public}/proof-pack/bundle/pay</code>. Configure payment URLs with <code>AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL</code>, <code>AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL</code>, and <code>AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL</code>.</p>
-    <p>Stripe fulfillment webhook: <code>{public}/v1/stripe/webhook</code>. Configure Stripe to send <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, and <code>checkout.session.async_payment_failed</code>, then set <code>AXONGATE_STRIPE_WEBHOOK_SECRET</code> from the Stripe signing secret.</p>
+    <p>Stripe fulfillment webhook: configure the private Stripe endpoint path in the Stripe Dashboard, send <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, and <code>checkout.session.async_payment_failed</code>, then set <code>AXONGATE_STRIPE_WEBHOOK_SECRET</code> from the Stripe signing secret.</p>
     <p>Stripe Payment Links should redirect after payment to <code>{public}/proof-pack/bundle/delivery?session_id={{CHECKOUT_SESSION_ID}}</code>. The webhook still handles fulfillment if the buyer closes Stripe before redirecting, and buyers can recover delivery at <code>{public}/proof-pack/bundle/recover</code> with their checkout email and one submitted target URL.</p>
     <p>Email delivery uses Resend when configured. Set <code>AXONGATE_EMAIL_DELIVERY_ENABLED=true</code>, <code>AXONGATE_EMAIL_FROM=AxonGate &lt;reports@axongate.one&gt;</code>, and <code>AXONGATE_RESEND_API_KEY</code>; fulfilled Proof Bundles email the customer a delivery link and concise report summary.</p>
     <pre>curl "{public}/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&amp;bundle=scout&amp;source=docs"</pre>
@@ -13289,7 +13318,12 @@ async def operator_dashboard(request: Request):
     return build_operator_dashboard_html(metric_values, attribution, rolling_attribution, triggered_alerts)
 
 
-@app.post("/v1/stripe/webhook", tags=["operations"], summary="Stripe Checkout fulfillment webhook")
+@app.post(
+    "/v1/stripe/webhook",
+    tags=["operations"],
+    summary="Stripe Checkout fulfillment webhook",
+    include_in_schema=False,
+)
 async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Header(None, alias="Stripe-Signature")):
     """Accept verified Stripe Checkout events and create paid Proof Bundle leads."""
     inc_metric("stripe_webhook_events_total")
@@ -13361,7 +13395,13 @@ async def stripe_webhook(request: Request, stripe_signature: Optional[str] = Hea
     }
 
 
-@app.get("/operator/leads", response_class=HTMLResponse, tags=["operations"], summary="Private Proof Pack lead inbox")
+@app.get(
+    "/operator/leads",
+    response_class=HTMLResponse,
+    tags=["operations"],
+    summary="Private Proof Pack lead inbox",
+    include_in_schema=False,
+)
 async def operator_leads_page(request: Request, limit: int = 50):
     """Serve a token-protected operator inbox with raw Proof Pack lead contact data."""
     require_operator_access(request)
@@ -13372,7 +13412,7 @@ async def operator_leads_page(request: Request, limit: int = 50):
     return build_operator_leads_html(leads, proof_pack_lead_stats(leads), bounded_limit, query_token)
 
 
-@app.get("/v1/operator/leads", tags=["operations"], summary="Private Proof Pack lead JSON")
+@app.get("/v1/operator/leads", tags=["operations"], summary="Private Proof Pack lead JSON", include_in_schema=False)
 async def operator_leads_api(request: Request, limit: int = 50):
     """Return token-protected Proof Pack leads with raw contact data for private automation."""
     require_operator_access(request)
@@ -13391,7 +13431,13 @@ async def operator_leads_api(request: Request, limit: int = 50):
     }
 
 
-@app.get("/operator/orders", response_class=HTMLResponse, tags=["operations"], summary="Private Proof Bundle order console")
+@app.get(
+    "/operator/orders",
+    response_class=HTMLResponse,
+    tags=["operations"],
+    summary="Private Proof Bundle order console",
+    include_in_schema=False,
+)
 async def operator_orders_page(request: Request, limit: int = 50):
     """Serve a token-protected fulfillment console for paid Proof Bundle orders."""
     require_operator_access(request)
@@ -13403,7 +13449,7 @@ async def operator_orders_page(request: Request, limit: int = 50):
     return build_operator_orders_html(orders, proof_bundle_order_stats(orders), bounded_limit, query_token)
 
 
-@app.get("/v1/operator/orders", tags=["operations"], summary="Private Proof Bundle order JSON")
+@app.get("/v1/operator/orders", tags=["operations"], summary="Private Proof Bundle order JSON", include_in_schema=False)
 async def operator_orders_api(request: Request, limit: int = 50):
     """Return token-protected Proof Bundle order details for private automation."""
     require_operator_access(request)
@@ -13450,7 +13496,12 @@ async def resend_proof_bundle_order_email(lead_id: str) -> Optional[dict[str, An
     return emailed or await find_stored_proof_pack_lead(lead_id) or refreshed
 
 
-@app.post("/v1/operator/orders/{lead_id}/resend-email", tags=["operations"], summary="Resend Proof Bundle delivery email")
+@app.post(
+    "/v1/operator/orders/{lead_id}/resend-email",
+    tags=["operations"],
+    summary="Resend Proof Bundle delivery email",
+    include_in_schema=False,
+)
 async def operator_order_resend_email_api(request: Request, lead_id: str):
     """Force one customer delivery email retry for a private Proof Bundle order."""
     require_operator_access(request)
@@ -13468,7 +13519,13 @@ async def operator_order_resend_email_api(request: Request, lead_id: str):
     }
 
 
-@app.post("/operator/orders/{lead_id}/resend-email", response_class=HTMLResponse, tags=["operations"], summary="Resend Proof Bundle delivery email from operator page")
+@app.post(
+    "/operator/orders/{lead_id}/resend-email",
+    response_class=HTMLResponse,
+    tags=["operations"],
+    summary="Resend Proof Bundle delivery email from operator page",
+    include_in_schema=False,
+)
 async def operator_order_resend_email_form(request: Request, lead_id: str, limit: int = 50):
     """Accept a browser resend-email action for private Proof Bundle orders."""
     require_operator_access(request)
@@ -13485,7 +13542,12 @@ async def operator_order_resend_email_form(request: Request, lead_id: str, limit
     return build_operator_orders_html(orders, proof_bundle_order_stats(orders), bounded_limit, query_token)
 
 
-@app.post("/v1/operator/leads/{lead_id}/status", tags=["operations"], summary="Update private lead pipeline status")
+@app.post(
+    "/v1/operator/leads/{lead_id}/status",
+    tags=["operations"],
+    summary="Update private lead pipeline status",
+    include_in_schema=False,
+)
 async def operator_lead_status_api(request: Request, lead_id: str, status_update: OperatorLeadStatusUpdate):
     """Move a private lead through the operator pipeline."""
     require_operator_access(request)
@@ -13504,7 +13566,13 @@ async def operator_lead_status_api(request: Request, lead_id: str, status_update
     return {"status": "ok", "lead": updated, "stats": proof_pack_lead_stats(await durable_proof_pack_leads())}
 
 
-@app.post("/operator/leads/{lead_id}/status", response_class=HTMLResponse, tags=["operations"], summary="Update private lead pipeline status from operator page")
+@app.post(
+    "/operator/leads/{lead_id}/status",
+    response_class=HTMLResponse,
+    tags=["operations"],
+    summary="Update private lead pipeline status from operator page",
+    include_in_schema=False,
+)
 async def operator_lead_status_form(request: Request, lead_id: str, limit: int = 50):
     """Accept a browser form update for private lead status."""
     require_operator_access(request)
@@ -14102,10 +14170,6 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "contact_api": f"{PUBLIC_BASE_URL}/v1/contact",
         "contact_email": PUBLIC_CONTACT_EMAIL,
         "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
-        "operator_leads": f"{PUBLIC_BASE_URL}/operator/leads",
-        "operator_leads_api": f"{PUBLIC_BASE_URL}/v1/operator/leads",
-        "operator_orders": f"{PUBLIC_BASE_URL}/operator/orders",
-        "operator_orders_api": f"{PUBLIC_BASE_URL}/v1/operator/orders",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -14171,6 +14235,25 @@ async def health():
     return {"status": "alive", "vault_address": load_vault_address()}
 
 
+@app.get("/v1/access/health", tags=["legacy"], summary="Legacy access health compatibility", include_in_schema=False)
+async def legacy_access_health():
+    """Return an explicit alive response for monitors still probing the legacy route."""
+    inc_metric("legacy_access_health_hits_total")
+    return {
+        "status": "alive",
+        "endpoint": public_url("/v1/access"),
+        "preferred_endpoint": public_url("/v1/x402/access"),
+        "payment_required": True,
+    }
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Return a tiny response for browser and crawler favicon probes."""
+    inc_metric("favicon_hits_total")
+    return Response(status_code=204)
+
+
 @app.get("/manifest.json", tags=["discovery"], summary="Canonical agent manifest")
 async def manifest(request: Request):
     """Return the full AxonGate agent card used by other agents for discovery."""
@@ -14230,6 +14313,14 @@ async def discovery_resources(request: Request, type: Optional[str] = None, limi
     }
 
 
+@app.get("/x402/discovery/resources", include_in_schema=False)
+@app.get("/v2/x402/discovery/resources", include_in_schema=False)
+async def discovery_resources_alias(request: Request, type: Optional[str] = None, limit: int = 20, offset: int = 0):
+    """Serve compatibility aliases used by some x402 directory crawlers."""
+    inc_metric("discovery_alias_hits_total")
+    return await discovery_resources(request, type=type, limit=limit, offset=offset)
+
+
 @app.get("/metrics", tags=["operations"], summary="Operational metrics")
 async def metrics_snapshot():
     """Expose lightweight operational counters for conversion and margin tuning."""
@@ -14273,7 +14364,6 @@ async def metrics_snapshot():
         },
         "stripe": {
             "webhook_enabled": bool(STRIPE_WEBHOOK_SECRET),
-            "webhook_endpoint": public_url("/v1/stripe/webhook"),
             "events_redis_key": STRIPE_EVENTS_REDIS_KEY if redis_client and METRICS_PERSISTENCE_ENABLED else None,
             "event_retention_seconds": STRIPE_EVENTS_RETENTION_SECONDS,
             "signature_tolerance_seconds": STRIPE_WEBHOOK_TOLERANCE_SECONDS,
@@ -14833,6 +14923,32 @@ async def retry_context_broker_delivery(
             "eth_usdc_floor_applied": profitability.eth_usdc_floor_applied,
         },
     }
+
+
+@app.get("/v1/access", tags=["legacy"], summary="Legacy access payment requirements", include_in_schema=False)
+async def access_context_broker_legacy_probe(request: Request, tier: str = RECOMMENDED_TIER):
+    """Return a 402 challenge for monitors or agents that probe the legacy POST endpoint with GET."""
+    inc_metric("requests_total")
+    inc_metric("legacy_access_requests_total")
+    inc_metric("legacy_access_probe_challenges_total")
+    inc_metric("payment_required_total")
+    inc_metric("payment_challenges_total")
+    source = attribution_source_from_request(request)
+    inc_attribution("payment_challenges", source)
+    try:
+        await enforce_rate_limit("legacy_probe_ip", client_rate_identifier(request), RATE_LIMIT_PROBE_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+
+    detail = (
+        "Payment Required. POST JSON to /v1/access with X-AxonGate-Payment-Hash, "
+        "or use standard x402 at /v1/x402/access."
+    )
+    raise HTTPException(
+        status_code=402,
+        detail=payment_required_detail(detail, tier),
+        headers=payment_required_headers(detail, tier),
+    )
 
 
 @app.post(

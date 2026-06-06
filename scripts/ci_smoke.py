@@ -84,12 +84,15 @@ async def main() -> None:
         expected_ok = [
             "/",
             "/health",
+            "/v1/access/health",
             "/manifest.json",
             "/.well-known/agent.json",
             "/.well-known/agent-card.json",
             "/.well-known/x402",
             "/.well-known/x402.json",
             "/discovery/resources",
+            "/x402/discovery/resources",
+            "/v2/x402/discovery/resources",
             "/llms.txt",
             "/docs",
             "/about",
@@ -166,6 +169,15 @@ async def main() -> None:
         assert public_http_sample.headers.get("location") == (
             "https://api.axongate.one/proof-pack/sample"
         ), "public HTTP sample redirect location mismatch"
+        favicon = await client.get("/favicon.ico")
+        assert favicon.status_code == 204, "favicon probes should return a tiny no-content response"
+
+        legacy_health = (await client.get("/v1/access/health")).json()
+        assert legacy_health["status"] == "alive", "legacy health compatibility route should be alive"
+        assert legacy_health["payment_required"] is True, "legacy health should advertise paid access"
+        legacy_probe = await client.get("/v1/access")
+        assert legacy_probe.status_code == 402, f"legacy access GET probe returned {legacy_probe.status_code}"
+        assert legacy_probe.headers.get("PAYMENT-REQUIRED"), "legacy access GET probe missing payment terms"
 
         probe = await client.get("/v1/x402/access")
         assert probe.status_code == 402, f"x402 probe returned {probe.status_code}"
@@ -386,9 +398,17 @@ async def main() -> None:
         assert proof_bundle_lead_json["contact_received"] is True, "Proof Bundle lead should acknowledge contact privately"
         assert "contact" not in proof_bundle_lead_json, "Proof Bundle lead response must not echo contact"
 
-        operator_leads_unauthorized = await client.get("/operator/leads")
+        no_ua_operator_orders = await client.get("/operator/orders", headers={"User-Agent": ""})
+        assert no_ua_operator_orders.status_code == 204, "blank-UA operator crawler should be quietly suppressed"
+        assert no_ua_operator_orders.headers.get("X-AxonGate-Crawler-Guard") == "no-user-agent", (
+            "blank-UA guard should mark suppressed private probes"
+        )
+        no_ua_webhook = await client.post("/v1/stripe/webhook", headers={"User-Agent": ""})
+        assert no_ua_webhook.status_code == 204, "blank-UA webhook crawler should be quietly suppressed"
+
+        operator_leads_unauthorized = await client.get("/operator/leads", headers={"User-Agent": "ci-browser"})
         assert operator_leads_unauthorized.status_code == 401, "operator leads should require a token"
-        operator_orders_unauthorized = await client.get("/operator/orders")
+        operator_orders_unauthorized = await client.get("/operator/orders", headers={"User-Agent": "ci-browser"})
         assert operator_orders_unauthorized.status_code == 401, "operator orders should require a token"
 
         operator_leads_page = await client.get("/operator/leads?operator_token=ci-operator-token&limit=10")
@@ -947,7 +967,8 @@ async def main() -> None:
         assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
         assert "proofBundleQuote" in x402_discovery["metadata"], "Proof Bundle quote missing from public discovery"
         assert "proofBundles" in x402_discovery["metadata"], "Proof Bundle pricing missing from public discovery"
-        assert "operatorOrders" in x402_discovery["metadata"], "Operator orders missing from public discovery"
+        assert "operatorOrders" not in x402_discovery["metadata"], "Operator orders should stay out of public discovery"
+        assert "stripeWebhook" not in x402_discovery["metadata"], "Stripe webhook should stay out of public discovery"
 
         openapi = (await client.get("/openapi.json")).json()
         schemas = openapi.get("components", {}).get("schemas", {})
@@ -962,14 +983,13 @@ async def main() -> None:
         assert proof_operation.get("x-payment-info"), "OpenAPI payment extension missing from Proof Pack endpoint"
         contact_operation = openapi.get("paths", {}).get("/v1/contact", {}).get("post", {})
         assert contact_operation, "OpenAPI contact endpoint missing"
-        operator_operation = openapi.get("paths", {}).get("/v1/operator/leads", {}).get("get", {})
-        assert operator_operation.get("security"), "OpenAPI operator leads security missing"
-        operator_orders_operation = openapi.get("paths", {}).get("/v1/operator/orders", {}).get("get", {})
-        assert operator_orders_operation.get("security"), "OpenAPI operator orders security missing"
-        operator_resend_operation = (
-            openapi.get("paths", {}).get("/v1/operator/orders/{lead_id}/resend-email", {}).get("post", {})
+        openapi_paths = openapi.get("paths", {})
+        assert "/v1/operator/leads" not in openapi_paths, "OpenAPI should not advertise private lead API"
+        assert "/v1/operator/orders" not in openapi_paths, "OpenAPI should not advertise private order API"
+        assert "/v1/operator/orders/{lead_id}/resend-email" not in openapi_paths, (
+            "OpenAPI should not advertise private order email API"
         )
-        assert operator_resend_operation.get("security"), "OpenAPI operator order resend security missing"
+        assert "/v1/stripe/webhook" not in openapi_paths, "OpenAPI should not advertise private Stripe webhook"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
 
         contact_payload = {
@@ -1057,8 +1077,22 @@ async def main() -> None:
         assert "last_error" in metrics["email_delivery"], "email delivery should expose last sanitized error"
         assert metrics["email_delivery"]["last_error"] == "", "successful CI email should clear last email error"
         assert metrics["stripe"]["webhook_enabled"] is True, "Stripe webhook should be enabled in CI"
+        assert "webhook_endpoint" not in metrics["stripe"], "Metrics should not publish private Stripe webhook URL"
         assert metrics["operator"]["private_leads_enabled"] is True, "operator private leads should be enabled in CI"
         assert "operator_auth_failures_total" in metrics["metrics"], "operator auth failures metric missing"
+        assert metrics["metrics"].get("legacy_access_health_hits_total", 0) >= 2, (
+            "legacy access health compatibility should be counted"
+        )
+        assert metrics["metrics"].get("legacy_access_probe_challenges_total", 0) >= 1, (
+            "legacy access GET probes should be counted"
+        )
+        assert metrics["metrics"].get("crawler_guard_no_user_agent_total", 0) >= 2, (
+            "blank-UA private crawler suppression should be counted"
+        )
+        assert metrics["metrics"].get("discovery_alias_hits_total", 0) >= 2, (
+            "discovery alias hits should be counted"
+        )
+        assert metrics["metrics"].get("favicon_hits_total", 0) >= 1, "favicon probes should be counted"
 
 
 if __name__ == "__main__":

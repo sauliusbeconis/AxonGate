@@ -16,10 +16,6 @@
   "proof_bundle_recovery_api": "https://api.axongate.one/v1/proof-pack/bundle/recover",
   "proof_bundle_quote_api": "https://api.axongate.one/v1/proof-pack/bundle/quote",
   "proof_bundle_leads_api": "https://api.axongate.one/v1/proof-pack/bundle/leads",
-  "operator_lead_status_api": "https://api.axongate.one/v1/operator/leads/{lead_id}/status",
-  "stripe_webhook": "https://api.axongate.one/v1/stripe/webhook",
-  "operator_leads": "https://api.axongate.one/operator/leads",
-  "operator_leads_api": "https://api.axongate.one/v1/operator/leads",
   "sources": {
     "x402-list": {
       "endpoint": "https://api.axongate.one/from/x402-list/v1/x402/starter",
