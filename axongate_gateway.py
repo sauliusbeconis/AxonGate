@@ -81,7 +81,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.3.0",
+    version="1.4.0",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -124,6 +124,12 @@ ATTRIBUTION_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_REDIS_KEY", "axongate:at
 ATTRIBUTION_EVENTS_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_EVENTS_REDIS_KEY", "axongate:attribution:events")
 PROOF_PACK_LEADS_REDIS_KEY = os.getenv("AXONGATE_PROOF_PACK_LEADS_REDIS_KEY", "axongate:proof_pack_leads")
 PROOF_PACK_LEADS_MEMORY_MAX = int(os.getenv("AXONGATE_PROOF_PACK_LEADS_MEMORY_MAX", "200"))
+PAID_REQUEST_EVENTS_REDIS_KEY = os.getenv("AXONGATE_PAID_REQUEST_EVENTS_REDIS_KEY", "axongate:paid_request_events")
+PAID_REQUEST_EVENTS_MEMORY_MAX = int(os.getenv("AXONGATE_PAID_REQUEST_EVENTS_MEMORY_MAX", "200"))
+PROOF_PACK_REPORTS_REDIS_PREFIX = os.getenv("AXONGATE_PROOF_PACK_REPORTS_REDIS_PREFIX", "axongate:proof_pack_report")
+PROOF_PACK_REPORT_INDEX_REDIS_KEY = os.getenv("AXONGATE_PROOF_PACK_REPORT_INDEX_REDIS_KEY", "axongate:proof_pack_reports")
+PROOF_PACK_REPORT_RETENTION_SECONDS = int(os.getenv("AXONGATE_PROOF_PACK_REPORT_RETENTION_SECONDS", str(30 * 24 * 60 * 60)))
+PROOF_PACK_REPORTS_MEMORY_MAX = int(os.getenv("AXONGATE_PROOF_PACK_REPORTS_MEMORY_MAX", "200"))
 ATTRIBUTION_EVENT_RETENTION_SECONDS = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_RETENTION_SECONDS", str(7 * 24 * 60 * 60)))
 ATTRIBUTION_EVENT_MEMORY_MAX = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_MEMORY_MAX", "10000"))
 ALERT_WEBHOOK_URL = os.getenv("AXONGATE_ALERT_WEBHOOK_URL")
@@ -435,6 +441,11 @@ attribution_counts: dict[str, int] = {}
 attribution_events: dict[str, tuple[int, str, str]] = {}
 proof_pack_leads: list[dict[str, Any]] = []
 proof_pack_leads_lock = asyncio.Lock()
+paid_request_events: list[dict[str, Any]] = []
+paid_request_events_lock = asyncio.Lock()
+proof_pack_reports: dict[str, dict[str, Any]] = {}
+proof_pack_report_order: list[str] = []
+proof_pack_reports_lock = asyncio.Lock()
 processed_stripe_events: set[str] = set()
 processed_stripe_events_lock = asyncio.Lock()
 metrics: dict[str, int] = {
@@ -469,6 +480,7 @@ metrics: dict[str, int] = {
     "discovery_operator_hits_total": 0,
     "discovery_operator_leads_hits_total": 0,
     "discovery_operator_orders_hits_total": 0,
+    "discovery_operator_paid_requests_hits_total": 0,
     "discovery_quickstart_hits_total": 0,
     "discovery_paid_test_hits_total": 0,
     "discovery_quote_hits_total": 0,
@@ -561,6 +573,11 @@ metrics: dict[str, int] = {
     "proof_pack_llm_success_total": 0,
     "proof_pack_llm_fallback_total": 0,
     "proof_pack_delivery_success_total": 0,
+    "paid_request_events_total": 0,
+    "proof_pack_reports_total": 0,
+    "proof_pack_report_reads_total": 0,
+    "proof_pack_followups_total": 0,
+    "proof_pack_refresh_quotes_total": 0,
     "errors_total": 0,
     "operator_auth_failures_total": 0,
 }
@@ -575,6 +592,7 @@ PAYMENT_PROOF_HEADERS = (
 NO_USER_AGENT_PRIVATE_PREFIXES = (
     "/operator/leads",
     "/operator/orders",
+    "/operator/paid-requests",
     "/v1/operator",
     "/v1/stripe/webhook",
 )
@@ -642,6 +660,38 @@ class ProofPackRequest(BaseModel):
                     "pack": "deep",
                     "force_refresh": True,
                 },
+            ]
+        }
+    }
+
+
+class ProofPackFollowUpRequest(BaseModel):
+    question: str = Field(..., description="Follow-up question to answer from the stored Proof Pack citations")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "question": "Can my agent cite the pricing claim, or does it need another source?",
+                }
+            ]
+        }
+    }
+
+
+class ProofPackRefreshRequest(BaseModel):
+    force_refresh: bool = Field(True, description="Whether the paid rerun should bypass cache")
+    pack: Optional[str] = Field(None, description="Optional pack override for the refresh quote")
+    question: Optional[str] = Field(None, description="Optional question override for the refresh quote")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "force_refresh": True,
+                    "pack": DEFAULT_PROOF_PACK,
+                    "question": "Which claims can my agent cite now?",
+                }
             ]
         }
     }
@@ -1208,6 +1258,10 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_llm_success": values.get("proof_pack_llm_success_total", 0),
         "proof_pack_llm_fallback": values.get("proof_pack_llm_fallback_total", 0),
         "proof_pack_delivery_success": values.get("proof_pack_delivery_success_total", 0),
+        "proof_pack_reports": values.get("proof_pack_reports_total", 0),
+        "proof_pack_report_reads": values.get("proof_pack_report_reads_total", 0),
+        "proof_pack_followups": values.get("proof_pack_followups_total", 0),
+        "proof_pack_refresh_quotes": values.get("proof_pack_refresh_quotes_total", 0),
         "ueg_checks": values.get("ueg_checks_total", 0),
         "ueg_rejections": values.get("ueg_rejections_total", 0),
         "payment_replay_rejections": values.get("payment_replay_rejections_total", 0),
@@ -1524,6 +1578,7 @@ STARTER_SAMPLE_TARGETS = {
 PROOF_PACK_SAMPLE_TARGET_URL = "https://www.iana.org/domains/reserved"
 PROOF_PACK_SAMPLE_QUESTION = "What does this source establish about reserved domains?"
 PROOF_PACK_SAMPLE_PACK = "quick"
+PROOF_PACK_SAMPLE_REPORT_ID = "ppr_sample_source_trust"
 
 
 def starter_sample_markdown_for_target(target_url: str) -> Optional[str]:
@@ -1654,10 +1709,27 @@ def build_proof_pack_output_schema() -> dict[str, Any]:
             "target_url": {"type": "string"},
             "question": {"type": "string"},
             "pack": {"type": "string"},
+            "report_id": {"type": "string"},
+            "report_url": {"type": "string"},
+            "report_page": {"type": "string"},
+            "result_hash": {"type": "string"},
+            "source_hash": {"type": "string"},
+            "created_at": {"type": "integer"},
+            "expires_at": {"type": "integer"},
+            "retention_days": {"type": "integer"},
+            "follow_up_url": {"type": "string"},
+            "refresh_url": {"type": "string"},
             "answer": {"type": "string"},
             "executive_summary": {"type": "string"},
+            "decision": {"type": "object"},
             "confidence_score": {"type": "number"},
+            "source_quality_score": {"type": "number"},
+            "agent_action": {"type": "string"},
+            "recommended_next_call": {"type": "object"},
             "key_claims": {"type": "array"},
+            "supported_findings": {"type": "array"},
+            "gaps": {"type": "array"},
+            "citation_coverage": {"type": "object"},
             "citations": {"type": "array"},
             "risks": {"type": "array"},
             "source_profile": {"type": "object"},
@@ -1701,12 +1773,42 @@ def build_proof_pack_response_example(pack: str = DEFAULT_PROOF_PACK) -> dict[st
         "target_url": "https://example.com/source",
         "question": "What does this source establish?",
         "pack": normalized_pack,
+        "report_id": "ppr_example_report",
+        "report_url": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/ppr_example_report",
+        "report_page": f"{PUBLIC_BASE_URL}/proof-pack/reports/ppr_example_report",
+        "result_hash": stable_hash("example-result"),
+        "source_hash": stable_hash("# Example source"),
+        "created_at": 1780000000,
+        "expires_at": 1782592000,
+        "retention_days": 30,
+        "follow_up_url": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/ppr_example_report/follow-up",
+        "refresh_url": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/ppr_example_report/refresh",
         "answer": "The source establishes the cited facts below, with each key claim tied to extracted evidence.",
         "executive_summary": "A concise evidence summary derived from the cited source material.",
+        "decision": {
+            "label": "partially_supported",
+            "summary": "The source supports part of the buyer question, but some claims need corroboration or tighter wording.",
+            "recommended_agent_use": "Use only for the supported findings; ask for another source before broader claims.",
+        },
         "confidence_score": 0.72,
+        "source_quality_score": 0.75,
+        "agent_action": "needs_second_source",
+        "recommended_next_call": {
+            "action": "verify_with_second_source",
+            "endpoint": "/v1/x402/proof-pack",
+            "reason": "Single-source evidence needs corroboration before broad autonomous citation.",
+        },
         "key_claims": [
             {"claim": "Example claim supported by the cited excerpt.", "citation_ids": ["c1"], "confidence": 0.72}
         ],
+        "supported_findings": ["Example claim supported by the cited excerpt."],
+        "gaps": ["Claims outside the cited excerpts need another primary or neutral source."],
+        "citation_coverage": {
+            "citation_count": 1,
+            "supported_claim_count": 1,
+            "source_count": 1,
+            "cache_hit": False,
+        },
         "citations": [{"id": "c1", "url": "https://example.com/source", "excerpt": "Example evidence excerpt."}],
         "risks": ["Only one public source was evaluated."],
         "source_profile": {
@@ -1887,6 +1989,16 @@ def build_x402_resource() -> dict[str, Any]:
             "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
             "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+            "proofPackReportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
+            "proofPackReportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+            "proofPackFollowUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
+            "proofPackRefreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
+            "proofPackSampleReportId": PROOF_PACK_SAMPLE_REPORT_ID,
+            "proofPackSampleReportApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "proofPackSampleReportPage": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "proofPackSampleFollowUpApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
+            "proofPackSampleRefreshQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
+            "proofPackReportRetentionDays": proof_pack_report_retention_days(),
             "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
             "proofBundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
@@ -1952,7 +2064,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "category": "evidence-reports",
             "service": "AxonGate Source Trust Check",
             "description": "Paid evidence trust decision for agent builders: supported, weak, unsupported, and citation-ready source findings.",
-            "tags": ["x402", "base", "usdc", "source-trust", "proof-pack", "citations", "agent-builders", "evidence"],
+            "tags": ["x402", "base", "usdc", "source-trust", "proof-pack", "citations", "agent-builders", "evidence", "persistent-reports", "follow-up"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
@@ -1968,6 +2080,11 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "quoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
             "request": f"{PUBLIC_BASE_URL}/proof-pack/request",
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
+            "reportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
+            "reportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+            "followUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
+            "refreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
+            "reportRetentionDays": proof_pack_report_retention_days(),
             "bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "bundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
             "bundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
@@ -2149,6 +2266,16 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        "proofPackReportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
+        "proofPackReportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+        "proofPackFollowUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
+        "proofPackRefreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
+        "proofPackSampleReportId": PROOF_PACK_SAMPLE_REPORT_ID,
+        "proofPackSampleReportApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proofPackSampleReportPage": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proofPackSampleFollowUpApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
+        "proofPackSampleRefreshQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
+        "proofPackReportRetentionDays": proof_pack_report_retention_days(),
         "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
         "proofBundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
@@ -2350,6 +2477,10 @@ def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -
             "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
             "sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "sample_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+            "sample_report_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "sample_report_page": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "sample_follow_up_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
+            "sample_refresh_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
             "preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
             "preview_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
             "quote_page": f"{PUBLIC_BASE_URL}/proof-pack/quote",
@@ -2377,6 +2508,16 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
+        "proofPackReportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
+        "proofPackReportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+        "proofPackFollowUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
+        "proofPackRefreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
+        "proofPackSampleReportId": PROOF_PACK_SAMPLE_REPORT_ID,
+        "proofPackSampleReportApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proofPackSampleReportPage": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proofPackSampleFollowUpApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
+        "proofPackSampleRefreshQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
+        "proofPackReportRetentionDays": proof_pack_report_retention_days(),
         "proofBundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proofBundleQuote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
         "proofBundleCheckoutReview": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
@@ -2454,6 +2595,11 @@ def client_rate_identifier(request: Request) -> str:
 def target_domain_identifier(target_url: str) -> str:
     hostname = (urlparse(target_url).hostname or "unknown").lower()
     return f"domain:{stable_hash(hostname)}"
+
+
+def target_hostname_label(target_url: str) -> str:
+    """Return a normalized hostname for private operator diagnostics."""
+    return (urlparse(target_url).hostname or "unknown").lower()
 
 
 def payment_hash_identifier(tx_hash: str) -> str:
@@ -3929,6 +4075,49 @@ PROOF_PACK_LLM_SCHEMA = {
     "additionalProperties": False,
 }
 
+EVIDENCE_STOP_WORDS = {
+    "about",
+    "after",
+    "agent",
+    "agents",
+    "also",
+    "and",
+    "are",
+    "but",
+    "can",
+    "cite",
+    "claim",
+    "claims",
+    "does",
+    "for",
+    "from",
+    "has",
+    "have",
+    "how",
+    "into",
+    "its",
+    "may",
+    "not",
+    "our",
+    "page",
+    "public",
+    "safe",
+    "safely",
+    "should",
+    "source",
+    "sources",
+    "that",
+    "the",
+    "their",
+    "this",
+    "use",
+    "what",
+    "when",
+    "where",
+    "which",
+    "with",
+}
+
 
 def proof_pack_payment_probe_url(pack: str, source: str) -> str:
     normalized_pack = normalize_proof_pack(pack)
@@ -4055,13 +4244,57 @@ def split_markdown_evidence(markdown: str) -> list[str]:
     return candidates
 
 
-def extract_proof_pack_evidence(markdown: str, target_url: str, pack: str = DEFAULT_PROOF_PACK) -> list[dict[str, Any]]:
+def evidence_terms(value: str) -> set[str]:
+    """Return low-noise terms for question-to-evidence matching."""
+    terms = {term for term in re.findall(r"[a-z0-9][a-z0-9-]{2,}", value.lower())}
+    return {term for term in terms if term not in EVIDENCE_STOP_WORDS}
+
+
+def evidence_relevance_score(candidate: str, question: str, index: int) -> float:
+    """Score an evidence candidate for a buyer question while preserving stable ties."""
+    candidate_terms = evidence_terms(candidate)
+    question_terms = evidence_terms(question)
+    overlap = len(candidate_terms & question_terms)
+    score = float(overlap * 4)
+    if candidate.endswith(":") or len(candidate) < 55:
+        score -= 1.0
+    if 90 <= len(candidate) <= 360:
+        score += 1.5
+    if re.search(r"\b(announces|supports|includes|provides|states|reports|requires|offers|shows|explains)\b", candidate.lower()):
+        score += 1.0
+    if re.search(r"\b(cookie|copyright|privacy|terms of use|all rights reserved|subscribe)\b", candidate.lower()):
+        score -= 4.0
+    # Tiny recency bias keeps equal scores close to source order.
+    return score - (index * 0.001)
+
+
+def extract_proof_pack_evidence(
+    markdown: str,
+    target_url: str,
+    pack: str = DEFAULT_PROOF_PACK,
+    question: str = "",
+) -> list[dict[str, Any]]:
     """Create stable citation IDs from extracted source material."""
     max_items = proof_pack_evidence_limit(pack)
     seen: set[str] = set()
     citations: list[dict[str, Any]] = []
+    candidates = split_markdown_evidence(markdown)
+    if question:
+        ranked_candidates = [
+            candidate
+            for _, _, candidate in sorted(
+                (
+                    -evidence_relevance_score(candidate, question, index),
+                    index,
+                    candidate,
+                )
+                for index, candidate in enumerate(candidates)
+            )
+        ]
+    else:
+        ranked_candidates = candidates
 
-    for candidate in split_markdown_evidence(markdown):
+    for candidate in ranked_candidates:
         fingerprint = stable_hash(candidate.lower())[:16]
         if fingerprint in seen:
             continue
@@ -4096,6 +4329,72 @@ def claim_from_excerpt(excerpt: str) -> str:
     return clean_evidence_excerpt(first_sentence, 220)
 
 
+def proof_pack_decision_label(confidence: float, citation_count: int) -> str:
+    if confidence >= 0.65 and citation_count >= 4:
+        return "supported"
+    if confidence >= 0.55 and citation_count >= 2:
+        return "partially_supported"
+    if citation_count >= 1:
+        return "limited_support"
+    return "weak_evidence"
+
+
+def proof_pack_decision_summary(decision: str) -> str:
+    return {
+        "supported": "The source provides several citation-ready excerpts that support the buyer question.",
+        "partially_supported": "The source supports part of the buyer question, but some claims need corroboration or tighter wording.",
+        "limited_support": "The source gives limited usable evidence; an agent should cite only the extracted findings.",
+        "weak_evidence": "The source does not provide enough extractable evidence for a confident agent citation.",
+    }.get(decision, "The source should be used with caution.")
+
+
+def recommended_agent_use(decision: str) -> str:
+    return {
+        "supported": "Use as cited context for the supported findings, and keep citation IDs attached downstream.",
+        "partially_supported": "Use only for the supported findings; ask for another source before broader claims.",
+        "limited_support": "Use as a weak signal or queue for human review before adding it to agent memory.",
+        "weak_evidence": "Do not rely on this source for autonomous citation without stronger evidence.",
+    }.get(decision, "Review manually before using this source in an agent workflow.")
+
+
+def agent_action_from_decision(decision: str) -> str:
+    return {
+        "supported": "cite",
+        "partially_supported": "needs_second_source",
+        "limited_support": "ingest_with_caution",
+        "weak_evidence": "do_not_cite",
+    }.get(decision, "ingest_with_caution")
+
+
+def source_quality_score(confidence: float, citation_count: int, cache_hit: bool) -> float:
+    score = float(confidence) + min(max(citation_count, 0), 8) * 0.025
+    if cache_hit:
+        score -= 0.03
+    return clamp_confidence(score)
+
+
+def recommended_next_call(target_url: str, question: str, pack: str, source: str, agent_action: str) -> dict[str, Any]:
+    normalized_pack = normalize_proof_pack(pack)
+    normalized_source = normalize_attribution_source(source)
+    if agent_action in {"needs_second_source", "ingest_with_caution", "do_not_cite"}:
+        return {
+            "action": "verify_with_second_source",
+            "method": "POST",
+            "endpoint": "/v1/x402/proof-pack",
+            "url": proof_pack_payment_probe_url(normalized_pack, normalized_source),
+            "reason": "Single-source evidence is not strong enough for broad autonomous citation.",
+            "confirm_spend_usdc": str(price_for_proof_pack(normalized_pack)),
+            "buyer_command": proof_pack_buyer_command(target_url, question, normalized_pack, normalized_source),
+        }
+    return {
+        "action": "ask_follow_up_or_refresh_later",
+        "method": "GET",
+        "endpoint": "/v1/proof-pack/reports/{report_id}",
+        "url": public_url("/v1/proof-pack/reports/{report_id}"),
+        "reason": "The source has citation-ready findings; store the report ID and reuse it for follow-up or refresh.",
+    }
+
+
 def clamp_confidence(value: Any, fallback: float = 0.0) -> float:
     try:
         number = float(value)
@@ -4123,6 +4422,7 @@ def deterministic_proof_pack(
     confidence = clamp_confidence(confidence + min(len(citations), 8) * 0.015)
     cited_summary = " ".join(citation["excerpt"] for citation in citations[:3])
     executive_summary = clean_evidence_excerpt(cited_summary, 620)
+    decision = proof_pack_decision_label(confidence, len(citations))
     key_claims = [
         {
             "claim": claim_from_excerpt(citation["excerpt"]),
@@ -4131,23 +4431,47 @@ def deterministic_proof_pack(
         }
         for citation in citations[: min(5, len(citations))]
     ]
+    supported_findings = [claim["claim"] for claim in key_claims[:3]]
+    agent_action = agent_action_from_decision(decision)
+    gaps = [
+        "Only one public source was evaluated.",
+        "Claims outside the cited excerpts need another primary or neutral source.",
+    ]
     risks = [
-        "Deterministic extractive fallback was used; no generative cross-check was applied.",
+        "Deterministic evidence mode was used; claims are limited to extracted citations.",
         "Only one source URL was evaluated.",
     ]
     if cache_hit:
         risks.append("Source material may come from cache; inspect source_profile.content_sha256 for repeatability.")
+        gaps.append("Refresh the source if recency matters for the agent workflow.")
     if fallback_reason != "llm_disabled":
         risks.append(f"LLM generation fallback reason: {fallback_reason}.")
+    else:
+        risks.append("LLM synthesis is not configured; no generative cross-check was applied.")
 
     return {
         "answer": (
-            f"Evidence for '{question}' is limited to the cited excerpts from {target_url}. "
-            f"The strongest extractive support is: {executive_summary}"
+            f"Decision: {decision.replace('_', ' ')}. {proof_pack_decision_summary(decision)} "
+            f"For '{question}', the strongest cited support is: {executive_summary}"
         ),
         "executive_summary": executive_summary,
+        "decision": {
+            "label": decision,
+            "summary": proof_pack_decision_summary(decision),
+            "recommended_agent_use": recommended_agent_use(decision),
+        },
         "confidence_score": confidence,
+        "source_quality_score": source_quality_score(confidence, len(citations), cache_hit),
+        "agent_action": agent_action,
         "key_claims": key_claims,
+        "supported_findings": supported_findings,
+        "gaps": gaps,
+        "citation_coverage": {
+            "citation_count": len(citations),
+            "supported_claim_count": len(key_claims),
+            "source_count": 1,
+            "cache_hit": cache_hit,
+        },
         "risks": risks,
         "llm_used": False,
         "llm_model": None,
@@ -4280,13 +4604,32 @@ def sanitize_llm_proof_pack(
     risks = [clean_evidence_excerpt(str(risk), 260) for risk in llm_data.get("risks", []) if str(risk).strip()]
     if len(supported_claims) < len(llm_data.get("key_claims", [])):
         risks.append("Unsupported LLM claims were dropped because they did not cite extracted evidence IDs.")
+    confidence = clamp_confidence(llm_data.get("confidence_score"), fallback["confidence_score"])
+    decision = proof_pack_decision_label(confidence, len(citations))
+    action = agent_action_from_decision(decision)
 
     return {
         **fallback,
         "answer": clean_evidence_excerpt(str(llm_data["answer"]), 1800),
         "executive_summary": clean_evidence_excerpt(str(llm_data["executive_summary"]), 900),
-        "confidence_score": clamp_confidence(llm_data.get("confidence_score"), fallback["confidence_score"]),
+        "decision": {
+            "label": decision,
+            "summary": proof_pack_decision_summary(decision),
+            "recommended_agent_use": recommended_agent_use(decision),
+        },
+        "confidence_score": confidence,
+        "source_quality_score": source_quality_score(
+            confidence,
+            len(citations),
+            bool(fallback.get("citation_coverage", {}).get("cache_hit")),
+        ),
+        "agent_action": action,
         "key_claims": supported_claims,
+        "supported_findings": [claim["claim"] for claim in supported_claims[:3]],
+        "citation_coverage": {
+            **fallback.get("citation_coverage", {}),
+            "supported_claim_count": len(supported_claims),
+        },
         "risks": risks or fallback["risks"],
         "llm_used": True,
         "llm_model": str(llm_data.get("llm_model") or LLM_MODEL),
@@ -4303,7 +4646,7 @@ async def generate_proof_pack_content(
     cache_hit: bool,
 ) -> dict[str, Any]:
     normalized_pack = normalize_proof_pack(pack)
-    citations = extract_proof_pack_evidence(markdown, target_url, normalized_pack)
+    citations = extract_proof_pack_evidence(markdown, target_url, normalized_pack, question)
     fallback_reason = "llm_disabled"
     fallback = deterministic_proof_pack(
         target_url=target_url,
@@ -4356,6 +4699,7 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
         STARTER_SAMPLE_MARKDOWN,
         PROOF_PACK_SAMPLE_TARGET_URL,
         PROOF_PACK_SAMPLE_PACK,
+        PROOF_PACK_SAMPLE_QUESTION,
     )
     proof_content = deterministic_proof_pack(
         target_url=PROOF_PACK_SAMPLE_TARGET_URL,
@@ -4377,17 +4721,39 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
         f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?"
         f"pack={PROOF_PACK_SAMPLE_PACK}&source={normalized_source}"
     )
+    sample_report_url = proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_report_page = proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_follow_up_url = proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_refresh_url = proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)
 
     return {
         "status": "sample",
         "supplier_spend": False,
+        "report_id": PROOF_PACK_SAMPLE_REPORT_ID,
+        "report_url": sample_report_url,
+        "report_page": sample_report_page,
+        "follow_up_url": sample_follow_up_url,
+        "refresh_url": sample_refresh_url,
         "target_url": PROOF_PACK_SAMPLE_TARGET_URL,
         "question": PROOF_PACK_SAMPLE_QUESTION,
         "pack": PROOF_PACK_SAMPLE_PACK,
         "answer": proof_content["answer"],
         "executive_summary": proof_content["executive_summary"],
+        "decision": proof_content.get("decision"),
         "confidence_score": proof_content["confidence_score"],
+        "source_quality_score": proof_content.get("source_quality_score"),
+        "agent_action": proof_content.get("agent_action"),
+        "recommended_next_call": recommended_next_call(
+            PROOF_PACK_SAMPLE_TARGET_URL,
+            PROOF_PACK_SAMPLE_QUESTION,
+            PROOF_PACK_SAMPLE_PACK,
+            normalized_source,
+            str(proof_content.get("agent_action") or "ingest_with_caution"),
+        ),
         "key_claims": proof_content["key_claims"],
+        "supported_findings": proof_content.get("supported_findings", []),
+        "gaps": proof_content.get("gaps", []),
+        "citation_coverage": proof_content.get("citation_coverage"),
         "citations": [
             {key: value for key, value in citation.items() if key != "fingerprint"}
             for citation in citations
@@ -4449,6 +4815,10 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
         "next_steps": {
             "sample_page": public_url("/proof-pack/sample"),
             "sample_api": public_url("/v1/proof-pack/sample"),
+            "sample_report_api": sample_report_url,
+            "sample_report_page": sample_report_page,
+            "sample_follow_up_api": sample_follow_up_url,
+            "sample_refresh_quote_api": sample_refresh_url,
             "preview_page": proof_pack_preview_page_url(
                 PROOF_PACK_SAMPLE_TARGET_URL,
                 PROOF_PACK_SAMPLE_QUESTION,
@@ -4568,6 +4938,20 @@ async def build_proof_pack_quote(
                 normalized_pack,
                 normalized_source,
             ),
+            "after_payment": {
+                "store_fields": ["report_id", "report_url", "result_hash", "source_hash", "agent_action"],
+                "report_api_pattern": public_url("/v1/proof-pack/reports/{report_id}"),
+                "report_page_pattern": public_url("/proof-pack/reports/{report_id}"),
+                "follow_up_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/follow-up"),
+                "refresh_quote_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/refresh"),
+                "sample_report_id": PROOF_PACK_SAMPLE_REPORT_ID,
+                "sample_report_api": proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                "sample_report_page": proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                "sample_follow_up_api": proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                "sample_refresh_quote_api": proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                "retention_days": proof_pack_report_retention_days(),
+                "note": "Use the retained report for no-spend follow-up before paying for a fresh rerun. Try the sample report URLs before spending.",
+            },
         },
     }
 
@@ -4655,6 +5039,17 @@ async def build_proof_pack_preview(
             ),
             "executive_summary": "Use the quote or request path to continue without surprise spend.",
             "confidence_score": 0.0,
+            "source_quality_score": 0.0,
+            "agent_action": "needs_fresh_report",
+            "recommended_next_call": {
+                "action": "run_paid_proof_pack",
+                "method": "POST",
+                "endpoint": "/v1/x402/proof-pack",
+                "url": proof_pack_payment_probe_url(normalized_pack, normalized_source),
+                "reason": "No cached citations are available for a free follow-up.",
+                "confirm_spend_usdc": str(price_for_proof_pack(normalized_pack)),
+                "buyer_command": proof_pack_buyer_command(normalized_target, normalized_question, normalized_pack, normalized_source),
+            },
             "key_claims": [],
             "citations": [],
             "risks": [
@@ -4684,7 +5079,7 @@ async def build_proof_pack_preview(
         }
 
     inc_metric("proof_pack_preview_cache_hits_total")
-    citations = extract_proof_pack_evidence(markdown, normalized_target, normalized_pack)[:3]
+    citations = extract_proof_pack_evidence(markdown, normalized_target, normalized_pack, normalized_question)[:3]
     proof_content = deterministic_proof_pack(
         target_url=normalized_target,
         question=normalized_question,
@@ -4718,7 +5113,20 @@ async def build_proof_pack_preview(
         "answer": clean_evidence_excerpt(proof_content["answer"], 520),
         "executive_summary": clean_evidence_excerpt(proof_content["executive_summary"], 420),
         "confidence_score": max(0.0, round(float(proof_content["confidence_score"]) - 0.08, 2)),
+        "decision": proof_content.get("decision"),
+        "source_quality_score": proof_content.get("source_quality_score"),
+        "agent_action": proof_content.get("agent_action"),
+        "recommended_next_call": recommended_next_call(
+            normalized_target,
+            normalized_question,
+            normalized_pack,
+            normalized_source,
+            str(proof_content.get("agent_action") or "ingest_with_caution"),
+        ),
         "key_claims": mini_claims,
+        "supported_findings": proof_content.get("supported_findings", [])[:2],
+        "gaps": proof_content.get("gaps", []),
+        "citation_coverage": proof_content.get("citation_coverage"),
         "citations": mini_citations,
         "risks": preview_risks,
         "source_profile": {
@@ -5341,8 +5749,14 @@ async def generate_proof_bundle_report(lead: dict[str, Any]) -> dict[str, Any]:
                 "target_url": target_url,
                 "answer": proof_content["answer"],
                 "executive_summary": proof_content["executive_summary"],
+                "decision": proof_content.get("decision"),
                 "confidence_score": proof_content["confidence_score"],
+                "source_quality_score": proof_content.get("source_quality_score"),
+                "agent_action": proof_content.get("agent_action"),
                 "key_claims": key_claims,
+                "supported_findings": proof_content.get("supported_findings", []),
+                "gaps": proof_content.get("gaps", []),
+                "citation_coverage": proof_content.get("citation_coverage"),
                 "citations": citations,
                 "risks": proof_content["risks"],
                 "source_profile": proof_content["source_profile"],
@@ -7263,6 +7677,755 @@ async def durable_proof_pack_leads(limit: int = 50) -> list[dict[str, Any]]:
             leads = [lead_with_pipeline_defaults(lead) for lead in proof_pack_leads[:bounded_limit]]
 
     return leads[:bounded_limit]
+
+
+def paid_request_public_summary(event: dict[str, Any]) -> dict[str, Any]:
+    """Return a public-safe paid request summary without raw target or question text."""
+    target_domain = str(event.get("target_domain") or "")
+    return {
+        "created_at": event.get("created_at"),
+        "product": event.get("product"),
+        "source": event.get("source"),
+        "status": event.get("status"),
+        "tier": event.get("tier"),
+        "pack": event.get("pack"),
+        "amount_units": event.get("amount_units"),
+        "target_domain_hash": stable_hash(target_domain)[:16] if target_domain else None,
+        "cache_hit": event.get("cache_hit"),
+        "llm_used": event.get("llm_used"),
+        "fallback_reason": event.get("fallback_reason"),
+        "citation_count": event.get("citation_count"),
+    }
+
+
+async def store_paid_request_event(event: dict[str, Any]) -> str:
+    """Store paid request metadata for private operator diagnostics."""
+    now = int(time.time())
+    target_url = clean_lead_text(str(event.get("target_url") or ""), 2048)
+    target_domain = clean_lead_text(str(event.get("target_domain") or target_hostname_label(target_url)), 255)
+    normalized = {
+        **event,
+        "id": event.get("id") or f"paid_{now}_{stable_hash(json.dumps(event, sort_keys=True, default=str))[:16]}",
+        "created_at": int(event.get("created_at") or now),
+        "product": clean_lead_text(str(event.get("product") or "unknown"), 80),
+        "status": clean_lead_text(str(event.get("status") or "delivered"), 80),
+        "source": normalize_attribution_source(str(event.get("source") or "direct")),
+        "target_url": target_url,
+        "target_domain": target_domain,
+        "target_domain_hash": stable_hash(target_domain)[:16] if target_domain else None,
+        "question": clean_lead_text(str(event.get("question") or ""), 600),
+        "payment_reference_hash": clean_lead_text(str(event.get("payment_reference_hash") or ""), 128),
+        "payment_identifier": clean_lead_text(str(event.get("payment_identifier") or ""), 128),
+    }
+    payload = json.dumps(normalized, separators=(",", ":"), sort_keys=True)
+    inc_metric("paid_request_events_total")
+
+    if redis_client:
+        try:
+            await redis_client.lpush(PAID_REQUEST_EVENTS_REDIS_KEY, payload)
+            await redis_client.ltrim(PAID_REQUEST_EVENTS_REDIS_KEY, 0, PAID_REQUEST_EVENTS_MEMORY_MAX - 1)
+            return "redis"
+        except Exception as exc:
+            print(f"[PAID_REQUEST_EVENTS] Redis event storage failed: {exc}")
+
+    async with paid_request_events_lock:
+        paid_request_events.insert(0, normalized)
+        del paid_request_events[PAID_REQUEST_EVENTS_MEMORY_MAX:]
+    return "memory"
+
+
+async def paid_request_events_public_snapshot() -> dict[str, Any]:
+    """Return paid request event storage health without exposing raw buyer inputs."""
+    snapshot: dict[str, Any] = {
+        "backend": "redis" if redis_client else "memory",
+        "max_retained": PAID_REQUEST_EVENTS_MEMORY_MAX,
+        "count": 0,
+        "latest": None,
+    }
+    latest: Optional[dict[str, Any]] = None
+    if redis_client:
+        snapshot["redis_key"] = PAID_REQUEST_EVENTS_REDIS_KEY
+        try:
+            snapshot["count"] = int(await redis_client.llen(PAID_REQUEST_EVENTS_REDIS_KEY))
+            latest_raw = await redis_client.lindex(PAID_REQUEST_EVENTS_REDIS_KEY, 0)
+            if latest_raw:
+                latest = parse_proof_pack_lead_record(latest_raw)
+        except Exception as exc:
+            print(f"[PAID_REQUEST_EVENTS] Redis event snapshot failed: {exc}")
+
+    if latest is None:
+        async with paid_request_events_lock:
+            snapshot["count"] = max(snapshot["count"], len(paid_request_events))
+            latest = dict(paid_request_events[0]) if paid_request_events else None
+
+    if latest:
+        snapshot["latest"] = paid_request_public_summary(latest)
+    return snapshot
+
+
+async def durable_paid_request_events(limit: int = 50) -> list[dict[str, Any]]:
+    """Return recent paid request events for private operator views."""
+    bounded_limit = max(1, min(int(limit or 50), PAID_REQUEST_EVENTS_MEMORY_MAX, 200))
+    events: list[dict[str, Any]] = []
+
+    if redis_client:
+        try:
+            records = await redis_client.lrange(PAID_REQUEST_EVENTS_REDIS_KEY, 0, bounded_limit - 1)
+        except Exception as exc:
+            print(f"[PAID_REQUEST_EVENTS] Redis event read failed: {exc}")
+        else:
+            for record in records:
+                parsed = parse_proof_pack_lead_record(record)
+                if parsed:
+                    events.append(parsed)
+
+    if not events:
+        async with paid_request_events_lock:
+            events = [dict(event) for event in paid_request_events[:bounded_limit]]
+
+    return events[:bounded_limit]
+
+
+def paid_request_event_stats(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize private paid request diagnostics for operator triage."""
+    by_product: dict[str, int] = {}
+    by_source: dict[str, int] = {}
+    by_pack: dict[str, int] = {}
+    llm_fallbacks = 0
+    latest_created_at = 0
+    for event in events:
+        product = str(event.get("product") or "unknown")
+        source = str(event.get("source") or "direct")
+        pack = str(event.get("pack") or event.get("tier") or "unknown")
+        by_product[product] = by_product.get(product, 0) + 1
+        by_source[source] = by_source.get(source, 0) + 1
+        by_pack[pack] = by_pack.get(pack, 0) + 1
+        if event.get("fallback_reason"):
+            llm_fallbacks += 1
+        try:
+            latest_created_at = max(latest_created_at, int(event.get("created_at") or 0))
+        except (TypeError, ValueError):
+            pass
+    return {
+        "retained": len(events),
+        "latest_created_at": latest_created_at or None,
+        "by_product": by_product,
+        "by_source": by_source,
+        "by_pack_or_tier": by_pack,
+        "llm_fallbacks": llm_fallbacks,
+    }
+
+
+def build_operator_paid_requests_html(
+    events: list[dict[str, Any]],
+    stats: dict[str, Any],
+    limit: int,
+    operator_token: str = "",
+) -> str:
+    """Render a private paid request diagnostics console."""
+    public = html.escape(PUBLIC_BASE_URL)
+
+    def esc(value: Any) -> str:
+        return html.escape(str(value or ""))
+
+    def card(label: str, value: Any, note: str = "") -> str:
+        return (
+            '<div class="card">'
+            f"<span>{esc(label)}</span>"
+            f"<strong>{esc(value)}</strong>"
+            f"<small>{esc(note)}</small>"
+            "</div>"
+        )
+
+    def mini_table(mapping: dict[str, int], empty: str) -> str:
+        rows = "\n".join(
+            f"<tr><td>{esc(name)}</td><td>{esc(count)}</td></tr>"
+            for name, count in sorted(mapping.items(), key=lambda item: (-item[1], item[0]))
+        )
+        return rows or f'<tr><td colspan="2">{esc(empty)}</td></tr>'
+
+    operator_query = (
+        f"?operator_token={url_quote(operator_token, safe='')}&limit={int(limit)}"
+        if operator_token
+        else f"?limit={int(limit)}"
+    )
+    json_href = (
+        f"{PUBLIC_BASE_URL}/v1/operator/paid-requests{operator_query}"
+        if operator_token
+        else f"{PUBLIC_BASE_URL}/v1/operator/paid-requests?limit={int(limit)}"
+    )
+    proof_events = [event for event in events if str(event.get("product") or "") == "proof_pack"]
+    report_events = [event for event in proof_events if event.get("report_id") or event.get("report_url")]
+    latest_label = lead_created_at_label(stats.get("latest_created_at"))
+    cards = "\n".join(
+        [
+            card("Retained Events", stats.get("retained", 0), f"latest {latest_label}"),
+            card("Proof Packs", len(proof_events), "paid source trust checks"),
+            card("Reports Linked", len(report_events), "report_id or report_url present"),
+            card("LLM Fallbacks", stats.get("llm_fallbacks", 0), "deterministic delivery used"),
+            card("Sources", len(stats.get("by_source", {})), "attribution labels"),
+            card("Products", len(stats.get("by_product", {})), "paid products"),
+        ]
+    )
+    source_rows = mini_table(stats.get("by_source", {}), "No source-tagged paid events.")
+    product_rows = mini_table(stats.get("by_product", {}), "No paid products retained.")
+    pack_rows = mini_table(stats.get("by_pack_or_tier", {}), "No packs or tiers retained.")
+    event_rows = []
+    for event in events:
+        report_links = []
+        if event.get("report_url"):
+            report_links.append(f'<a href="{esc(event.get("report_url"))}">JSON</a>')
+        if event.get("report_id"):
+            report_links.append(f'<code>{esc(event.get("report_id"))}</code>')
+        if event.get("result_hash"):
+            report_links.append(f'<small>result {esc(str(event.get("result_hash"))[:16])}...</small>')
+        report_html = "<br>".join(report_links) or "<small>No retained report link.</small>"
+        payment_bits = []
+        if event.get("payment_identifier"):
+            payment_bits.append(f'<code>{esc(event.get("payment_identifier"))}</code>')
+        if event.get("payment_tx_hash"):
+            payment_bits.append(f'<code>{esc(event.get("payment_tx_hash"))}</code>')
+        if event.get("payment_reference_hash"):
+            payment_bits.append(f'<small>ref {esc(event.get("payment_reference_hash"))}</small>')
+        payment_html = "<br>".join(payment_bits) or "<small>No payment reference stored.</small>"
+        target = str(event.get("target_url") or "")
+        target_html = f'<a href="{esc(target)}">{esc(target)}</a>' if target else "<small>No target URL.</small>"
+        event_rows.append(
+            "<tr>"
+            f"<td><code>{esc(event.get('id'))}</code><br><small>{esc(lead_created_at_label(event.get('created_at')))}</small></td>"
+            f"<td><code>{esc(event.get('product'))}</code><br><small>{esc(event.get('status'))}</small></td>"
+            f"<td><code>{esc(event.get('source'))}</code><br><small>{esc(event.get('pack') or event.get('tier'))}</small></td>"
+            f"<td>{target_html}<br><small>{esc(event.get('target_domain'))}</small></td>"
+            f"<td>{esc(event.get('question'))}</td>"
+            f"<td>{report_html}</td>"
+            f"<td>{esc(event.get('amount_usdc'))} USDC<br><code>{esc(event.get('amount_units'))}</code></td>"
+            f"<td>{esc(event.get('confidence_score'))}<br><small>{esc(event.get('citation_count'))} citations</small></td>"
+            f"<td>{esc(event.get('llm_model') or ('fallback' if event.get('fallback_reason') else ''))}<br><small>{esc(event.get('fallback_reason'))}</small></td>"
+            f"<td>{payment_html}</td>"
+            "</tr>"
+        )
+    events_table = "\n".join(event_rows) or '<tr><td colspan="10">No paid request events retained yet.</td></tr>'
+    json_export = html.escape(
+        json.dumps(
+            {
+                "status": "ok",
+                "limit": limit,
+                "stats": stats,
+                "events": events,
+            },
+            indent=2,
+            default=str,
+        )
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="60">
+  <title>AxonGate Paid Request Diagnostics</title>
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #101318;
+      --panel: #181d24;
+      --panel-2: #202630;
+      --text: #f5f7fb;
+      --muted: #b8c2cf;
+      --line: #303844;
+      --accent: #78d6b6;
+      --warn: #f4be62;
+      --danger: #f07f7f;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }}
+    main {{ max-width: 1480px; margin: 0 auto; padding: 28px 18px 56px; }}
+    header {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 20px; }}
+    h1 {{ margin: 0; font-size: 1.85rem; line-height: 1.1; }}
+    h2 {{ margin: 26px 0 10px; font-size: 1rem; }}
+    p, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .links {{ display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }}
+    .links a {{ border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--panel); }}
+    .cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }}
+    .card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      min-height: 96px;
+    }}
+    .card span, .card small {{ display: block; color: var(--muted); }}
+    .card strong {{ display: block; margin: 5px 0; font-size: 1.45rem; line-height: 1.1; }}
+    .split {{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }}
+    .table-wrap {{ overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; min-width: 1240px; border-collapse: collapse; background: var(--panel); }}
+    .split table {{ min-width: 0; }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }}
+    th {{ color: var(--text); background: var(--panel-2); font-size: 0.9rem; white-space: nowrap; }}
+    td {{ color: var(--muted); max-width: 340px; overflow-wrap: anywhere; }}
+    code, pre {{
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: var(--code);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+    }}
+    code {{ display: inline-block; max-width: 100%; padding: 1px 5px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 14px; margin: 0; }}
+    .notice {{ border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--panel); color: var(--muted); margin: 14px 0; }}
+    @media (max-width: 900px) {{
+      header {{ display: block; }}
+      .links {{ justify-content: flex-start; margin-top: 14px; }}
+      .split {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Paid Request Diagnostics</h1>
+        <p>Private view of what paid agents asked for, which reports were delivered, and what needs product tuning.</p>
+      </div>
+      <nav class="links" aria-label="Paid request operator links">
+        <a href="{public}/operator">Operator</a>
+        <a href="{public}/operator/leads">Leads</a>
+        <a href="{public}/operator/orders">Orders</a>
+        <a href="{esc(json_href)}">JSON</a>
+        <a href="{public}/metrics">Metrics</a>
+      </nav>
+    </header>
+
+    <section class="cards">{cards}</section>
+    <p class="notice">This page is token-gated. Public metrics only expose hashed target summaries; raw target URLs, buyer questions, payment IDs, and report links stay here.</p>
+
+    <div class="split">
+      <section>
+        <h2>By Source</h2>
+        <table><thead><tr><th>Source</th><th>Events</th></tr></thead><tbody>{source_rows}</tbody></table>
+      </section>
+      <section>
+        <h2>By Product</h2>
+        <table><thead><tr><th>Product</th><th>Events</th></tr></thead><tbody>{product_rows}</tbody></table>
+      </section>
+      <section>
+        <h2>By Pack Or Tier</h2>
+        <table><thead><tr><th>Pack / Tier</th><th>Events</th></tr></thead><tbody>{pack_rows}</tbody></table>
+      </section>
+    </div>
+
+    <h2>Recent Paid Requests</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID / Time</th><th>Product</th><th>Source / Pack</th><th>Target</th><th>Question</th><th>Report</th><th>Amount</th><th>Confidence</th><th>LLM</th><th>Payment</th></tr></thead>
+        <tbody>{events_table}</tbody>
+      </table>
+    </div>
+
+    <h2>Private JSON Snapshot</h2>
+    <pre>{json_export}</pre>
+  </main>
+</body>
+</html>"""
+
+
+def proof_pack_report_retention_days() -> int:
+    return max(1, int(PROOF_PACK_REPORT_RETENTION_SECONDS / 86400))
+
+
+def proof_pack_report_key(report_id: str) -> str:
+    return f"{PROOF_PACK_REPORTS_REDIS_PREFIX}:{report_id}"
+
+
+def normalize_report_id(value: Any) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]+", "", str(value or "").strip())[:96]
+
+
+def generate_proof_pack_report_id() -> str:
+    return f"ppr_{secrets.token_urlsafe(18).replace('-', '_')[:24]}"
+
+
+def proof_pack_report_api_url(report_id: str) -> str:
+    return public_url(f"/v1/proof-pack/reports/{url_quote(report_id, safe='')}")
+
+
+def proof_pack_report_page_url(report_id: str) -> str:
+    return public_url(f"/proof-pack/reports/{url_quote(report_id, safe='')}")
+
+
+def proof_pack_report_follow_up_url(report_id: str) -> str:
+    return public_url(f"/v1/proof-pack/reports/{url_quote(report_id, safe='')}/follow-up")
+
+
+def proof_pack_report_refresh_url(report_id: str) -> str:
+    return public_url(f"/v1/proof-pack/reports/{url_quote(report_id, safe='')}/refresh")
+
+
+def proof_pack_result_hash(payload: dict[str, Any]) -> str:
+    excluded = {
+        "report_id",
+        "report_url",
+        "report_page",
+        "result_hash",
+        "created_at",
+        "expires_at",
+        "retention_days",
+        "follow_up_url",
+        "refresh_url",
+    }
+    core = {key: value for key, value in payload.items() if key not in excluded}
+    return stable_hash(json.dumps(core, sort_keys=True, separators=(",", ":"), default=str))
+
+
+def proof_pack_report_public_summary(report: dict[str, Any]) -> dict[str, Any]:
+    target_domain = target_hostname_label(str(report.get("target_url") or ""))
+    return {
+        "created_at": report.get("created_at"),
+        "expires_at": report.get("expires_at"),
+        "pack": report.get("pack"),
+        "agent_action": report.get("agent_action"),
+        "source_quality_score": report.get("source_quality_score"),
+        "target_domain_hash": stable_hash(target_domain)[:16] if target_domain else None,
+        "citation_count": report.get("citation_coverage", {}).get("citation_count"),
+    }
+
+
+def build_proof_pack_report_payload(report: dict[str, Any], report_id: Optional[str] = None) -> dict[str, Any]:
+    normalized_report_id = normalize_report_id(report_id) or generate_proof_pack_report_id()
+    now = int(time.time())
+    created_at = int(report.get("created_at") or now)
+    expires_at = created_at + PROOF_PACK_REPORT_RETENTION_SECONDS
+    payload = {
+        **report,
+        "report_id": normalized_report_id,
+        "created_at": created_at,
+        "expires_at": expires_at,
+        "retention_days": proof_pack_report_retention_days(),
+        "report_url": proof_pack_report_api_url(normalized_report_id),
+        "report_page": proof_pack_report_page_url(normalized_report_id),
+        "follow_up_url": proof_pack_report_follow_up_url(normalized_report_id),
+        "refresh_url": proof_pack_report_refresh_url(normalized_report_id),
+    }
+    payload["source_hash"] = str(
+        payload.get("source_hash")
+        or payload.get("source_profile", {}).get("content_sha256")
+        or ""
+    )
+    next_call = payload.get("recommended_next_call")
+    if isinstance(next_call, dict):
+        if next_call.get("url") == public_url("/v1/proof-pack/reports/{report_id}"):
+            next_call["url"] = payload["report_url"]
+        if next_call.get("endpoint") == "/v1/proof-pack/reports/{report_id}":
+            next_call["endpoint"] = f"/v1/proof-pack/reports/{normalized_report_id}"
+    payload["result_hash"] = proof_pack_result_hash(payload)
+    return payload
+
+
+def is_proof_pack_sample_report_id(report_id: Any) -> bool:
+    return normalize_report_id(report_id) == PROOF_PACK_SAMPLE_REPORT_ID
+
+
+def build_proof_pack_sample_report() -> dict[str, Any]:
+    """Return the public sample as a report-shaped payload for no-spend testing."""
+    sample = build_proof_pack_sample_response("sample-report")
+    report = {
+        "status": "sample_report",
+        "supplier_spend": False,
+        "sample": True,
+        "sample_report_note": "Public sample report for testing retained-report, follow-up, and refresh quote flows without payment.",
+        "target_url": sample["target_url"],
+        "question": sample["question"],
+        "pack": sample["pack"],
+        "answer": sample["answer"],
+        "executive_summary": sample["executive_summary"],
+        "decision": sample.get("decision"),
+        "confidence_score": sample.get("confidence_score"),
+        "source_quality_score": sample.get("source_quality_score"),
+        "agent_action": sample.get("agent_action"),
+        "recommended_next_call": sample.get("recommended_next_call"),
+        "key_claims": sample.get("key_claims", []),
+        "supported_findings": sample.get("supported_findings", []),
+        "gaps": sample.get("gaps", []),
+        "citation_coverage": sample.get("citation_coverage"),
+        "citations": sample.get("citations", []),
+        "risks": sample.get("risks", []),
+        "source_profile": sample.get("source_profile", {}),
+        "report_card": sample.get("report_card"),
+        "cache": sample.get("cache", {}),
+        "llm_used": sample.get("llm_used"),
+        "llm_model": sample.get("llm_model"),
+        "fallback_reason": sample.get("fallback_reason"),
+        "payment": sample.get("payment", {}),
+        "ueg_receipt": sample.get("ueg_receipt", {}),
+    }
+    return build_proof_pack_report_payload(report, PROOF_PACK_SAMPLE_REPORT_ID)
+
+
+def prune_memory_proof_pack_reports(now: Optional[int] = None) -> None:
+    current = int(now or time.time())
+    for report_id, report in list(proof_pack_reports.items()):
+        try:
+            expired = int(report.get("expires_at") or 0) <= current
+        except (TypeError, ValueError):
+            expired = True
+        if expired:
+            proof_pack_reports.pop(report_id, None)
+            if report_id in proof_pack_report_order:
+                proof_pack_report_order.remove(report_id)
+
+    overflow = len(proof_pack_report_order) - PROOF_PACK_REPORTS_MEMORY_MAX
+    if overflow > 0:
+        for report_id in proof_pack_report_order[-overflow:]:
+            proof_pack_reports.pop(report_id, None)
+        del proof_pack_report_order[-overflow:]
+
+
+async def store_proof_pack_report(report: dict[str, Any], report_id: Optional[str] = None) -> dict[str, Any]:
+    """Persist one paid Proof Pack report for agent reuse and follow-up."""
+    payload = build_proof_pack_report_payload(report, report_id)
+    report_id = str(payload["report_id"])
+    serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
+    inc_metric("proof_pack_reports_total")
+
+    if redis_client:
+        try:
+            await redis_client.set(proof_pack_report_key(report_id), serialized, ex=PROOF_PACK_REPORT_RETENTION_SECONDS)
+            await redis_client.lpush(PROOF_PACK_REPORT_INDEX_REDIS_KEY, report_id)
+            await redis_client.ltrim(PROOF_PACK_REPORT_INDEX_REDIS_KEY, 0, PROOF_PACK_REPORTS_MEMORY_MAX - 1)
+            return payload
+        except Exception as exc:
+            print(f"[PROOF_PACK_REPORTS] Redis report storage failed: {exc}")
+
+    async with proof_pack_reports_lock:
+        proof_pack_reports[report_id] = payload
+        if report_id in proof_pack_report_order:
+            proof_pack_report_order.remove(report_id)
+        proof_pack_report_order.insert(0, report_id)
+        prune_memory_proof_pack_reports()
+    return payload
+
+
+async def read_proof_pack_report(report_id: str) -> Optional[dict[str, Any]]:
+    """Return a stored Proof Pack report by its unguessable report id."""
+    normalized_report_id = normalize_report_id(report_id)
+    if not normalized_report_id:
+        return None
+    if is_proof_pack_sample_report_id(normalized_report_id):
+        return build_proof_pack_sample_report()
+
+    if redis_client:
+        try:
+            raw = await redis_client.get(proof_pack_report_key(normalized_report_id))
+            if raw:
+                parsed = parse_proof_pack_lead_record(raw)
+                if parsed:
+                    return parsed
+        except Exception as exc:
+            print(f"[PROOF_PACK_REPORTS] Redis report read failed: {exc}")
+
+    async with proof_pack_reports_lock:
+        prune_memory_proof_pack_reports()
+        report = proof_pack_reports.get(normalized_report_id)
+        return dict(report) if report else None
+
+
+async def proof_pack_reports_public_snapshot() -> dict[str, Any]:
+    """Return public-safe report storage health for metrics."""
+    snapshot: dict[str, Any] = {
+        "backend": "redis" if redis_client else "memory",
+        "retention_seconds": PROOF_PACK_REPORT_RETENTION_SECONDS,
+        "retention_days": proof_pack_report_retention_days(),
+        "max_retained": PROOF_PACK_REPORTS_MEMORY_MAX,
+        "count": 0,
+        "latest": None,
+    }
+    latest: Optional[dict[str, Any]] = None
+    if redis_client:
+        snapshot["redis_index_key"] = PROOF_PACK_REPORT_INDEX_REDIS_KEY
+        try:
+            report_ids = await redis_client.lrange(PROOF_PACK_REPORT_INDEX_REDIS_KEY, 0, 0)
+            snapshot["count"] = int(await redis_client.llen(PROOF_PACK_REPORT_INDEX_REDIS_KEY))
+            if report_ids:
+                latest = await read_proof_pack_report(str(report_ids[0]))
+        except Exception as exc:
+            print(f"[PROOF_PACK_REPORTS] Redis report snapshot failed: {exc}")
+
+    if latest is None:
+        async with proof_pack_reports_lock:
+            prune_memory_proof_pack_reports()
+            snapshot["count"] = max(snapshot["count"], len(proof_pack_report_order))
+            if proof_pack_report_order:
+                latest = proof_pack_reports.get(proof_pack_report_order[0])
+
+    if latest:
+        snapshot["latest"] = proof_pack_report_public_summary(latest)
+    return snapshot
+
+
+def proof_pack_report_follow_up(report: dict[str, Any], question: str) -> dict[str, Any]:
+    """Answer a follow-up using only the stored report citations."""
+    normalized_question = proof_pack_question(question)
+    citations = [citation for citation in report.get("citations", []) if isinstance(citation, dict)]
+    ranked = [
+        citation
+        for _, _, citation in sorted(
+            (
+                -evidence_relevance_score(str(citation.get("excerpt") or ""), normalized_question, index),
+                index,
+                citation,
+            )
+            for index, citation in enumerate(citations)
+        )
+    ]
+    selected = ranked[: min(3, len(ranked))]
+    if selected:
+        cited_summary = clean_evidence_excerpt(" ".join(str(citation.get("excerpt") or "") for citation in selected), 700)
+        answer = (
+            f"Using stored report {report.get('report_id')}, the follow-up answer is limited to existing citations: "
+            f"{cited_summary}"
+        )
+        action = report.get("agent_action") or "ingest_with_caution"
+        confidence = clamp_confidence(float(report.get("confidence_score") or 0.0) - 0.05)
+    else:
+        answer = "The stored report has no reusable citations for this follow-up. Run a refreshed Proof Pack."
+        action = "do_not_cite"
+        confidence = 0.0
+
+    return {
+        "status": "follow_up",
+        "supplier_spend": False,
+        "report_id": report.get("report_id"),
+        "report_url": report.get("report_url"),
+        "original_question": report.get("question"),
+        "follow_up_question": normalized_question,
+        "answer": answer,
+        "confidence_score": confidence,
+        "agent_action": action,
+        "citations": selected,
+        "source_profile": report.get("source_profile"),
+        "limits": [
+            "Follow-up answers reuse stored citations only.",
+            "Refresh the report when source recency or missing evidence matters.",
+        ],
+        "recommended_next_call": {
+            "action": "refresh_report" if action in {"do_not_cite", "needs_second_source"} else "reuse_or_refresh_later",
+            "method": "POST",
+            "endpoint": f"/v1/proof-pack/reports/{report.get('report_id')}/refresh",
+            "url": report.get("refresh_url"),
+            "reason": "Run a paid rerun if the stored citations do not fully answer the follow-up.",
+        },
+    }
+
+
+def proof_pack_refresh_quote(report: dict[str, Any], refresh_request: ProofPackRefreshRequest, source: str) -> dict[str, Any]:
+    normalized_pack = normalize_proof_pack(refresh_request.pack or str(report.get("pack") or DEFAULT_PROOF_PACK))
+    normalized_question = proof_pack_question(refresh_request.question or str(report.get("question") or "What does this source establish?"))
+    target_url = str(report.get("target_url") or "")
+    normalized_source = normalize_attribution_source(source or str(report.get("payment", {}).get("source") or "report-refresh"))
+    price = price_for_proof_pack(normalized_pack)
+    return {
+        "status": "refresh_quote",
+        "supplier_spend": False,
+        "report_id": report.get("report_id"),
+        "target_url": target_url,
+        "question": normalized_question,
+        "pack": normalized_pack,
+        "force_refresh": bool(refresh_request.force_refresh),
+        "current_source_hash": report.get("source_hash") or report.get("source_profile", {}).get("content_sha256"),
+        "amount_usdc": float(price),
+        "amount_units": str(usdc_units(price)),
+        "paid_endpoint": proof_pack_payment_probe_url(normalized_pack, normalized_source),
+        "buyer_command": proof_pack_buyer_command(target_url, normalized_question, normalized_pack, normalized_source),
+        "next_steps": {
+            "probe_payment_terms": proof_pack_payment_probe_url(normalized_pack, normalized_source),
+            "paid_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}&source={normalized_source}",
+            "compare_result_hash": report.get("result_hash"),
+            "note": "Submit a new paid Proof Pack request with force_refresh=true to compare source_hash and result_hash.",
+        },
+    }
+
+
+def build_proof_pack_report_html(report: dict[str, Any]) -> str:
+    esc = html.escape
+    citations = report.get("citations", []) if isinstance(report.get("citations"), list) else []
+    citation_rows = "\n".join(
+        "<tr>"
+        f"<td>{esc(str(citation.get('id') or ''))}</td>"
+        f"<td>{esc(str(citation.get('excerpt') or ''))}</td>"
+        "</tr>"
+        for citation in citations[:12]
+        if isinstance(citation, dict)
+    ) or '<tr><td colspan="2">No citations retained.</td></tr>'
+    findings = report.get("supported_findings", []) if isinstance(report.get("supported_findings"), list) else []
+    findings_html = "\n".join(f"<li>{esc(str(item))}</li>" for item in findings[:8]) or "<li>No supported findings retained.</li>"
+    gaps = report.get("gaps", []) if isinstance(report.get("gaps"), list) else []
+    gaps_html = "\n".join(f"<li>{esc(str(item))}</li>" for item in gaps[:8]) or "<li>No gaps recorded.</li>"
+    decision = report.get("decision") if isinstance(report.get("decision"), dict) else {}
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AxonGate Proof Pack Report</title>
+  <style>
+    :root {{ color-scheme: light dark; --bg:#12110f; --panel:#1d1b18; --line:#39352e; --text:#f5f2ea; --muted:#c4beb2; --accent:#6fd3bd; }}
+    body {{ margin:0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }}
+    main {{ max-width: 980px; margin: 0 auto; padding: 32px 18px 56px; }}
+    a {{ color: var(--accent); }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; margin: 16px 0; }}
+    code {{ background:#0d0c0b; border:1px solid var(--line); border-radius:4px; padding:2px 5px; }}
+    table {{ width:100%; border-collapse: collapse; }}
+    th,td {{ border-bottom:1px solid var(--line); padding:10px; text-align:left; vertical-align:top; }}
+    th {{ color:var(--text); }}
+    td,p,li {{ color:var(--muted); }}
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="{esc(PUBLIC_BASE_URL)}">AxonGate</a></p>
+    <h1>Proof Pack Report</h1>
+    <div class="panel">
+      <p><strong>Report ID:</strong> <code>{esc(str(report.get('report_id') or ''))}</code></p>
+      <p><strong>Decision:</strong> {esc(str(decision.get('label') or report.get('agent_action') or 'review'))}</p>
+      <p>{esc(str(decision.get('summary') or report.get('executive_summary') or ''))}</p>
+      <p><strong>Agent action:</strong> <code>{esc(str(report.get('agent_action') or ''))}</code></p>
+      <p><strong>Quality:</strong> {esc(str(report.get('source_quality_score') or ''))}</p>
+    </div>
+    <div class="panel">
+      <h2>Question</h2>
+      <p>{esc(str(report.get('question') or ''))}</p>
+      <h2>Answer</h2>
+      <p>{esc(str(report.get('answer') or ''))}</p>
+    </div>
+    <div class="panel">
+      <h2>Supported Findings</h2>
+      <ul>{findings_html}</ul>
+      <h2>Gaps</h2>
+      <ul>{gaps_html}</ul>
+    </div>
+    <div class="panel">
+      <h2>Citations</h2>
+      <table><thead><tr><th>ID</th><th>Excerpt</th></tr></thead><tbody>{citation_rows}</tbody></table>
+    </div>
+    <div class="panel">
+      <h2>Reuse</h2>
+      <p>JSON: <a href="{esc(str(report.get('report_url') or ''))}">{esc(str(report.get('report_url') or ''))}</a></p>
+      <p>Follow-up API: <code>{esc(str(report.get('follow_up_url') or ''))}</code></p>
+      <p>Refresh quote API: <code>{esc(str(report.get('refresh_url') or ''))}</code></p>
+    </div>
+  </main>
+</body>
+</html>"""
 
 
 async def update_stored_proof_pack_lead(lead_id: str, updates: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -9608,7 +10771,7 @@ def build_faq_html() -> str:
         ),
         (
             "What is a Proof Pack?",
-            "A Proof Pack is a single-source evidence report. It answers a claim or question using one public URL and returns summary, claims, citations, risks, confidence, source hash, and API metadata.",
+            "A Proof Pack is a single-source evidence report. It answers a claim or question using one public URL and returns summary, claims, citations, risks, confidence, source hash, report ID, result hash, source quality score, agent action, and follow-up or refresh URLs.",
         ),
         (
             "What is an Evidence Bundle?",
@@ -11392,7 +12555,7 @@ def build_proof_pack_html() -> str:
       <div>
         <p class="eyebrow">Not a page parser</p>
         <h1>Can your agent safely cite this source?</h1>
-        <p class="summary">AxonGate checks whether a public URL actually supports a claim, extracts citation-ready evidence, and flags weak or noisy sources before an AI agent relies on them.</p>
+    <p class="summary">AxonGate checks whether a public URL actually supports a claim, extracts citation-ready evidence, and flags weak or noisy sources before an AI agent relies on them. Paid reports now include a reusable <code>report_id</code>, no-spend follow-up API, refresh quote, <code>agent_action</code>, and <code>source_quality_score</code>.</p>
       </div>
       <form class="trust-form" method="get" action="/proof-pack/quote">
         <label>Source URL
@@ -11419,7 +12582,7 @@ def build_proof_pack_html() -> str:
       </div>
     </section>
     <h2>Source Trust Reports <span class="proof-name">(Proof Packs)</span></h2>
-    <p class="summary">Paid, citation-backed evidence checks for agent builders. Send a public source URL and a claim or question; AxonGate returns a compact answer, executive summary, key claims, citations, risks, source hash, payment metadata, and UEG receipt.</p>
+    <p class="summary">Paid, citation-backed evidence checks for agent builders. Send a public source URL and a claim or question; AxonGate returns a compact answer, executive summary, key claims, citations, risks, source hash, result hash, agent action, payment metadata, and UEG receipt.</p>
     {actions}
 
     <div class="grid">
@@ -11427,6 +12590,14 @@ def build_proof_pack_html() -> str:
       <div class="box"><strong>Protocol</strong><br>x402 on Base USDC.</div>
       <div class="box"><strong>Fallback</strong><br>Deterministic evidence check if LLM generation is off or fails.</div>
       <div class="box"><strong>Validation</strong><br>Unsupported LLM claims are dropped unless they cite extracted evidence IDs.</div>
+    </div>
+
+    <h2>After Payment</h2>
+    <p>A successful Proof Pack is retained as a reusable report for {html.escape(str(proof_pack_report_retention_days()))} days. Agents should store <code>report_id</code>, <code>report_url</code>, <code>result_hash</code>, <code>source_hash</code>, <code>agent_action</code>, and <code>source_quality_score</code>, then use no-spend follow-up before paying for a fresh rerun.</p>
+    <div class="grid">
+      <div class="box"><strong>Retrieve</strong><br><code>GET /v1/proof-pack/reports/{{report_id}}</code></div>
+      <div class="box"><strong>Follow up</strong><br><code>POST /v1/proof-pack/reports/{{report_id}}/follow-up</code></div>
+      <div class="box"><strong>Refresh quote</strong><br><code>POST /v1/proof-pack/reports/{{report_id}}/refresh</code></div>
     </div>
 
     <h2>Pricing</h2>
@@ -11466,6 +12637,11 @@ def build_proof_pack_html() -> str:
 Header: PAYMENT-SIGNATURE: &lt;x402-payment-proof&gt;
 Header: X-AxonGate-Pack: standard</pre>
 
+      <h2>Reuse A Paid Report</h2>
+      <pre>GET {public}/v1/proof-pack/reports/{{report_id}}
+POST {public}/v1/proof-pack/reports/{{report_id}}/follow-up
+POST {public}/v1/proof-pack/reports/{{report_id}}/refresh</pre>
+
       <h2>Request</h2>
       <pre>{request_json}</pre>
 
@@ -11494,6 +12670,10 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
         )
     )
     paid_endpoint = html.escape(sample["next_steps"]["paid_endpoint"])
+    sample_report_url = html.escape(sample["next_steps"]["sample_report_api"])
+    sample_report_page = html.escape(sample["next_steps"]["sample_report_page"])
+    sample_follow_up_url = html.escape(sample["next_steps"]["sample_follow_up_api"])
+    sample_refresh_url = html.escape(sample["next_steps"]["sample_refresh_quote_api"])
     buyer_command = html.escape(sample["next_steps"]["buyer_command"])
     raw_json = html.escape(json.dumps(sample, indent=2))
     claim_rows = "\n".join(
@@ -11558,6 +12738,8 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
         ],
         [
             ("Sample JSON", sample_api),
+            ("Reusable Report", sample_report_page),
+            ("Report API", sample_report_url),
             ("Probe Payment Terms", paid_endpoint),
             ("Docs", f"{PUBLIC_BASE_URL}/docs"),
             ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
@@ -11642,6 +12824,7 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
       <div class="grid">
         <div class="box"><strong>Status</strong><br><code>{html.escape(sample["status"])}</code></div>
         <div class="box"><strong>Pack</strong><br><code>{html.escape(sample["pack"])}</code></div>
+        <div class="box"><strong>Sample Report</strong><br><code>{html.escape(sample["report_id"])}</code></div>
         <div class="box"><strong>Live Price</strong><br>{html.escape(str(sample["payment"]["live_pack_amount_usdc"]))} USDC</div>
         <div class="box"><strong>Source Hash</strong><br><code>{html.escape(sample["source_profile"]["content_sha256"][:16])}...</code></div>
       </div>
@@ -11687,6 +12870,15 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
     <section class="panel">
       <h2>Risks and Limits</h2>
       <ul>{risk_items}</ul>
+    </section>
+
+    <section class="panel">
+      <h2>Reusable Sample Report</h2>
+      <p>Use this no-spend report ID to test the same retained report, follow-up, and refresh quote flow that a paid Proof Pack returns.</p>
+      <pre>GET {sample_report_url}
+GET {sample_report_page}
+POST {sample_follow_up_url}
+POST {sample_refresh_url}</pre>
     </section>
 
     <details class="technical">
@@ -11764,6 +12956,16 @@ Proof Pack quote API: {public_url("/v1/proof-pack/quote")}
 Proof Pack request page: {public_url("/proof-pack/request")}
 Proof Pack lead API: {public_url("/v1/proof-pack/leads")}
 Proof Pack x402 endpoint: {public_url("/v1/x402/proof-pack")}
+Proof Pack report API pattern: {public_url("/v1/proof-pack/reports/{report_id}")}
+Proof Pack report page pattern: {public_url("/proof-pack/reports/{report_id}")}
+Proof Pack follow-up API pattern: {public_url("/v1/proof-pack/reports/{report_id}/follow-up")}
+Proof Pack refresh quote API pattern: {public_url("/v1/proof-pack/reports/{report_id}/refresh")}
+Proof Pack sample report ID: {PROOF_PACK_SAMPLE_REPORT_ID}
+Proof Pack sample report API: {proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)}
+Proof Pack sample report page: {proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)}
+Proof Pack sample follow-up API: {proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)}
+Proof Pack sample refresh quote API: {proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)}
+Proof Pack report retention: {proof_pack_report_retention_days()} days
 Proof Bundle page: {public_url("/proof-pack/bundle")}
 Proof Bundle quote page: {public_url("/proof-pack/bundle/quote")}
 Proof Bundle quote API: {public_url("/v1/proof-pack/bundle/quote")}
@@ -11848,6 +13050,13 @@ Header: X-AxonGate-Pack: standard
 Body example:
 {proof_pack_request_example}
 
+After a successful paid Proof Pack:
+- Store report_id, report_url, result_hash, source_hash, agent_action, and source_quality_score.
+- Retrieve retained report JSON with GET {public_url("/v1/proof-pack/reports/{report_id}")}.
+- Ask no-spend follow-ups with POST {public_url("/v1/proof-pack/reports/{report_id}/follow-up")} and body {{"question":"Can my agent cite this claim?"}}.
+- Request a paid rerun quote with POST {public_url("/v1/proof-pack/reports/{report_id}/refresh")}; compare old result_hash and source_hash with the refreshed delivery.
+- Try the retained-report loop before spending with sample report {PROOF_PACK_SAMPLE_REPORT_ID}: GET {proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)}, POST {proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)}, POST {proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)}.
+
 Proof Pack prices:
 {proof_pack_lines}
 
@@ -11872,10 +13081,12 @@ Stripe events:
 
 Successful Proof Pack response shape:
 - status: success
-- target_url, question, pack
+- target_url, question, pack, report_id, report_url, report_page
+- result_hash, source_hash, follow_up_url, refresh_url
 - answer and executive_summary
-- confidence_score
+- decision, confidence_score, source_quality_score, agent_action, recommended_next_call
 - key_claims with citation_ids
+- supported_findings, gaps, citation_coverage
 - citations with source excerpts
 - risks
 - source_profile with final_url and content_sha256
@@ -12123,6 +13334,7 @@ def build_docs_html() -> str:
 
     <h2>Source Trust Reports</h2>
     <p>Source Trust Reports, still called Proof Packs in the API, are paid evidence checks for agent builders. Use them before RAG ingestion, web citations, autonomous actions, or customer-facing answers. They return whether the source supports the claim, what evidence is usable, and what risks make the source weak.</p>
+    <p>Successful paid reports are retained for {html.escape(str(proof_pack_report_retention_days()))} days. Store <code>report_id</code>, <code>report_url</code>, <code>result_hash</code>, <code>source_hash</code>, <code>agent_action</code>, and <code>source_quality_score</code>. Use follow-up for no-spend reuse, and refresh quotes when recency or missing evidence matters.</p>
     <div class="table-wrap">
     <table>
       <thead><tr><th>Pack</th><th>Price</th><th>Policy</th></tr></thead>
@@ -12134,6 +13346,18 @@ def build_docs_html() -> str:
     <pre>curl "{public}/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs"</pre>
     <p>Quote page: <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/proof-pack/quote</a></p>
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
+    <p>Post-payment reuse APIs:</p>
+    <pre>curl "{public}/v1/proof-pack/reports/{{report_id}}"
+curl -X POST "{public}/v1/proof-pack/reports/{{report_id}}/follow-up" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"question":"Can my agent cite this claim?"}}'
+curl -X POST "{public}/v1/proof-pack/reports/{{report_id}}/refresh"</pre>
+    <p>No-spend retained report sample:</p>
+    <pre>curl "{public}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}"
+curl -X POST "{public}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"question":"Can my agent cite reserved domains?"}}'
+curl -X POST "{public}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh"</pre>
     <p>Request capture page: <a href="{public}/proof-pack/request?target_url=https%3A%2F%2Fexample.com&amp;pack=quick&amp;source=docs">{public}/proof-pack/request</a></p>
     <pre>curl -X POST "{public}/v1/proof-pack/leads" \\
   -H "Content-Type: application/json" \\
@@ -12253,6 +13477,11 @@ def build_operator_dashboard_html(
             card("Auto Delivery", count(metric("proof_bundle_auto_fulfillment_success_total")), "Stripe-triggered reports"),
             card("Proof Requests", count(metric("proof_pack_requests_total")), "Paid Proof Pack posts"),
             card("Proof Delivered", count(metric("proof_pack_delivery_success_total")), "Citation reports delivered"),
+            card("Proof Reports", count(metric("proof_pack_reports_total")), "Retained agent reports"),
+            card("Report Reads", count(metric("proof_pack_report_reads_total")), "Stored report reuse"),
+            card("Follow-ups", count(metric("proof_pack_followups_total")), "No-spend report questions"),
+            card("Refresh Quotes", count(metric("proof_pack_refresh_quotes_total")), "Paid rerun interest"),
+            card("Paid Event Logs", count(metric("paid_request_events_total")), "Private paid request clues"),
             card("Cache Hits", count(metric("cache_hits_total")), f'{count(metric("cache_misses_total"))} misses'),
             card("Supplier Calls", count(metric("jina_requests_total")), f'{percent(supplier_rate)} success'),
         ]
@@ -12361,6 +13590,7 @@ def build_operator_dashboard_html(
             f"<tr><td>Contact</td><td>{count(metric('discovery_contact_hits_total'))}</td></tr>",
             f"<tr><td>Operator</td><td>{count(metric('discovery_operator_hits_total'))}</td></tr>",
             f"<tr><td>Operator Orders</td><td>{count(metric('discovery_operator_orders_hits_total'))}</td></tr>",
+            f"<tr><td>Operator Paid Requests</td><td>{count(metric('discovery_operator_paid_requests_hits_total'))}</td></tr>",
             f"<tr><td>Quickstart</td><td>{count(metric('discovery_quickstart_hits_total'))}</td></tr>",
             f"<tr><td>Paid Test Guide</td><td>{count(metric('discovery_paid_test_hits_total'))}</td></tr>",
             f"<tr><td>Quote</td><td>{count(metric('discovery_quote_hits_total'))}</td></tr>",
@@ -12504,6 +13734,7 @@ def build_operator_dashboard_html(
       <nav class="links" aria-label="Operator links">
         <a href="{public}/metrics">Metrics JSON</a>
         <a href="{public}/operator/leads">Private Leads</a>
+        <a href="{public}/operator/paid-requests">Paid Requests</a>
         <a href="{public}/operator/orders">Orders</a>
         <a href="{public}/paid-test">Paid Test</a>
         <a href="{public}/docs">Docs</a>
@@ -14064,6 +15295,42 @@ async def operator_leads_api(request: Request, limit: int = 50):
 
 
 @app.get(
+    "/operator/paid-requests",
+    response_class=HTMLResponse,
+    tags=["operations"],
+    summary="Private paid request diagnostics page",
+    include_in_schema=False,
+)
+async def operator_paid_requests_page(request: Request, limit: int = 50):
+    """Serve a token-protected paid request diagnostics page."""
+    require_operator_access(request)
+    inc_discovery_hit("discovery_operator_paid_requests_hits_total", attribution_source_from_request(request))
+    bounded_limit = max(1, min(limit, PAID_REQUEST_EVENTS_MEMORY_MAX, 200))
+    events = await durable_paid_request_events(bounded_limit)
+    query_token = request.query_params.get("operator_token") or request.query_params.get("token") or ""
+    return build_operator_paid_requests_html(events, paid_request_event_stats(events), bounded_limit, query_token)
+
+
+@app.get("/v1/operator/paid-requests", tags=["operations"], summary="Private paid request diagnostics", include_in_schema=False)
+async def operator_paid_requests_api(request: Request, limit: int = 50):
+    """Return token-protected paid request metadata for conversion diagnostics."""
+    require_operator_access(request)
+    inc_discovery_hit("discovery_operator_paid_requests_hits_total", attribution_source_from_request(request))
+    bounded_limit = max(1, min(limit, PAID_REQUEST_EVENTS_MEMORY_MAX, 200))
+    events = await durable_paid_request_events(bounded_limit)
+    return {
+        "status": "ok",
+        "limit": bounded_limit,
+        "stats": paid_request_event_stats(events),
+        "events": events,
+        "public_summary": {
+            "metrics_key": "paid_request_events",
+            "metrics_url": public_url("/metrics"),
+        },
+    }
+
+
+@app.get(
     "/operator/orders",
     response_class=HTMLResponse,
     tags=["operations"],
@@ -14607,6 +15874,65 @@ async def proof_pack_sample_api(request: Request):
     return build_proof_pack_sample_response(source)
 
 
+@app.get("/proof-pack/reports/{report_id}", response_class=HTMLResponse, tags=["discovery"], summary="Persistent Proof Pack report page")
+async def proof_pack_report_page(request: Request, report_id: str):
+    """Serve a reusable customer-facing Proof Pack report page by report id."""
+    report = await read_proof_pack_report(report_id)
+    if not report:
+        return HTMLResponse(
+            "<!doctype html><html><body><h1>Report not found</h1><p>This Proof Pack report was not found or has expired.</p></body></html>",
+            status_code=404,
+        )
+    inc_metric("proof_pack_report_reads_total")
+    return build_proof_pack_report_html(report)
+
+
+@app.get("/v1/proof-pack/reports/{report_id}", tags=["discovery"], summary="Persistent Proof Pack report JSON")
+async def proof_pack_report_api(request: Request, report_id: str):
+    """Return a stored paid Proof Pack report by unguessable report id."""
+    report = await read_proof_pack_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Proof Pack report was not found or has expired.")
+    inc_metric("proof_pack_report_reads_total")
+    return report
+
+
+@app.post("/v1/proof-pack/reports/{report_id}/follow-up", tags=["discovery"], summary="Follow up on a stored Proof Pack report")
+async def proof_pack_report_follow_up_api(
+    request: Request,
+    report_id: str,
+    follow_up: ProofPackFollowUpRequest,
+):
+    """Answer a follow-up question from stored citations without supplier spend."""
+    report = await read_proof_pack_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Proof Pack report was not found or has expired.")
+    try:
+        await enforce_rate_limit("proof_pack_follow_up_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    inc_metric("proof_pack_followups_total")
+    return proof_pack_report_follow_up(report, follow_up.question)
+
+
+@app.post("/v1/proof-pack/reports/{report_id}/refresh", tags=["discovery"], summary="Quote a paid Proof Pack refresh")
+async def proof_pack_report_refresh_quote_api(
+    request: Request,
+    report_id: str,
+    refresh_request: Optional[ProofPackRefreshRequest] = None,
+):
+    """Return a no-spend paid rerun quote for a stored Proof Pack report."""
+    report = await read_proof_pack_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Proof Pack report was not found or has expired.")
+    try:
+        await enforce_rate_limit("proof_pack_refresh_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    inc_metric("proof_pack_refresh_quotes_total")
+    return proof_pack_refresh_quote(report, refresh_request or ProofPackRefreshRequest(), attribution_source_from_request(request))
+
+
 @app.get("/proof-pack/preview", response_class=HTMLResponse, tags=["discovery"], summary="No-spend Proof Pack mini preview")
 async def proof_pack_preview_page(
     request: Request,
@@ -14853,6 +16179,16 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "proof_pack_request": f"{PUBLIC_BASE_URL}/proof-pack/request",
         "proof_pack_leads_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "proof_pack_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        "proof_pack_report_api_pattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
+        "proof_pack_report_page_pattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+        "proof_pack_follow_up_api_pattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
+        "proof_pack_refresh_quote_api_pattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
+        "proof_pack_sample_report_id": PROOF_PACK_SAMPLE_REPORT_ID,
+        "proof_pack_sample_report_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proof_pack_sample_report_page": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proof_pack_sample_follow_up_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
+        "proof_pack_sample_refresh_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
+        "proof_pack_report_retention_days": proof_pack_report_retention_days(),
         "proof_bundle": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
         "proof_bundle_quote": f"{PUBLIC_BASE_URL}/proof-pack/bundle/quote",
         "proof_bundle_checkout_review": f"{PUBLIC_BASE_URL}/proof-pack/bundle/checkout",
@@ -14998,6 +16334,8 @@ async def metrics_snapshot():
     attribution = await durable_attribution_snapshot()
     rolling_attribution = await durable_rolling_attribution_snapshot()
     proof_pack_lead_storage = await proof_pack_leads_public_snapshot()
+    paid_request_event_storage = await paid_request_events_public_snapshot()
+    proof_pack_report_storage = await proof_pack_reports_public_snapshot()
     triggered_alerts = await evaluate_alerts(metric_values)
     return {
         "status": "ok",
@@ -15059,6 +16397,8 @@ async def metrics_snapshot():
             "memory_entries": len(delivery_credits),
         },
         "proof_pack_leads": proof_pack_lead_storage,
+        "paid_request_events": paid_request_event_storage,
+        "proof_pack_reports": proof_pack_report_storage,
         "preflight": {
             "enabled": PREFLIGHT_ENABLED,
             "timeout_seconds": PREFLIGHT_TIMEOUT_SECONDS,
@@ -15234,6 +16574,22 @@ async def access_context_broker_x402(
         inc_metric("delivery_success_total")
         inc_attribution("delivery_success", source)
         inc_metric("standard_delivery_success_total")
+        await store_paid_request_event(
+            {
+                "product": "clean_context",
+                "status": "delivered",
+                "source": source,
+                "target_url": target_url,
+                "target_domain": target_hostname_label(target_url),
+                "tier": tier,
+                "amount_usdc": float(price_for_tier(tier)),
+                "amount_units": str(usdc_units(price_for_tier(tier))),
+                "cache_hit": cache_hit,
+                "markdown_chars": len(markdown),
+                "payment_identifier": payment_identifier,
+                "payment_reference_hash": stable_hash(payment_reference)[:32],
+            }
+        )
     except NetworkUnavailableError as exc:
         raise retry_later_503(exc) from exc
     except PaymentValidationError as exc:
@@ -15414,19 +16770,28 @@ async def proof_pack_x402(
         inc_metric("payment_validation_rejections_total")
         raise HTTPException(status_code=400, detail=exc.detail) from exc
 
-    return {
+    public_citations = [
+        {key: value for key, value in citation.items() if key != "fingerprint"}
+        for citation in proof_content["citations"]
+    ]
+    action = str(proof_content.get("agent_action") or "ingest_with_caution")
+    response_payload = {
         "status": "success",
         "target_url": target_url,
         "question": question,
         "pack": pack,
         "answer": proof_content["answer"],
         "executive_summary": proof_content["executive_summary"],
+        "decision": proof_content.get("decision"),
         "confidence_score": proof_content["confidence_score"],
+        "source_quality_score": proof_content.get("source_quality_score"),
+        "agent_action": action,
+        "recommended_next_call": recommended_next_call(target_url, question, pack, source, action),
         "key_claims": proof_content["key_claims"],
-        "citations": [
-            {key: value for key, value in citation.items() if key != "fingerprint"}
-            for citation in proof_content["citations"]
-        ],
+        "supported_findings": proof_content.get("supported_findings", []),
+        "gaps": proof_content.get("gaps", []),
+        "citation_coverage": proof_content.get("citation_coverage"),
+        "citations": public_citations,
         "risks": proof_content["risks"],
         "source_profile": proof_content["source_profile"],
         "cache": {"hit": cache_hit},
@@ -15444,6 +16809,34 @@ async def proof_pack_x402(
         },
         "ueg_receipt": ueg_receipt_payload(profitability),
     }
+    response_payload = await store_proof_pack_report(response_payload)
+
+    await store_paid_request_event(
+        {
+            "product": "proof_pack",
+            "status": "delivered",
+            "source": source,
+            "target_url": target_url,
+            "target_domain": target_hostname_label(target_url),
+            "question": question,
+            "pack": pack,
+            "amount_usdc": float(price_for_proof_pack(pack)),
+            "amount_units": str(usdc_units(price_for_proof_pack(pack))),
+            "cache_hit": cache_hit,
+            "llm_used": proof_content.get("llm_used"),
+            "llm_model": proof_content.get("llm_model"),
+            "fallback_reason": proof_content.get("fallback_reason"),
+            "confidence_score": proof_content.get("confidence_score"),
+            "citation_count": len(proof_content.get("citations") or []),
+            "answer_chars": len(str(proof_content.get("answer") or "")),
+            "report_id": response_payload.get("report_id"),
+            "report_url": response_payload.get("report_url"),
+            "result_hash": response_payload.get("result_hash"),
+            "payment_identifier": payment_identifier,
+            "payment_reference_hash": stable_hash(payment_reference)[:32],
+        }
+    )
+    return response_payload
 
 
 @app.post(
@@ -15711,6 +17104,22 @@ async def access_context_broker(
         inc_metric("delivery_success_total")
         inc_attribution("delivery_success", source)
         inc_metric("legacy_delivery_success_total")
+        await store_paid_request_event(
+            {
+                "product": "clean_context_legacy",
+                "status": "delivered",
+                "source": source,
+                "target_url": target_url,
+                "target_domain": target_hostname_label(target_url),
+                "tier": tier,
+                "amount_usdc": float(payment.amount_usdc),
+                "amount_units": str(usdc_units(payment.amount_usdc)),
+                "cache_hit": cache_hit,
+                "markdown_chars": len(markdown),
+                "payment_tx_hash": payment.tx_hash,
+                "payment_reference_hash": stable_hash(payment.tx_hash)[:32],
+            }
+        )
     except NetworkUnavailableError as exc:
         credit = None
         if payment is not None and target_url and tier:
@@ -15921,8 +17330,10 @@ def custom_openapi() -> dict[str, Any]:
         "/v1/operator/leads": ("get",),
         "/v1/operator/leads/{lead_id}/status": ("post",),
         "/operator/leads/{lead_id}/status": ("post",),
+        "/operator/paid-requests": ("get",),
         "/operator/orders": ("get",),
         "/v1/operator/orders": ("get",),
+        "/v1/operator/paid-requests": ("get",),
         "/v1/operator/orders/{lead_id}/resend-email": ("post",),
         "/operator/orders/{lead_id}/resend-email": ("post",),
     }

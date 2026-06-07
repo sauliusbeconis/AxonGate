@@ -11,7 +11,7 @@ Basename: axongate.base.eth
 Category: Data & Context
 
 Description:
-AxonGate is an x402-paid evidence trust layer for autonomous agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions; clean Markdown extraction is available as a supporting endpoint.
+AxonGate is an x402-paid evidence trust layer for autonomous agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, and agent-action recommendations; clean Markdown extraction is available as a supporting endpoint.
 
 Short description:
 x402-paid source trust checks, citation-backed evidence decisions, and multi-source claim support bundles for agent builders.
@@ -51,6 +51,18 @@ https://api.axongate.one/proof-pack/sample
 Proof Pack sample API:
 https://api.axongate.one/v1/proof-pack/sample
 
+Proof Pack sample retained report:
+https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust
+
+Proof Pack sample report page:
+https://api.axongate.one/proof-pack/reports/ppr_sample_source_trust
+
+Proof Pack sample follow-up API:
+https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/follow-up
+
+Proof Pack sample refresh quote API:
+https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/refresh
+
 Proof Pack mini preview page:
 https://api.axongate.one/proof-pack/preview
 
@@ -71,6 +83,15 @@ https://api.axongate.one/v1/proof-pack/leads
 
 Proof Pack x402 endpoint:
 https://api.axongate.one/v1/x402/proof-pack
+
+Proof Pack retained report API pattern:
+https://api.axongate.one/v1/proof-pack/reports/{report_id}
+
+Proof Pack follow-up API pattern:
+https://api.axongate.one/v1/proof-pack/reports/{report_id}/follow-up
+
+Proof Pack refresh quote API pattern:
+https://api.axongate.one/v1/proof-pack/reports/{report_id}/refresh
 
 Proof Bundle page:
 https://api.axongate.one/proof-pack/bundle
@@ -105,6 +126,7 @@ Endpoint paths:
 /v1/x402/quote
 /proof-pack
 /proof-pack/sample
+/proof-pack/reports/ppr_sample_source_trust
 /proof-pack/preview
 /proof-pack/quote
 /proof-pack/request
@@ -113,6 +135,12 @@ Endpoint paths:
 /v1/proof-pack/quote
 /v1/proof-pack/leads
 /v1/x402/proof-pack
+/v1/proof-pack/reports/ppr_sample_source_trust
+/v1/proof-pack/reports/ppr_sample_source_trust/follow-up
+/v1/proof-pack/reports/ppr_sample_source_trust/refresh
+/v1/proof-pack/reports/{report_id}
+/v1/proof-pack/reports/{report_id}/follow-up
+/v1/proof-pack/reports/{report_id}/refresh
 /proof-pack/bundle
 /proof-pack/bundle/quote
 /v1/proof-pack/bundle/quote
@@ -152,7 +180,7 @@ Pay to:
 
 ## Search Keywords
 
-x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, citations, evidence report, multi-source evidence, paid API, agent marketplace
+x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, retained report, report_id, follow-up API, refresh quote, source quality score, agent action, citations, evidence report, multi-source evidence, paid API, agent marketplace
 
 ## Source Attribution
 
@@ -200,6 +228,8 @@ For standard x402 clients, set the tier with either `?tier=basic` or the `X-Axon
 ```
 
 For standard x402 clients, set the Proof Pack with either `?pack=standard` or the `X-AxonGate-Pack` header so payment requirements match the requested pack.
+
+Successful Proof Pack responses include `report_id`, `report_url`, `report_page`, `result_hash`, `source_hash`, `agent_action`, `source_quality_score`, `follow_up_url`, and `refresh_url`. Agents should store those fields, call the follow-up API for no-spend reuse, and call the refresh quote API when recency or missing evidence justifies another paid run. Reviewers can test that loop before spending with sample report `ppr_sample_source_trust`.
 
 ## Proof Bundle Lead Payload
 

@@ -31,8 +31,10 @@ def build_payload(email: str) -> dict:
         "description": (
             "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. "
             "It converts public web pages into clean Markdown and citation-backed evidence reports "
-            "for RAG, autonomous research, and LLM context preparation. The starter tier gives "
-            "agents a 0.012 USDC first paid conversion path before live fresh extraction."
+            "for RAG, autonomous research, and LLM context preparation. Paid Proof Packs now return "
+            "retained report IDs, no-spend follow-up APIs, refresh quotes, agent-action guidance, "
+            "source quality scores, and a concrete no-spend sample retained report. The starter tier gives agents a 0.012 USDC first paid "
+            "conversion path before live fresh extraction."
         ),
         "endpoint_paths": [X402_LIST_SOURCE_PATH, X402_LIST_PROOF_PACK_PATH],
         "endpoints": [X402_LIST_SOURCE_PATH, X402_LIST_PROOF_PACK_PATH],
@@ -44,9 +46,15 @@ def build_payload(email: str) -> dict:
             "and serve starter and standard Proof Pack x402 payment terms. "
             "The endpoints support official Bazaar discovery metadata, "
             "optional payment-identifier, source attribution, a supplier-free quote API, "
-            "a supplier-free Proof Pack quote API, starter sample pricing, and cache-only pricing. "
+            "a supplier-free Proof Pack quote API, retained Proof Pack reports, report_id retrieval, "
+            "no-spend follow-up, refresh quotes, starter sample pricing, and cache-only pricing. "
+            "Reviewers can test the retained-report loop without payment at "
+            "/v1/proof-pack/reports/ppr_sample_source_trust, "
+            "/v1/proof-pack/reports/ppr_sample_source_trust/follow-up, and "
+            "/v1/proof-pack/reports/ppr_sample_source_trust/refresh. "
             "Discovery metadata is available at /.well-known/x402, /.well-known/agent.json, "
-            "/v1/x402/quote, /v1/proof-pack/quote, and /discovery/resources."
+            "/v1/x402/quote, /v1/proof-pack/quote, /v1/proof-pack/reports/{report_id}, "
+            "and /discovery/resources."
         ),
     }
 

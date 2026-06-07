@@ -216,9 +216,39 @@ curl -sS -X POST "$AXONGATE_BASE_URL/v1/x402/proof-pack?pack=standard" \
   }"
 ```
 
-Successful Proof Pack responses include `answer`, `executive_summary`,
-`confidence_score`, `key_claims`, `citations`, `risks`, `source_profile`,
-`cache`, `payment`, and `ueg_receipt`.
+Successful Proof Pack responses include `report_id`, `report_url`,
+`report_page`, `result_hash`, `source_hash`, `answer`, `executive_summary`,
+`decision`, `confidence_score`, `source_quality_score`, `agent_action`,
+`recommended_next_call`, `key_claims`, `supported_findings`, `gaps`,
+`citations`, `risks`, `source_profile`, `cache`, `payment`, and `ueg_receipt`.
+
+Store the report handles and reuse them before paying for another run:
+
+```bash
+export PROOF_PACK_REPORT_ID="<report_id from paid response>"
+
+curl -sS "$AXONGATE_BASE_URL/v1/proof-pack/reports/$PROOF_PACK_REPORT_ID"
+
+curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/reports/$PROOF_PACK_REPORT_ID/follow-up" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Can my agent cite this claim, or does it need another source?"}'
+
+curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/reports/$PROOF_PACK_REPORT_ID/refresh?source=$AXONGATE_SOURCE"
+```
+
+Try the same retained-report loop before paying:
+
+```bash
+export AXONGATE_SAMPLE_REPORT_ID="ppr_sample_source_trust"
+
+curl -sS "$AXONGATE_BASE_URL/v1/proof-pack/reports/$AXONGATE_SAMPLE_REPORT_ID"
+
+curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/reports/$AXONGATE_SAMPLE_REPORT_ID/follow-up" \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Can my agent cite reserved domains?"}'
+
+curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/reports/$AXONGATE_SAMPLE_REPORT_ID/refresh?source=$AXONGATE_SOURCE"
+```
 
 ## Starter And Cached Tiers
 

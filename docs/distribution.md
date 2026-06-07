@@ -35,19 +35,29 @@ https://api.axongate.one/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.or
 https://api.axongate.one/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&pack=quick&source=reviewer
 https://api.axongate.one/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&pack=standard&source=reviewer
 https://api.axongate.one/proof-pack/request?target_url=https%3A%2F%2Fexample.com&pack=quick&source=reviewer
+https://api.axongate.one/v1/proof-pack/reports/{report_id}
+https://api.axongate.one/v1/proof-pack/reports/{report_id}/follow-up
+https://api.axongate.one/v1/proof-pack/reports/{report_id}/refresh
+https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust
+https://api.axongate.one/proof-pack/reports/ppr_sample_source_trust
+https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/follow-up
+https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/refresh
 https://api.axongate.one/proof-pack/bundle?source=reviewer
 https://api.axongate.one/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=reviewer
 ```
 
-Private lead inbox for operators:
+Private operator diagnostics:
 
 ```bash
 curl -H "X-AxonGate-Operator-Token: <token>" "https://api.axongate.one/v1/operator/leads?limit=25"
+curl -H "X-AxonGate-Operator-Token: <token>" "https://api.axongate.one/v1/operator/paid-requests?limit=25"
 ```
 
 Set `AXONGATE_OPERATOR_TOKEN` to enable raw contact access and
 `AXONGATE_PROOF_PACK_LEAD_WEBHOOK_URL` to notify an external inbox or workflow
-whenever a request is captured.
+whenever a request is captured. Paid request diagnostics include private target
+and question metadata for conversion triage; public `/metrics` only exposes
+hashed report/request summaries.
 
 Stripe Proof Bundle fulfillment:
 
@@ -86,7 +96,7 @@ is disabled or the provider has a transient failure.
 
 | Target | Status | Action |
 | --- | --- | --- |
-| x402 List | Review-window cooldown | AxonGate is present as slug `axongate`. Custom-domain starter source-alias update submitted on 2026-05-22; submission ID `86803de6-73b5-48cb-b7b4-0dd62f4d5702`; Proof Pack resubmission on 2026-05-22 returned HTTP 429 because the last submission is still within the 7-day review window. |
+| x402 List | Custom-domain Proof Pack update pending review | AxonGate is present as slug `axongate`. Refreshed custom-domain submission `fbfe40be-391a-4532-9e25-1471b6a16076` was accepted on 2026-06-07 with 2 endpoints found and no probe errors. |
 | PayanAgent | Custom-domain replacements live; Proof Pack added | Provider ID `j579abv0vkymwrxw480hy19xhx85t28n`. Custom-domain fresh service ID `js7ccna62pvxbnte7t18g797wx876gbw`; custom-domain starter service ID `js74m86sxk7rbasa56cnq6w1xh876912`; Proof Pack service ID `js7f9xfyvxqk0kyfea54h36hfx876jp3`. Legacy Railway service records remain active because PayanAgent exposes create/list/invoke but not service update/delete. |
 | Agora402 | Ready, gated | Requires a one-time listing fee: starter 1 USDC, pro 5 USDC, featured 25 USDC. Use the prepared payload below after paying the chosen listing tier. |
 | Agent Bazaar | Ready, manual | Submission form requires sign-in/review. Use the prepared fields below. |
@@ -121,13 +131,13 @@ Proof Pack service payload:
 ```json
 {
   "name": "AxonGate Proof Packs",
-  "description": "Paid citation-backed evidence reports for agent builders. Returns answer, executive summary, key claims, citations, risks, source hash, payment metadata, and UEG receipt.",
+  "description": "Paid citation-backed evidence reports for agent builders. Returns report_id, reusable report_url, answer, executive summary, decision, agent_action, source_quality_score, citations, result_hash, source_hash, payment metadata, and UEG receipt. Follow-up and refresh quote APIs let agents reuse the report after purchase.",
   "serviceType": "api",
   "category": "Data",
   "pricingModel": "per_request",
   "priceInCents": 25,
   "endpoint": "https://api.axongate.one/v1/x402/proof-pack?pack=standard&source=payanagent",
-  "tags": ["x402", "base", "usdc", "proof-pack", "citations", "evidence", "agent-builders"]
+  "tags": ["x402", "base", "usdc", "proof-pack", "citations", "evidence", "agent-builders", "persistent-reports", "follow-up"]
 }
 ```
 
@@ -177,7 +187,7 @@ Starter legacy: js71gygf2a31v1wx6m2fxn8b1s876hnr
 
 ## x402 List
 
-AxonGate is listed and online. The custom-domain starter source-alias update was submitted on 2026-05-22 and is pending review:
+AxonGate is listed and online. The custom-domain starter plus Proof Pack source-alias update was submitted on 2026-06-07 and is pending review:
 
 ```bash
 curl -s "https://x402-list.com/api/v1/services" | jq '.data[] | select(.slug == "axongate")'
@@ -185,10 +195,10 @@ curl -s "https://x402-list.com/api/v1/services" | jq '.data[] | select(.slug == 
 
 ```json
 {
-  "submission_id": "86803de6-73b5-48cb-b7b4-0dd62f4d5702",
+  "submission_id": "fbfe40be-391a-4532-9e25-1471b6a16076",
   "status": "pending",
   "probe_result": {
-    "endpoints_found": 1,
+    "endpoints_found": 2,
     "errors": []
   }
 }
@@ -203,10 +213,10 @@ Suggested update payload:
   "website_url": "https://api.axongate.one/manifest.json?source=x402-list",
   "email": "<operator email>",
   "category": "Data",
-  "description": "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation.",
+  "description": "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation, now with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, and agent-action recommendations.",
   "endpoint_paths": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
   "endpoints": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
-  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, no-spend Proof Pack mini previews, supplier-free quote APIs, and Proof Pack request capture."
+  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Paid Proof Packs now return report_id, report_url, result_hash, source_hash, agent_action, source_quality_score, follow_up_url, and refresh_url so agents can reuse a report instead of paying again immediately. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, no-spend Proof Pack samples, no-spend mini previews, supplier-free quote APIs, retained Proof Pack reports, a concrete sample retained report at ppr_sample_source_trust, follow-up API, refresh quotes, and Proof Pack request capture."
 }
 ```
 

@@ -157,6 +157,14 @@ function summarizeBody(body) {
     target_url: body.json.target_url,
     tier: body.json.tier,
     pack: body.json.pack,
+    report_id: body.json.report_id,
+    report_url: body.json.report_url,
+    result_hash: body.json.result_hash,
+    source_hash: body.json.source_hash,
+    agent_action: body.json.agent_action,
+    source_quality_score: body.json.source_quality_score,
+    follow_up_url: body.json.follow_up_url,
+    refresh_url: body.json.refresh_url,
     markdown_chars: typeof body.json.markdown === "string" ? body.json.markdown.length : 0,
     answer_chars: typeof body.json.answer === "string" ? body.json.answer.length : 0,
     citation_count: Array.isArray(body.json.citations) ? body.json.citations.length : 0,
@@ -328,6 +336,19 @@ async function submitPaid(label) {
 const paid = await submitPaid("PAID");
 if (!paid.response.ok) {
   process.exitCode = 1;
+} else if (product === "proof-pack" && paid.body.json?.report_id) {
+  console.log("PROOF_PACK_REUSE");
+  console.log(JSON.stringify({
+    report_id: paid.body.json.report_id,
+    report_url: paid.body.json.report_url,
+    follow_up_url: paid.body.json.follow_up_url,
+    refresh_url: paid.body.json.refresh_url,
+    result_hash: paid.body.json.result_hash,
+    source_hash: paid.body.json.source_hash,
+    agent_action: paid.body.json.agent_action,
+    source_quality_score: paid.body.json.source_quality_score,
+    note: "Store these fields; use follow_up_url before paying for a refreshed report.",
+  }, null, 2));
 }
 
 if (values.replay || process.env.AXONGATE_REPLAY === "true") {

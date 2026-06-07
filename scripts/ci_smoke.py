@@ -67,6 +67,8 @@ def stripe_signature(payload: bytes, secret: str) -> str:
 async def main() -> None:
     manifest_path = Path(__file__).resolve().parents[1] / "manifest.json"
     json.loads(manifest_path.read_text(encoding="utf-8"))
+    distribution_path = Path(__file__).resolve().parents[1] / "docs" / "distribution-payloads.json"
+    json.loads(distribution_path.read_text(encoding="utf-8"))
     resend_request = httpx.Request("POST", "https://api.resend.com/emails")
     resend_response = httpx.Response(
         403,
@@ -108,6 +110,7 @@ async def main() -> None:
             "/proof-pack/share/source-trust-for-agent-builders",
             "/from/x402-list",
             "/proof-pack/sample",
+            "/proof-pack/reports/ppr_sample_source_trust",
             "/proof-pack/preview",
             "/proof-pack/quote",
             "/proof-pack/request",
@@ -115,6 +118,7 @@ async def main() -> None:
             "/proof-pack/bundle/quote",
             "/proof-pack/bundle/checkout",
             "/v1/proof-pack/sample",
+            "/v1/proof-pack/reports/ppr_sample_source_trust",
             "/v1/proof-pack/preview",
             "/demo",
             "/robots.txt",
@@ -155,6 +159,22 @@ async def main() -> None:
         assert "Contact</a>" in proof_pack_page.text, "Proof Pack page footer should include Contact"
         assert "A parser returns text" in proof_pack_page.text, "Proof Pack page should keep parser contrast"
         assert "Evidence Library" in proof_pack_page.text, "Proof Pack page should link growth library"
+        assert "report_id" in proof_pack_page.text, "Proof Pack page should surface retained report IDs"
+        assert "/v1/proof-pack/reports/{report_id}/follow-up" in proof_pack_page.text, (
+            "Proof Pack page should surface no-spend follow-up API"
+        )
+        docs_page = await client.get("/docs")
+        assert "source_quality_score" in docs_page.text, "Docs page should explain source quality score"
+        assert "/v1/proof-pack/reports/{report_id}/refresh" in docs_page.text, (
+            "Docs page should explain refresh quote API"
+        )
+        assert "/v1/proof-pack/reports/ppr_sample_source_trust" in docs_page.text, (
+            "Docs page should expose concrete sample retained report"
+        )
+        llms_txt = await client.get("/llms.txt")
+        assert "Proof Pack report API pattern" in llms_txt.text, "llms.txt should expose report API pattern"
+        assert "Proof Pack sample report API" in llms_txt.text, "llms.txt should expose sample report API"
+        assert "Store report_id" in llms_txt.text, "llms.txt should explain report handle storage"
         library_page = await client.get("/proof-pack/library")
         assert "Public source-trust examples" in library_page.text, "Evidence Library missing growth headline"
         assert "Quote Similar Report" in library_page.text, "Evidence Library missing buyer CTA"
@@ -170,6 +190,7 @@ async def main() -> None:
         proof_sample_page = await client.get("/proof-pack/sample")
         assert "Sample Evidence Decision" in proof_sample_page.text, "Sample page should lead with evidence decision"
         assert "Why This Is Worth Buying" in proof_sample_page.text, "Sample page should explain buyer value"
+        assert "Reusable Sample Report" in proof_sample_page.text, "Sample page should expose sample retained report"
         assert "View full API JSON" in proof_sample_page.text, "Sample page should keep technical JSON available"
         faq_page = await client.get("/faq")
         assert "Is AxonGate just a page parser?" in faq_page.text, "FAQ page missing parser question"
@@ -267,6 +288,18 @@ async def main() -> None:
         assert proof_quote["amount_units"] == "100000", "quick Proof Pack should cost 0.10 USDC"
         assert proof_quote["packs"]["standard"]["amount_units"] == "250000", "standard Proof Pack amount mismatch"
         assert "buyer_command" in proof_quote["next_steps"], "Proof Pack quote missing buyer command"
+        assert proof_quote["next_steps"]["after_payment"]["report_api_pattern"].endswith(
+            "/v1/proof-pack/reports/{report_id}"
+        ), "Proof Pack quote should explain retained report API"
+        assert "follow_up_api_pattern" in proof_quote["next_steps"]["after_payment"], (
+            "Proof Pack quote should explain follow-up reuse"
+        )
+        assert proof_quote["next_steps"]["after_payment"]["sample_report_id"] == "ppr_sample_source_trust", (
+            "Proof Pack quote should expose sample report id"
+        )
+        assert proof_quote["next_steps"]["after_payment"]["sample_report_api"].endswith(
+            "/v1/proof-pack/reports/ppr_sample_source_trust"
+        ), "Proof Pack quote should expose sample retained report"
         assert proof_quote["next_steps"]["proof_pack_sample_api"].endswith(
             "/v1/proof-pack/sample"
         ), "Proof Pack quote should point to sample JSON"
@@ -433,6 +466,8 @@ async def main() -> None:
         assert no_ua_operator_orders.headers.get("X-AxonGate-Crawler-Guard") == "no-user-agent", (
             "blank-UA guard should mark suppressed private probes"
         )
+        no_ua_paid_requests = await client.get("/operator/paid-requests", headers={"User-Agent": ""})
+        assert no_ua_paid_requests.status_code == 204, "blank-UA paid request crawler should be quietly suppressed"
         no_ua_webhook = await client.post("/v1/stripe/webhook", headers={"User-Agent": ""})
         assert no_ua_webhook.status_code == 204, "blank-UA webhook crawler should be quietly suppressed"
 
@@ -440,6 +475,18 @@ async def main() -> None:
         assert operator_leads_unauthorized.status_code == 401, "operator leads should require a token"
         operator_orders_unauthorized = await client.get("/operator/orders", headers={"User-Agent": "ci-browser"})
         assert operator_orders_unauthorized.status_code == 401, "operator orders should require a token"
+        operator_paid_requests_unauthorized = await client.get(
+            "/v1/operator/paid-requests",
+            headers={"User-Agent": "ci-browser"},
+        )
+        assert operator_paid_requests_unauthorized.status_code == 401, "operator paid requests should require a token"
+        operator_paid_requests_page_unauthorized = await client.get(
+            "/operator/paid-requests",
+            headers={"User-Agent": "ci-browser"},
+        )
+        assert operator_paid_requests_page_unauthorized.status_code == 401, (
+            "operator paid requests page should require a token"
+        )
 
         operator_leads_page = await client.get("/operator/leads?operator_token=ci-operator-token&limit=10")
         assert operator_leads_page.status_code == 200, "operator leads page should accept operator token"
@@ -485,6 +532,52 @@ async def main() -> None:
             order.get("contact") == "codex-bundle@example.invalid"
             for order in operator_orders_json["orders"]
         ), "operator orders API should expose private bundle buyer details"
+        await gateway.store_paid_request_event(
+            {
+                "product": "proof_pack",
+                "status": "delivered",
+                "source": "ci-paid",
+                "target_url": "https://example.com/source",
+                "question": "Which claims can my agent cite?",
+                "pack": "standard",
+                "amount_units": "250000",
+                "cache_hit": False,
+                "llm_used": False,
+                "fallback_reason": "llm_disabled",
+                "citation_count": 1,
+                "confidence_score": 0.62,
+                "report_id": "ppr_ci_event",
+                "report_url": "https://api.axongate.one/v1/proof-pack/reports/ppr_ci_event",
+                "result_hash": "ci_result_hash",
+            }
+        )
+        operator_paid_requests_page = await client.get(
+            "/operator/paid-requests?operator_token=ci-operator-token&limit=10"
+        )
+        assert operator_paid_requests_page.status_code == 200, "operator paid requests page should accept token"
+        assert "Paid Request Diagnostics" in operator_paid_requests_page.text, (
+            "operator paid requests page missing heading"
+        )
+        assert "Which claims can my agent cite?" in operator_paid_requests_page.text, (
+            "operator paid requests page should expose private paid question text"
+        )
+        assert "ppr_ci_event" in operator_paid_requests_page.text, (
+            "operator paid requests page should expose retained report id"
+        )
+        operator_paid_requests_api = await client.get(
+            "/v1/operator/paid-requests?limit=10",
+            headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+        )
+        assert operator_paid_requests_api.status_code == 200, "operator paid requests API should accept token header"
+        operator_paid_requests_json = operator_paid_requests_api.json()
+        assert operator_paid_requests_json["status"] == "ok", "operator paid requests API returned wrong status"
+        assert operator_paid_requests_json["stats"]["by_product"].get("proof_pack", 0) >= 1, (
+            "operator paid requests API should summarize paid Proof Pack records"
+        )
+        assert any(
+            event.get("question") == "Which claims can my agent cite?"
+            for event in operator_paid_requests_json["events"]
+        ), "operator paid requests API should expose private paid question text"
         operator_status = await client.post(
             f"/v1/operator/leads/{proof_bundle_lead_json['lead_id']}/status",
             headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
@@ -893,13 +986,65 @@ async def main() -> None:
         proof_sample = (await client.get("/v1/proof-pack/sample?source=ci")).json()
         assert proof_sample["status"] == "sample", "Proof Pack sample returned wrong status"
         assert proof_sample["supplier_spend"] is False, "Proof Pack sample should not spend supplier budget"
+        assert proof_sample["report_id"] == "ppr_sample_source_trust", "Proof Pack sample should expose sample report id"
+        assert proof_sample["report_url"].endswith("/v1/proof-pack/reports/ppr_sample_source_trust"), (
+            "Proof Pack sample should expose sample report API"
+        )
+        assert proof_sample["follow_up_url"].endswith("/ppr_sample_source_trust/follow-up"), (
+            "Proof Pack sample should expose sample follow-up API"
+        )
+        assert proof_sample["refresh_url"].endswith("/ppr_sample_source_trust/refresh"), (
+            "Proof Pack sample should expose sample refresh quote API"
+        )
         assert proof_sample["payment"]["mode"] == "sample-no-payment", "Proof Pack sample should not require payment"
         assert proof_sample["payment"]["live_pack_amount_units"] == "100000", "Proof Pack sample live quick amount mismatch"
         assert proof_sample["cache"]["sample"] is True, "Proof Pack sample should identify embedded cache material"
         assert proof_sample["llm_used"] is False, "Proof Pack sample must not call the LLM"
         assert proof_sample["citations"], "Proof Pack sample missing citations"
+        assert proof_sample["decision"]["label"], "Proof Pack sample should expose machine-readable decision"
+        assert proof_sample["source_quality_score"] >= 0, "Proof Pack sample should expose source quality score"
+        assert proof_sample["agent_action"], "Proof Pack sample should expose recommended agent action"
+        assert proof_sample["recommended_next_call"]["action"], "Proof Pack sample should expose the next agent call"
+        assert proof_sample["supported_findings"], "Proof Pack sample should expose supported findings"
+        assert proof_sample["gaps"], "Proof Pack sample should expose evidence gaps"
+        assert proof_sample["citation_coverage"]["citation_count"] >= 1, (
+            "Proof Pack sample should expose citation coverage"
+        )
         assert proof_sample["report_card"]["decision_label"], "Proof Pack sample should expose a buyer decision"
         assert proof_sample["report_card"]["buyer_value"], "Proof Pack sample should expose buyer value"
+        assert proof_sample["next_steps"]["sample_report_api"].endswith(
+            "/v1/proof-pack/reports/ppr_sample_source_trust"
+        ), "Proof Pack sample should expose concrete retained report API"
+
+        sample_report_api = await client.get("/v1/proof-pack/reports/ppr_sample_source_trust")
+        assert sample_report_api.status_code == 200, "sample retained report API should return"
+        sample_report_json = sample_report_api.json()
+        assert sample_report_json["status"] == "sample_report", "sample retained report returned wrong status"
+        assert sample_report_json["sample"] is True, "sample retained report should be marked as sample"
+        assert sample_report_json["supplier_spend"] is False, "sample retained report should not spend supplier budget"
+        assert sample_report_json["report_id"] == "ppr_sample_source_trust", "sample retained report id mismatch"
+        assert sample_report_json["result_hash"], "sample retained report should expose result hash"
+        assert sample_report_json["source_hash"], "sample retained report should expose source hash"
+        sample_report_page = await client.get("/proof-pack/reports/ppr_sample_source_trust")
+        assert sample_report_page.status_code == 200, "sample retained report page should render"
+        assert "Proof Pack Report" in sample_report_page.text, "sample retained report page should identify report"
+        sample_follow_up = await client.post(
+            "/v1/proof-pack/reports/ppr_sample_source_trust/follow-up",
+            json={"question": "Can my agent cite reserved domains?"},
+        )
+        assert sample_follow_up.status_code == 200, "sample retained report follow-up should succeed"
+        sample_follow_up_json = sample_follow_up.json()
+        assert sample_follow_up_json["status"] == "follow_up", "sample report follow-up returned wrong status"
+        assert sample_follow_up_json["supplier_spend"] is False, "sample report follow-up should not spend"
+        assert sample_follow_up_json["citations"], "sample report follow-up should reuse sample citations"
+        sample_refresh = await client.post("/v1/proof-pack/reports/ppr_sample_source_trust/refresh?source=ci-sample")
+        assert sample_refresh.status_code == 200, "sample retained report refresh quote should succeed"
+        sample_refresh_json = sample_refresh.json()
+        assert sample_refresh_json["status"] == "refresh_quote", "sample report refresh quote returned wrong status"
+        assert sample_refresh_json["amount_units"] == "100000", "quick sample report refresh quote amount mismatch"
+        assert sample_refresh_json["next_steps"]["compare_result_hash"] == sample_report_json["result_hash"], (
+            "sample refresh quote should compare against sample report hash"
+        )
 
         proof_probe = await client.get("/v1/x402/proof-pack?pack=standard")
         assert proof_probe.status_code == 402, f"Proof Pack probe returned {proof_probe.status_code}"
@@ -971,6 +1116,104 @@ async def main() -> None:
         )
         assert sanitized["llm_used"] is False, "unsupported LLM claims should fall back or be dropped"
 
+        report_markdown = "\n".join(
+            [
+                "# Source trust notes",
+                "",
+                "- AxonGate Proof Packs return cited claims for agent builders evaluating public sources.",
+                "- AxonGate reports include source hashes so returning agents can compare repeat runs.",
+                "- AxonGate retained reports expose follow-up URLs for no-spend reuse of stored citations.",
+                "- AxonGate refresh quotes give agents a paid rerun path when source recency matters.",
+            ]
+        )
+        proof_report_content = await gateway.generate_proof_pack_content(
+            target_url="https://example.com/source",
+            question="Which AxonGate report fields can my agent cite?",
+            pack="deep",
+            markdown=report_markdown,
+            cache_hit=False,
+        )
+        public_report_citations = [
+            {key: value for key, value in citation.items() if key != "fingerprint"}
+            for citation in proof_report_content["citations"]
+        ]
+        stored_report = await gateway.store_proof_pack_report(
+            {
+                "status": "success",
+                "target_url": "https://example.com/source",
+                "question": "Which AxonGate report fields can my agent cite?",
+                "pack": "deep",
+                "answer": proof_report_content["answer"],
+                "executive_summary": proof_report_content["executive_summary"],
+                "decision": proof_report_content["decision"],
+                "confidence_score": proof_report_content["confidence_score"],
+                "source_quality_score": proof_report_content["source_quality_score"],
+                "agent_action": proof_report_content["agent_action"],
+                "recommended_next_call": gateway.recommended_next_call(
+                    "https://example.com/source",
+                    "Which AxonGate report fields can my agent cite?",
+                    "deep",
+                    "ci",
+                    proof_report_content["agent_action"],
+                ),
+                "key_claims": proof_report_content["key_claims"],
+                "supported_findings": proof_report_content["supported_findings"],
+                "gaps": proof_report_content["gaps"],
+                "citation_coverage": proof_report_content["citation_coverage"],
+                "citations": public_report_citations,
+                "risks": proof_report_content["risks"],
+                "source_profile": proof_report_content["source_profile"],
+                "cache": {"hit": False},
+                "llm_used": proof_report_content["llm_used"],
+                "llm_model": proof_report_content["llm_model"],
+                "fallback_reason": proof_report_content["fallback_reason"],
+                "payment": {
+                    "mode": "ci",
+                    "amount_usdc": float(gateway.price_for_proof_pack("deep")),
+                    "source": "ci",
+                },
+                "ueg_receipt": {"status": "ci"},
+            },
+            report_id="ppr_ci_smoke_report",
+        )
+        assert stored_report["report_id"] == "ppr_ci_smoke_report", "stored report should keep normalized id"
+        assert stored_report["report_url"].endswith("/v1/proof-pack/reports/ppr_ci_smoke_report"), (
+            "stored report should expose reusable JSON URL"
+        )
+        assert stored_report["recommended_next_call"]["endpoint"].endswith("/ppr_ci_smoke_report"), (
+            "stored report next call should use the concrete report endpoint"
+        )
+        assert stored_report["result_hash"], "stored report should expose a result hash"
+        stored_report_api = await client.get(f"/v1/proof-pack/reports/{stored_report['report_id']}")
+        assert stored_report_api.status_code == 200, "stored report API should return retained report"
+        stored_report_json = stored_report_api.json()
+        assert stored_report_json["result_hash"] == stored_report["result_hash"], "stored report API hash mismatch"
+        stored_report_page = await client.get(f"/proof-pack/reports/{stored_report['report_id']}")
+        assert stored_report_page.status_code == 200, "stored report HTML page should render"
+        assert "Proof Pack Report" in stored_report_page.text, "stored report page should identify the report"
+        report_follow_up = await client.post(
+            f"/v1/proof-pack/reports/{stored_report['report_id']}/follow-up",
+            json={"question": "Can my agent cite the source hash and refresh URL?"},
+        )
+        assert report_follow_up.status_code == 200, "stored report follow-up should succeed"
+        follow_up_json = report_follow_up.json()
+        assert follow_up_json["status"] == "follow_up", "stored report follow-up returned wrong status"
+        assert follow_up_json["supplier_spend"] is False, "stored report follow-up should not spend supplier budget"
+        assert follow_up_json["citations"], "stored report follow-up should reuse retained citations"
+        assert follow_up_json["recommended_next_call"]["endpoint"].endswith("/refresh"), (
+            "stored report follow-up should expose refresh path"
+        )
+        report_refresh = await client.post(
+            f"/v1/proof-pack/reports/{stored_report['report_id']}/refresh?source=ci-refresh"
+        )
+        assert report_refresh.status_code == 200, "stored report refresh quote should succeed without a body"
+        refresh_json = report_refresh.json()
+        assert refresh_json["status"] == "refresh_quote", "stored report refresh quote returned wrong status"
+        assert refresh_json["amount_units"] == "1000000", "deep stored report refresh amount mismatch"
+        assert refresh_json["next_steps"]["compare_result_hash"] == stored_report["result_hash"], (
+            "refresh quote should tell agents which result hash to compare"
+        )
+
         unpaid_post = await client.post(
             "/v1/x402/access?tier=fresh",
             json={"target_url": "https://example.com", "tier": "fresh", "force_refresh": True},
@@ -998,6 +1241,15 @@ async def main() -> None:
         assert "proofPackQuote" in x402_discovery["metadata"], "Proof Pack quote page missing from public discovery"
         assert "proofPackRequest" in x402_discovery["metadata"], "Proof Pack request page missing from public discovery"
         assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
+        assert "proofPackReportApiPattern" in x402_discovery["metadata"], "Proof Pack report API missing from public discovery"
+        assert "proofPackFollowUpApiPattern" in x402_discovery["metadata"], "Proof Pack follow-up API missing from public discovery"
+        assert "proofPackRefreshQuoteApiPattern" in x402_discovery["metadata"], "Proof Pack refresh quote API missing from public discovery"
+        assert x402_discovery["metadata"]["proofPackSampleReportApi"].endswith(
+            "/v1/proof-pack/reports/ppr_sample_source_trust"
+        ), "Proof Pack sample report missing from public discovery"
+        assert x402_discovery["metadata"]["proofPackSampleFollowUpApi"].endswith(
+            "/ppr_sample_source_trust/follow-up"
+        ), "Proof Pack sample follow-up missing from public discovery"
         assert "proofBundleQuote" in x402_discovery["metadata"], "Proof Bundle quote missing from public discovery"
         assert "proofBundles" in x402_discovery["metadata"], "Proof Bundle pricing missing from public discovery"
         assert "operatorOrders" not in x402_discovery["metadata"], "Operator orders should stay out of public discovery"
@@ -1019,6 +1271,12 @@ async def main() -> None:
         openapi_paths = openapi.get("paths", {})
         assert "/v1/operator/leads" not in openapi_paths, "OpenAPI should not advertise private lead API"
         assert "/v1/operator/orders" not in openapi_paths, "OpenAPI should not advertise private order API"
+        assert "/operator/paid-requests" not in openapi_paths, (
+            "OpenAPI should not advertise private paid request page"
+        )
+        assert "/v1/operator/paid-requests" not in openapi_paths, (
+            "OpenAPI should not advertise private paid request diagnostics"
+        )
         assert "/v1/operator/orders/{lead_id}/resend-email" not in openapi_paths, (
             "OpenAPI should not advertise private order email API"
         )
@@ -1026,6 +1284,7 @@ async def main() -> None:
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
         assert openapi["x-payment-info"].get("proofPackLibrary"), "OpenAPI payment info missing Evidence Library"
         assert openapi["x-payment-info"].get("sourceLandingPattern"), "OpenAPI payment info missing source landing pattern"
+        assert openapi["x-payment-info"].get("proofPackReportApiPattern"), "OpenAPI payment info missing Proof Pack report pattern"
 
         contact_payload = {
             "name": "CI Builder",
@@ -1063,6 +1322,23 @@ async def main() -> None:
         assert "attribution_events_redis_key" in metrics["metrics_backend"], "attribution event Redis key missing from metrics"
         assert "alerts" in metrics, "alerts block missing from metrics"
         assert "proof_pack_pricing" in metrics, "Proof Pack pricing missing from metrics"
+        assert "paid_request_events" in metrics, "Paid request event storage snapshot missing from metrics"
+        assert metrics["paid_request_events"]["count"] >= 1, "Paid request event snapshot should count retained records"
+        assert metrics["paid_request_events"]["latest"]["target_domain_hash"], (
+            "Paid request event public snapshot should expose only target hash"
+        )
+        assert "proof_pack_reports" in metrics, "Proof Pack report storage snapshot missing from metrics"
+        assert metrics["proof_pack_reports"]["count"] >= 1, "Proof Pack report snapshot should count retained reports"
+        assert metrics["proof_pack_reports"]["latest"]["target_domain_hash"], (
+            "Proof Pack report public snapshot should hash target domains"
+        )
+        assert metrics["metrics"].get("proof_pack_reports_total", 0) >= 1, "Proof Pack report storage should be counted"
+        assert metrics["metrics"].get("proof_pack_report_reads_total", 0) >= 2, "Proof Pack report reads should be counted"
+        assert metrics["metrics"].get("proof_pack_followups_total", 0) >= 1, "Proof Pack follow-ups should be counted"
+        assert metrics["metrics"].get("proof_pack_refresh_quotes_total", 0) >= 1, "Proof Pack refresh quotes should be counted"
+        assert metrics["metrics"].get("discovery_operator_paid_requests_hits_total", 0) >= 2, (
+            "Operator paid request page/API visits should be counted"
+        )
         assert metrics["metrics"].get("proof_pack_previews_total", 0) >= 3, "Proof Pack previews should be counted"
         assert metrics["conversion_funnel"].get("proof_pack_previews", 0) >= 3, "Proof Pack previews missing from funnel"
         assert metrics["metrics"].get("proof_pack_leads_total", 0) >= 2, "Proof Pack leads should be counted"
