@@ -88,6 +88,7 @@ async def main() -> None:
             "/health",
             "/v1/access/health",
             "/v1/agent/diagnose",
+            "/v1/agent/trust",
             "/manifest.json",
             "/.well-known/agent.json",
             "/.well-known/agent-card.json",
@@ -111,6 +112,7 @@ async def main() -> None:
             "/proof-pack/share/source-trust-for-agent-builders",
             "/from/x402-list",
             "/proof-pack/sample",
+            "/v1/proof-pack/benchmarks",
             "/proof-pack/reports/ppr_sample_source_trust",
             "/proof-pack/preview",
             "/proof-pack/quote",
@@ -157,6 +159,12 @@ async def main() -> None:
         assert root_discovery_json["agent_diagnostic"].endswith("/v1/agent/diagnose"), (
             "Root discovery missing agent diagnostic"
         )
+        assert root_discovery_json["agent_trust"].endswith("/v1/agent/trust"), (
+            "Root discovery missing agent trust"
+        )
+        assert root_discovery_json["proof_pack_benchmarks"].endswith("/v1/proof-pack/benchmarks"), (
+            "Root discovery missing Proof Pack benchmarks"
+        )
         diagnostic = await client.get("/v1/agent/diagnose?source=ci-diagnostic")
         assert diagnostic.status_code == 200, "Agent diagnostic should render"
         diagnostic_json = diagnostic.json()
@@ -181,6 +189,38 @@ async def main() -> None:
         assert diagnostic_json["recommended_next_call"]["method"] == "GET", (
             "Agent diagnostic should recommend a no-spend GET next call"
         )
+        assert diagnostic_json["trust_url"].endswith("/v1/agent/trust"), "Agent diagnostic missing trust link"
+        trust = await client.get("/v1/agent/trust?source=ci-trust")
+        assert trust.status_code == 200, "Agent trust endpoint should render"
+        trust_json = trust.json()
+        assert trust_json["status"] == "ok", "Agent trust returned wrong status"
+        assert trust_json["supplier_spend"] is False, "Agent trust should not spend"
+        assert trust_json["payment_required"] is False, "Agent trust should not require payment"
+        assert trust_json["spend_policy"]["supplier_work_starts_after_payment"] is True, (
+            "Agent trust should explain supplier spend boundary"
+        )
+        assert trust_json["safety_policy"]["rejects_private_networks"] is True, (
+            "Agent trust should explain private network rejection"
+        )
+        assert "source_hash" in trust_json["output_contract"]["stable_fields"], (
+            "Agent trust should document source_hash"
+        )
+        assert trust_json["benchmark_library"]["count"] >= 6, "Agent trust should expose benchmark cases"
+        assert trust_json["benchmark_library"]["cases"][0]["trust_score_breakdown"], (
+            "Benchmark cases should include trust score breakdowns"
+        )
+        assert trust_json["best_first_paid_call"]["amount_units"] == "250000", (
+            "Agent trust should recommend standard Proof Pack amount"
+        )
+        benchmarks = await client.get("/v1/proof-pack/benchmarks?source=ci-trust")
+        assert benchmarks.status_code == 200, "Proof Pack benchmarks should render"
+        benchmarks_json = benchmarks.json()
+        assert benchmarks_json["supplier_spend"] is False, "Proof Pack benchmarks should not spend"
+        assert benchmarks_json["count"] >= 6, "Proof Pack benchmarks should include enough cases"
+        actions = {case["agent_action"] for case in benchmarks_json["cases"]}
+        assert {"cite", "needs_second_source", "ingest_with_caution", "do_not_cite"} <= actions, (
+            "Proof Pack benchmarks should span agent actions"
+        )
 
         proof_pack_page = await client.get("/proof-pack")
         assert "<link rel=\"canonical\"" in proof_pack_page.text, "Proof Pack page missing canonical link"
@@ -194,6 +234,8 @@ async def main() -> None:
         docs_page = await client.get("/docs")
         assert "source_quality_score" in docs_page.text, "Docs page should explain source quality score"
         assert "/v1/agent/diagnose" in docs_page.text, "Docs page should expose agent diagnostic"
+        assert "/v1/agent/trust" in docs_page.text, "Docs page should expose agent trust"
+        assert "/v1/proof-pack/benchmarks" in docs_page.text, "Docs page should expose Proof Pack benchmarks"
         assert "/v1/proof-pack/reports/{report_id}/refresh" in docs_page.text, (
             "Docs page should explain refresh quote API"
         )
@@ -202,6 +244,8 @@ async def main() -> None:
         )
         llms_txt = await client.get("/llms.txt")
         assert "Agent diagnostic API" in llms_txt.text, "llms.txt should expose agent diagnostic"
+        assert "Agent trust API" in llms_txt.text, "llms.txt should expose agent trust"
+        assert "Proof Pack benchmark API" in llms_txt.text, "llms.txt should expose Proof Pack benchmarks"
         assert "Proof Pack report API pattern" in llms_txt.text, "llms.txt should expose report API pattern"
         assert "Proof Pack sample report API" in llms_txt.text, "llms.txt should expose sample report API"
         assert "Store report_id" in llms_txt.text, "llms.txt should explain report handle storage"
@@ -233,6 +277,8 @@ async def main() -> None:
             "Sitemap missing share example"
         )
         assert "/from/x402-list" in sitemap_page.text, "Sitemap missing source landing page"
+        assert "/v1/agent/trust" in sitemap_page.text, "Sitemap missing agent trust"
+        assert "/v1/proof-pack/benchmarks" in sitemap_page.text, "Sitemap missing Proof Pack benchmarks"
 
         secure_sample = await client.get(
             "/proof-pack/sample",
@@ -1081,8 +1127,17 @@ async def main() -> None:
         assert proof_probe.headers.get("X-AxonGate-Agent-Diagnostic", "").endswith("/v1/agent/diagnose"), (
             "Proof Pack probe missing agent diagnostic header"
         )
+        assert proof_probe.headers.get("X-AxonGate-Agent-Trust", "").endswith("/v1/agent/trust"), (
+            "Proof Pack probe missing agent trust header"
+        )
+        assert proof_probe.headers.get("X-AxonGate-Proof-Pack-Benchmarks", "").endswith("/v1/proof-pack/benchmarks"), (
+            "Proof Pack probe missing benchmark header"
+        )
         assert proof_probe.json()["detail"]["links"]["agent_diagnostic"].endswith("/v1/agent/diagnose"), (
             "Proof Pack probe body missing agent diagnostic"
+        )
+        assert proof_probe.json()["detail"]["links"]["agent_trust"].endswith("/v1/agent/trust"), (
+            "Proof Pack probe body missing agent trust"
         )
         proof_payload = json.loads(base64.b64decode(proof_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
         assert proof_payload["accepts"][0]["amount"] == "250000", "standard Proof Pack should cost 0.25 USDC"
@@ -1118,6 +1173,9 @@ async def main() -> None:
         assert unpaid_proof_challenge, "unpaid Proof Pack POST missing payment challenge"
         assert unpaid_proof_post.headers.get("X-AxonGate-Agent-Diagnostic", "").endswith("/v1/agent/diagnose"), (
             "unpaid Proof Pack POST missing agent diagnostic header"
+        )
+        assert unpaid_proof_post.headers.get("X-AxonGate-Agent-Trust", "").endswith("/v1/agent/trust"), (
+            "unpaid Proof Pack POST missing agent trust header"
         )
         unpaid_proof_payload = json.loads(base64.b64decode(unpaid_proof_challenge).decode("utf-8"))
         assert unpaid_proof_payload["accepts"][0]["amount"] == "250000", "unpaid Proof Pack POST amount mismatch"
@@ -1268,12 +1326,21 @@ async def main() -> None:
         assert unpaid_post.headers.get("X-AxonGate-Agent-Diagnostic", "").endswith("/v1/agent/diagnose"), (
             "unpaid POST missing agent diagnostic header"
         )
+        assert unpaid_post.headers.get("X-AxonGate-Agent-Trust", "").endswith("/v1/agent/trust"), (
+            "unpaid POST missing agent trust header"
+        )
 
         x402_discovery = (await client.get("/.well-known/x402")).json()
         assert "extensions" in x402_discovery, "public x402 discovery missing protocol extensions"
         assert "metadata" in x402_discovery, "public x402 discovery should keep non-protocol metadata"
         assert x402_discovery["metadata"].get("agentDiagnostic", "").endswith("/v1/agent/diagnose"), (
             "public x402 discovery missing agent diagnostic"
+        )
+        assert x402_discovery["metadata"].get("agentTrust", "").endswith("/v1/agent/trust"), (
+            "public x402 discovery missing agent trust"
+        )
+        assert x402_discovery["metadata"].get("proofPackBenchmarks", "").endswith("/v1/proof-pack/benchmarks"), (
+            "public x402 discovery missing Proof Pack benchmarks"
         )
         assert "cached" in x402_discovery["metadata"]["tiers"], "cached tier missing from public discovery"
         assert "proofPacks" in x402_discovery["metadata"], "Proof Pack pricing missing from public discovery"
@@ -1312,13 +1379,22 @@ async def main() -> None:
         assert post_operation["x-payment-info"].get("agentDiagnostic", "").endswith("/v1/agent/diagnose"), (
             "OpenAPI paid endpoint missing agent diagnostic"
         )
+        assert post_operation["x-payment-info"].get("agentTrust", "").endswith("/v1/agent/trust"), (
+            "OpenAPI paid endpoint missing agent trust"
+        )
         assert "X-AxonGate-Agent-Diagnostic" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI paid endpoint missing agent diagnostic header docs"
+        )
+        assert "X-AxonGate-Agent-Trust" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI paid endpoint missing agent trust header docs"
         )
         proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
         assert proof_operation.get("x-payment-info"), "OpenAPI payment extension missing from Proof Pack endpoint"
         assert "X-AxonGate-Agent-Diagnostic" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI Proof Pack endpoint missing agent diagnostic header docs"
+        )
+        assert "X-AxonGate-Agent-Trust" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI Proof Pack endpoint missing agent trust header docs"
         )
         contact_operation = openapi.get("paths", {}).get("/v1/contact", {}).get("post", {})
         assert contact_operation, "OpenAPI contact endpoint missing"
@@ -1337,6 +1413,8 @@ async def main() -> None:
         assert "/v1/stripe/webhook" not in openapi_paths, "OpenAPI should not advertise private Stripe webhook"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
         assert openapi["x-payment-info"].get("agentDiagnostic"), "OpenAPI payment info missing agent diagnostic"
+        assert openapi["x-payment-info"].get("agentTrust"), "OpenAPI payment info missing agent trust"
+        assert openapi["x-payment-info"].get("proofPackBenchmarks"), "OpenAPI payment info missing Proof Pack benchmarks"
         assert openapi["x-payment-info"].get("proofPackLibrary"), "OpenAPI payment info missing Evidence Library"
         assert openapi["x-payment-info"].get("sourceLandingPattern"), "OpenAPI payment info missing source landing pattern"
         assert openapi["x-payment-info"].get("proofPackReportApiPattern"), "OpenAPI payment info missing Proof Pack report pattern"
@@ -1400,6 +1478,12 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("proof_pack_leads", 0) >= 2, "Proof Pack leads missing from funnel"
         assert metrics["metrics"].get("agent_diagnostics_total", 0) >= 2, "Agent diagnostics should be counted"
         assert metrics["conversion_funnel"].get("agent_diagnostics", 0) >= 2, "Agent diagnostics missing from funnel"
+        assert metrics["metrics"].get("agent_trust_checks_total", 0) >= 2, "Agent trust checks should be counted"
+        assert metrics["conversion_funnel"].get("agent_trust_checks", 0) >= 2, "Agent trust checks missing from funnel"
+        assert metrics["metrics"].get("proof_pack_benchmarks_total", 0) >= 2, "Proof Pack benchmarks should be counted"
+        assert metrics["conversion_funnel"].get("proof_pack_benchmarks", 0) >= 2, (
+            "Proof Pack benchmarks missing from funnel"
+        )
         assert metrics["metrics"].get("contact_form_submits_total", 0) >= 2, "Contact submissions should be counted"
         assert metrics["conversion_funnel"].get("contact_form_submits", 0) >= 2, "Contact submissions missing from funnel"
         assert metrics["metrics"].get("proof_bundle_quotes_total", 0) >= 2, "Proof Bundle quotes should be counted"

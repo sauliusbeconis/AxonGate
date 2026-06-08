@@ -42,6 +42,12 @@ https://api.axongate.one/paid-test
 Agent diagnostic API:
 https://api.axongate.one/v1/agent/diagnose
 
+Agent trust API:
+https://api.axongate.one/v1/agent/trust
+
+Proof Pack benchmark API:
+https://api.axongate.one/v1/proof-pack/benchmarks
+
 Free quote API:
 https://api.axongate.one/v1/x402/quote
 
@@ -126,6 +132,8 @@ Endpoint paths:
 /operator
 /paid-test
 /v1/agent/diagnose
+/v1/agent/trust
+/v1/proof-pack/benchmarks
 /quote
 /v1/x402/quote
 /proof-pack
@@ -184,7 +192,7 @@ Pay to:
 
 ## Search Keywords
 
-x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, retained report, report_id, follow-up API, refresh quote, source quality score, agent action, agent diagnostic, payment compatibility, citations, evidence report, multi-source evidence, paid API, agent marketplace
+x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, retained report, report_id, follow-up API, refresh quote, source quality score, agent action, agent diagnostic, agent trust contract, benchmark cases, payment compatibility, citations, evidence report, multi-source evidence, paid API, agent marketplace
 
 ## Source Attribution
 

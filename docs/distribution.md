@@ -30,6 +30,8 @@ No-spend Proof Pack sample URLs for marketplace reviewers:
 
 ```text
 https://api.axongate.one/v1/agent/diagnose?source=reviewer
+https://api.axongate.one/v1/agent/trust?source=reviewer
+https://api.axongate.one/v1/proof-pack/benchmarks?source=reviewer
 https://api.axongate.one/proof-pack/sample?source=reviewer
 https://api.axongate.one/v1/proof-pack/sample?source=reviewer
 https://api.axongate.one/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&pack=quick&source=reviewer
@@ -217,7 +219,7 @@ Suggested update payload:
   "description": "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation, now with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, and agent-action recommendations.",
   "endpoint_paths": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
   "endpoints": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
-  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Paid Proof Packs now return report_id, report_url, result_hash, source_hash, agent_action, source_quality_score, follow_up_url, and refresh_url so agents can reuse a report instead of paying again immediately. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, the no-spend agent diagnostic at /v1/agent/diagnose, no-spend Proof Pack samples, no-spend mini previews, supplier-free quote APIs, retained Proof Pack reports, a concrete sample retained report at ppr_sample_source_trust, follow-up API, refresh quotes, and Proof Pack request capture."
+  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Paid Proof Packs now return report_id, report_url, result_hash, source_hash, agent_action, source_quality_score, follow_up_url, and refresh_url so agents can reuse a report instead of paying again immediately. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, the no-spend agent diagnostic at /v1/agent/diagnose, the no-spend trust contract at /v1/agent/trust, benchmark cases at /v1/proof-pack/benchmarks, no-spend Proof Pack samples, no-spend mini previews, supplier-free quote APIs, retained Proof Pack reports, a concrete sample retained report at ppr_sample_source_trust, follow-up API, refresh quotes, and Proof Pack request capture."
 }
 ```
 

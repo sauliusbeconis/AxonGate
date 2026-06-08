@@ -43,6 +43,20 @@ bodies, and no-spend retained sample report loop.
 curl "$AXONGATE_BASE_URL/v1/agent/diagnose?source=$AXONGATE_SOURCE"
 ```
 
+## Inspect Agent Trust Contract
+
+Use the trust endpoint before payment to inspect spend boundaries, safety rules,
+delivery guarantees, stable report fields, retained-report reuse, and benchmark
+cases that show when agents should cite, ask for another source, or refuse.
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/agent/trust?source=$AXONGATE_SOURCE"
+```
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/proof-pack/benchmarks?source=$AXONGATE_SOURCE"
+```
+
 ## Quote Before Spending
 
 Use the quote endpoint to choose the right paid tier without supplier work or

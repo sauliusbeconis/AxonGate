@@ -81,7 +81,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.4.1",
+    version="1.4.2",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -504,7 +504,11 @@ metrics: dict[str, int] = {
     "discovery_resources_hits_total": 0,
     "discovery_alias_hits_total": 0,
     "discovery_agent_diagnostic_hits_total": 0,
+    "discovery_agent_trust_hits_total": 0,
+    "discovery_proof_pack_benchmarks_hits_total": 0,
     "agent_diagnostics_total": 0,
+    "agent_trust_checks_total": 0,
+    "proof_pack_benchmarks_total": 0,
     "favicon_hits_total": 0,
     "crawler_guard_no_user_agent_total": 0,
     "legacy_access_health_hits_total": 0,
@@ -1244,6 +1248,8 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_leads": values.get("proof_pack_leads_total", 0),
         "contact_form_submits": values.get("contact_form_submits_total", 0),
         "agent_diagnostics": values.get("agent_diagnostics_total", 0),
+        "agent_trust_checks": values.get("agent_trust_checks_total", 0),
+        "proof_pack_benchmarks": values.get("proof_pack_benchmarks_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
         "proof_bundle_checkout_reviews": values.get("proof_bundle_checkout_reviews_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
@@ -1971,6 +1977,7 @@ def build_x402_resource() -> dict[str, Any]:
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
             "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+            "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
             "docs": f"{PUBLIC_BASE_URL}/docs",
             "about": f"{PUBLIC_BASE_URL}/about",
             "faq": f"{PUBLIC_BASE_URL}/faq",
@@ -1986,6 +1993,7 @@ def build_x402_resource() -> dict[str, Any]:
             "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
             "proofPackSample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "proofPackSampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+            "proofPackBenchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
             "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
             "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
             "proofPackQuote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
@@ -2071,6 +2079,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "tags": ["x402", "base", "usdc", "source-trust", "proof-pack", "citations", "agent-builders", "evidence", "persistent-reports", "follow-up"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+            "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2079,6 +2088,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "contact": f"{PUBLIC_BASE_URL}/contact",
             "sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "sampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+            "benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
             "preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
             "previewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
             "quote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
@@ -2154,6 +2164,7 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "description": "No-spend quote, tracked checkout, and delivery pipeline for multi-source claim support checks aimed at agent builders.",
             "tags": ["source-trust", "proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
             "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+            "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2254,6 +2265,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
         "agentCardAlias": f"{PUBLIC_BASE_URL}/.well-known/agent-card.json",
         "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+        "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
@@ -2266,6 +2278,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proofPackSample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
         "proofPackSampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+        "proofPackBenchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
         "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
         "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proofPackQuote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
@@ -2385,7 +2398,9 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Paid-Test": f"{PUBLIC_BASE_URL}/paid-test",
         "X-AxonGate-Quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "X-AxonGate-Agent-Diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+        "X-AxonGate-Agent-Trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
         "X-AxonGate-Proof-Pack": f"{PUBLIC_BASE_URL}/proof-pack",
+        "X-AxonGate-Proof-Pack-Benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
         "X-AxonGate-Proof-Pack-Sample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
         "X-AxonGate-Proof-Pack-Preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
         "X-AxonGate-Proof-Pack-Quote-Page": f"{PUBLIC_BASE_URL}/proof-pack/quote",
@@ -2401,7 +2416,9 @@ def buyer_guidance_headers() -> dict[str, str]:
             f'<{PUBLIC_BASE_URL}/paid-test>; rel="payment-test", '
             f'<{PUBLIC_BASE_URL}/v1/x402/quote>; rel="quote", '
             f'<{PUBLIC_BASE_URL}/v1/agent/diagnose>; rel="diagnostic", '
+            f'<{PUBLIC_BASE_URL}/v1/agent/trust>; rel="trust", '
             f'<{PUBLIC_BASE_URL}/proof-pack>; rel="service", '
+            f'<{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks>; rel="benchmarks", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/sample>; rel="proof-pack-sample", '
             f'<{PUBLIC_BASE_URL}/proof-pack/preview>; rel="proof-pack-preview", '
             f'<{PUBLIC_BASE_URL}/proof-pack/quote>; rel="proof-pack-quote-page", '
@@ -2449,6 +2466,8 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
             "paid_test": f"{PUBLIC_BASE_URL}/paid-test",
             "quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
             "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+            "agent_trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+            "proof_pack_benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
             "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
@@ -2501,6 +2520,8 @@ def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -
             "lead_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "docs": f"{PUBLIC_BASE_URL}/docs",
             "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+            "agent_trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+            "proof_pack_benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
             "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
             "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
         },
@@ -2515,9 +2536,11 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+        "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
         "proofPackLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
         "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proofPackSample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+        "proofPackBenchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
         "proofPackPreview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
         "proofPackPreviewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proofPackRequest": f"{PUBLIC_BASE_URL}/proof-pack/request",
@@ -7324,6 +7347,18 @@ def proof_bundle_quote_page_url(target_urls: list[str], question: str, bundle: s
     )
 
 
+def proof_bundle_quote_api_url(target_urls: list[str], question: str, bundle: str, source: str) -> str:
+    normalized_bundle = normalize_proof_bundle(bundle)
+    normalized_source = normalize_attribution_source(source)
+    return (
+        f"{PUBLIC_BASE_URL}/v1/proof-pack/bundle/quote?"
+        f"target_urls={proof_bundle_target_query(target_urls)}"
+        f"&question={url_quote(question, safe='')}"
+        f"&bundle={url_quote(normalized_bundle, safe='')}"
+        f"&source={url_quote(normalized_source, safe='')}"
+    )
+
+
 def proof_bundle_request_page_url(target_urls: list[str], question: str, bundle: str, source: str) -> str:
     normalized_bundle = normalize_proof_bundle(bundle)
     normalized_source = normalize_attribution_source(source)
@@ -8089,6 +8124,347 @@ def agent_diagnostic_url() -> str:
     return public_url("/v1/agent/diagnose")
 
 
+def agent_trust_url() -> str:
+    return public_url("/v1/agent/trust")
+
+
+def proof_pack_benchmarks_url() -> str:
+    return public_url("/v1/proof-pack/benchmarks")
+
+
+PROOF_PACK_BENCHMARK_CASES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "primary_reference_supported",
+        "title": "Primary reference with supported claims",
+        "target_url": PROOF_PACK_SAMPLE_TARGET_URL,
+        "question": PROOF_PACK_SAMPLE_QUESTION,
+        "decision_label": "supported",
+        "agent_action": "cite",
+        "source_quality_score": 0.88,
+        "can_cite": True,
+        "safe_for_rag": True,
+        "safe_for_customer_answer": True,
+        "needs_human_review": False,
+        "why_it_matters": "Shows the ideal outcome: a primary/reference source that can support narrow claims with citation IDs.",
+        "trust_score_breakdown": {
+            "citation_density": 0.9,
+            "source_authority": 0.9,
+            "claim_support": 0.88,
+            "recency": 0.72,
+            "specificity": 0.86,
+            "risk_flags": 0.08,
+        },
+        "expected_fields": ["decision", "citation_coverage", "source_hash", "result_hash", "agent_action"],
+    },
+    {
+        "id": "weak_marketing_page",
+        "title": "Weak first-party marketing page",
+        "target_url": "https://example.com",
+        "question": "Does this page independently prove a vendor performance claim?",
+        "decision_label": "limited_support",
+        "agent_action": "ingest_with_caution",
+        "source_quality_score": 0.46,
+        "can_cite": False,
+        "safe_for_rag": False,
+        "safe_for_customer_answer": False,
+        "needs_human_review": True,
+        "why_it_matters": "Agents should learn when a page says something but does not prove it strongly enough to repeat.",
+        "trust_score_breakdown": {
+            "citation_density": 0.32,
+            "source_authority": 0.38,
+            "claim_support": 0.4,
+            "recency": 0.45,
+            "specificity": 0.34,
+            "risk_flags": 0.62,
+        },
+        "expected_fields": ["risks", "gaps", "recommended_next_call", "source_quality_score"],
+    },
+    {
+        "id": "unsupported_claim",
+        "title": "Unsupported claim guardrail",
+        "target_url": "https://example.org",
+        "question": "Does this source prove an unrelated customer or security claim?",
+        "decision_label": "weak_evidence",
+        "agent_action": "do_not_cite",
+        "source_quality_score": 0.28,
+        "can_cite": False,
+        "safe_for_rag": False,
+        "safe_for_customer_answer": False,
+        "needs_human_review": True,
+        "why_it_matters": "The highest-trust behavior is refusing to turn weak source material into confident agent claims.",
+        "trust_score_breakdown": {
+            "citation_density": 0.18,
+            "source_authority": 0.3,
+            "claim_support": 0.12,
+            "recency": 0.42,
+            "specificity": 0.2,
+            "risk_flags": 0.78,
+        },
+        "expected_fields": ["decision", "agent_action", "gaps", "risks"],
+    },
+    {
+        "id": "docs_api_source",
+        "title": "Documentation/API source",
+        "target_url": "https://www.iana.org/domains/reserved",
+        "question": "Which exact statements can an agent reuse from a documentation-style source?",
+        "decision_label": "partially_supported",
+        "agent_action": "needs_second_source",
+        "source_quality_score": 0.74,
+        "can_cite": True,
+        "safe_for_rag": True,
+        "safe_for_customer_answer": True,
+        "needs_human_review": False,
+        "why_it_matters": "API docs and references are valuable, but agents still need exact citation boundaries and hashes.",
+        "trust_score_breakdown": {
+            "citation_density": 0.76,
+            "source_authority": 0.82,
+            "claim_support": 0.72,
+            "recency": 0.58,
+            "specificity": 0.78,
+            "risk_flags": 0.22,
+        },
+        "expected_fields": ["key_claims", "citations", "source_profile", "recommended_next_call"],
+    },
+    {
+        "id": "stale_or_changed_source",
+        "title": "Stale or changed source check",
+        "target_url": "https://example.net",
+        "question": "Should an agent refresh this source before relying on it again?",
+        "decision_label": "limited_support",
+        "agent_action": "ingest_with_caution",
+        "source_quality_score": 0.52,
+        "can_cite": False,
+        "safe_for_rag": False,
+        "safe_for_customer_answer": False,
+        "needs_human_review": True,
+        "why_it_matters": "Returning agents need source_hash/result_hash comparisons and a refresh quote instead of paying blindly.",
+        "trust_score_breakdown": {
+            "citation_density": 0.48,
+            "source_authority": 0.48,
+            "claim_support": 0.46,
+            "recency": 0.22,
+            "specificity": 0.5,
+            "risk_flags": 0.58,
+        },
+        "expected_fields": ["source_hash", "result_hash", "refresh_url", "retention_days"],
+    },
+    {
+        "id": "multi_source_conflict",
+        "title": "Multi-source conflict or corroboration need",
+        "target_url": "https://example.com",
+        "question": "Do several public sources agree strongly enough for autonomous use?",
+        "decision_label": "partially_supported",
+        "agent_action": "needs_second_source",
+        "source_quality_score": 0.63,
+        "can_cite": True,
+        "safe_for_rag": False,
+        "safe_for_customer_answer": False,
+        "needs_human_review": True,
+        "why_it_matters": "Agents should escalate to Proof Bundles when one source cannot carry the whole claim.",
+        "trust_score_breakdown": {
+            "citation_density": 0.62,
+            "source_authority": 0.56,
+            "claim_support": 0.58,
+            "recency": 0.5,
+            "specificity": 0.64,
+            "risk_flags": 0.44,
+        },
+        "expected_fields": ["recommended_next_call", "gaps", "proof_bundle_quote"],
+    },
+)
+
+
+def build_proof_pack_benchmark_cases(source: str = "trust") -> list[dict[str, Any]]:
+    normalized_source = normalize_attribution_source(source)
+    cases: list[dict[str, Any]] = []
+    for case in PROOF_PACK_BENCHMARK_CASES:
+        target_url = str(case["target_url"])
+        question = str(case["question"])
+        action = str(case["agent_action"])
+        quote_api = (
+            f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
+            f"target_url={url_quote(target_url, safe='')}"
+            f"&question={url_quote(question, safe='')}"
+            f"&pack={DEFAULT_PROOF_PACK}&source={normalized_source}"
+        )
+        proof_bundle_quote_api = proof_bundle_quote_api_url(
+            [target_url, PROOF_PACK_SAMPLE_TARGET_URL],
+            question,
+            "scout",
+            normalized_source,
+        )
+        cases.append(
+            {
+                **case,
+                "sample": case["id"] == "primary_reference_supported",
+                "supplier_spend": False,
+                "quote_api": quote_api,
+                "proof_bundle_quote_api": proof_bundle_quote_api,
+                "paid_probe_url": proof_pack_payment_probe_url(DEFAULT_PROOF_PACK, normalized_source),
+                "recommended_next_call": (
+                    {
+                        "action": "try_retained_sample_report",
+                        "method": "GET",
+                        "url": proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                        "reason": "No payment needed; inspect the retained report contract first.",
+                    }
+                    if case["id"] == "primary_reference_supported"
+                    else recommended_next_call(target_url, question, DEFAULT_PROOF_PACK, normalized_source, action)
+                ),
+            }
+        )
+    return cases
+
+
+def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
+    """Return a no-spend trust contract for agents evaluating AxonGate."""
+    normalized_source = normalize_attribution_source(source)
+    benchmarks = build_proof_pack_benchmark_cases(normalized_source)
+    sample_report_api = proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_report_page = proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    standard_price = price_for_proof_pack(DEFAULT_PROOF_PACK)
+
+    return {
+        "status": "ok",
+        "service": "AxonGate",
+        "version": app.version,
+        "supplier_spend": False,
+        "payment_required": False,
+        "source": normalized_source,
+        "canonical_base_url": PUBLIC_BASE_URL,
+        "agent_action": "evaluate_trust_then_try_sample_report",
+        "trust_url": agent_trust_url(),
+        "diagnostic_url": agent_diagnostic_url(),
+        "health": {
+            "status": "alive",
+            "vault_address": load_vault_address(),
+            "network": "eip155:8453",
+            "asset": BASE_USDC_ADDRESS,
+            "openapi": public_url("/openapi.json"),
+            "x402_discovery": public_url("/.well-known/x402"),
+        },
+        "trust_contract": {
+            "positioning": "AxonGate is a source trust layer, not only a page parser.",
+            "best_for": [
+                "checking whether a public source can be cited by an agent",
+                "filtering weak pages before RAG ingestion",
+                "retaining report IDs for no-spend follow-up",
+                "comparing source_hash and result_hash before paying for a refresh",
+            ],
+            "not_for": [
+                "private URLs, localhost, intranet, or authenticated pages",
+                "guaranteeing facts outside the cited source material",
+                "turning first-party marketing copy into independent proof",
+            ],
+            "repeat_value": [
+                "paid reports return report_id, report_url, result_hash, source_hash, agent_action, and source_quality_score",
+                "stored report follow-up is no-spend during retention",
+                "refresh quotes let agents decide whether recency justifies another paid run",
+                "benchmark cases show expected decisions before agents spend",
+            ],
+        },
+        "spend_policy": {
+            "free": [
+                "/v1/agent/trust",
+                "/v1/agent/diagnose",
+                "/v1/proof-pack/benchmarks",
+                "/v1/proof-pack/sample",
+                f"/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+                "/v1/proof-pack/quote",
+                "/v1/proof-pack/preview",
+            ],
+            "paid": [
+                "/v1/x402/proof-pack",
+                "/v1/x402/access",
+            ],
+            "supplier_work_starts_after_payment": True,
+            "proof_pack_standard_price_usdc": float(standard_price),
+            "proof_pack_standard_amount_units": str(usdc_units(standard_price)),
+            "payment_header": "PAYMENT-SIGNATURE",
+        },
+        "safety_policy": {
+            "ssrf_protection": True,
+            "rejects_private_networks": True,
+            "rejects_localhost": True,
+            "rejects_link_local_multicast_and_loopback": True,
+            "redirect_preflight": PREFLIGHT_ENABLED,
+            "allowed_target_ports": sorted(ALLOWED_TARGET_PORTS),
+            "max_content_bytes": PREFLIGHT_MAX_CONTENT_BYTES,
+            "rate_limits_enabled": RATE_LIMIT_ENABLED,
+        },
+        "delivery_policy": {
+            "report_retention_days": proof_pack_report_retention_days(),
+            "retry_credit_header": "X-AxonGate-Retry-Credit",
+            "retry_credit_ttl_seconds": DELIVERY_CREDIT_TTL_SECONDS,
+            "retry_credit_max_attempts": DELIVERY_CREDIT_MAX_ATTEMPTS,
+            "payment_replay_protection": True,
+            "no_double_charge_guidance": "Use retry credits after accepted-payment delivery failures; use report follow-up before paying for another run.",
+        },
+        "output_contract": {
+            "stable_fields": [
+                "report_id",
+                "report_url",
+                "report_page",
+                "result_hash",
+                "source_hash",
+                "decision",
+                "confidence_score",
+                "source_quality_score",
+                "agent_action",
+                "recommended_next_call",
+                "key_claims",
+                "citations",
+                "risks",
+                "source_profile",
+            ],
+            "agent_actions": ["cite", "needs_second_source", "ingest_with_caution", "do_not_cite"],
+            "decision_labels": ["supported", "partially_supported", "limited_support", "weak_evidence"],
+            "hashes": {
+                "source_hash": "hash of source material used for the report",
+                "result_hash": "hash of report result; compare before/after refresh",
+            },
+        },
+        "benchmark_library": {
+            "count": len(benchmarks),
+            "url": proof_pack_benchmarks_url(),
+            "cases": benchmarks,
+        },
+        "sample_report": {
+            "report_id": PROOF_PACK_SAMPLE_REPORT_ID,
+            "api": sample_report_api,
+            "page": sample_report_page,
+            "follow_up_api": proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID),
+            "refresh_quote_api": proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID),
+        },
+        "best_first_paid_call": {
+            "product": "proof_pack",
+            "method": "POST",
+            "url": public_url(f"/v1/x402/proof-pack?pack={DEFAULT_PROOF_PACK}&source={normalized_source}"),
+            "probe_url": proof_pack_payment_probe_url(DEFAULT_PROOF_PACK, normalized_source),
+            "amount_units": str(usdc_units(standard_price)),
+            "price_usdc": float(standard_price),
+            "body": build_proof_pack_request_example(DEFAULT_PROOF_PACK),
+            "reason": "Standard Proof Pack gives agents the trust decision, citations, hashes, report retention, and follow-up loop.",
+        },
+        "recommended_next_call": {
+            "action": "try_sample_report",
+            "method": "GET",
+            "url": sample_report_api,
+            "reason": "No payment needed; confirms the reusable report contract before spending.",
+        },
+        "links": {
+            "trust": agent_trust_url(),
+            "diagnostic": agent_diagnostic_url(),
+            "benchmarks": proof_pack_benchmarks_url(),
+            "sample_report": sample_report_api,
+            "docs": public_url("/docs"),
+            "proof_pack": public_url("/proof-pack"),
+            "quote": public_url("/v1/proof-pack/quote"),
+            "x402_discovery": public_url("/.well-known/x402"),
+        },
+    }
+
+
 def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]:
     """Return a no-spend compatibility map for agents stuck at the 402 boundary."""
     normalized_source = normalize_attribution_source(source)
@@ -8133,6 +8509,7 @@ def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]
         "diagnostic_for": "agents validating x402 compatibility or stopping after a 402 challenge",
         "canonical_base_url": PUBLIC_BASE_URL,
         "diagnostic_url": agent_diagnostic_url(),
+        "trust_url": agent_trust_url(),
         "source": normalized_source,
         "agent_action": "inspect_quote_or_sample_before_payment",
         "health": {
@@ -8341,6 +8718,8 @@ def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]
         },
         "links": {
             "diagnostic": agent_diagnostic_url(),
+            "trust": agent_trust_url(),
+            "benchmarks": proof_pack_benchmarks_url(),
             "docs": public_url("/docs"),
             "quickstart": public_url("/quickstart"),
             "paid_test": public_url("/paid-test"),
@@ -13226,6 +13605,7 @@ Private operator lead and order consoles require AXONGATE_OPERATOR_TOKEN and are
 Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
 Agent diagnostic API: {public_url("/v1/agent/diagnose")}
+Agent trust API: {public_url("/v1/agent/trust")}
 Quote API: {public_url("/v1/x402/quote")}
 Quote page: {public_url("/quote")}
 Proof Pack page: {public_url("/proof-pack")}
@@ -13233,6 +13613,7 @@ Evidence Library: {public_url("/proof-pack/library")}
 Shareable evidence example: {public_url("/proof-pack/share/source-trust-for-agent-builders")}
 Proof Pack sample page: {public_url("/proof-pack/sample")}
 Proof Pack sample API: {public_url("/v1/proof-pack/sample")}
+Proof Pack benchmark API: {public_url("/v1/proof-pack/benchmarks")}
 Proof Pack mini preview page: {public_url("/proof-pack/preview")}
 Proof Pack mini preview API: {public_url("/v1/proof-pack/preview")}
 Proof Pack quote page: {public_url("/proof-pack/quote")}
@@ -13294,6 +13675,11 @@ Private operator token header: X-AxonGate-Operator-Token
 GET {public_url("/v1/agent/diagnose")}
 Use this no-spend endpoint after a 402 to confirm the accepted payment header, Base USDC amounts, x402 network and vault, Proof Pack sample report reuse, minimal paid request bodies, and common validation fixes before paying.
 
+## Agent Trust
+
+GET {public_url("/v1/agent/trust")}
+Use this no-spend endpoint before payment to inspect AxonGate's spend policy, SSRF and target safety rules, delivery and retry-credit policy, stable output fields, report retention, benchmark cases, and the best first paid Proof Pack call.
+
 ## Paid Endpoint
 
 POST {public_url("/v1/x402/access")}
@@ -13328,6 +13714,7 @@ GET {public_url("/proof-pack/library/source-trust-for-agent-builders")}
 GET {public_url("/proof-pack/share/source-trust-for-agent-builders")}
 GET {public_url("/proof-pack/sample")}
 GET {public_url("/v1/proof-pack/sample")}
+GET {public_url("/v1/proof-pack/benchmarks")}
 GET {public_url("/proof-pack/preview")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/v1/proof-pack/preview")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
@@ -13500,6 +13887,8 @@ def build_docs_html() -> str:
                     ("Manifest", f"{PUBLIC_BASE_URL}/manifest.json"),
                     ("Agent card", f"{PUBLIC_BASE_URL}/.well-known/agent.json"),
                     ("Agent diagnostic", f"{PUBLIC_BASE_URL}/v1/agent/diagnose"),
+                    ("Agent trust", f"{PUBLIC_BASE_URL}/v1/agent/trust"),
+                    ("Proof benchmarks", f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks"),
                     ("x402 discovery", f"{PUBLIC_BASE_URL}/.well-known/x402"),
                     ("Resource listing", f"{PUBLIC_BASE_URL}/discovery/resources"),
                     ("Source landing", f"{PUBLIC_BASE_URL}/from/x402-list"),
@@ -15347,6 +15736,7 @@ def build_sitemap_xml() -> str:
         ("/quickstart", "0.95"),
         ("/paid-test", "0.9"),
         ("/v1/agent/diagnose", "0.9"),
+        ("/v1/agent/trust", "0.9"),
         ("/quote", "0.9"),
         ("/v1/x402/quote", "0.8"),
         ("/proof-pack", "0.95"),
@@ -15355,6 +15745,7 @@ def build_sitemap_xml() -> str:
         ("/proof-pack/preview", "0.9"),
         ("/proof-pack/quote", "0.9"),
         ("/proof-pack/request", "0.9"),
+        ("/v1/proof-pack/benchmarks", "0.85"),
         ("/proof-pack/bundle", "0.9"),
         ("/proof-pack/bundle/quote", "0.9"),
         ("/proof-pack/bundle/checkout", "0.85"),
@@ -16456,6 +16847,7 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
+        "agent_trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quote_api": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
@@ -16464,6 +16856,7 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "proof_pack_share_pattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proof_pack_sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
         "proof_pack_sample_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+        "proof_pack_benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
         "proof_pack_preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
         "proof_pack_preview_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
         "proof_pack_quote": f"{PUBLIC_BASE_URL}/proof-pack/quote",
@@ -16540,6 +16933,33 @@ async def agent_diagnostic(request: Request):
     inc_metric("agent_diagnostics_total")
     inc_discovery_hit("discovery_agent_diagnostic_hits_total", source)
     return build_agent_diagnostic_payload(source)
+
+
+@app.get("/v1/agent/trust", tags=["discovery"], summary="Agent trust and value contract")
+async def agent_trust(request: Request):
+    """Expose a no-spend trust contract for agents deciding whether AxonGate is worth using."""
+    source = attribution_source_from_request(request)
+    inc_metric("agent_trust_checks_total")
+    inc_discovery_hit("discovery_agent_trust_hits_total", source)
+    return build_agent_trust_payload(source)
+
+
+@app.get("/v1/proof-pack/benchmarks", tags=["discovery"], summary="No-spend Proof Pack benchmark cases")
+async def proof_pack_benchmarks(request: Request):
+    """Return public benchmark cases showing expected source-trust outcomes before payment."""
+    source = attribution_source_from_request(request)
+    inc_metric("proof_pack_benchmarks_total")
+    inc_discovery_hit("discovery_proof_pack_benchmarks_hits_total", source)
+    return {
+        "status": "ok",
+        "supplier_spend": False,
+        "payment_required": False,
+        "source": source,
+        "count": len(PROOF_PACK_BENCHMARK_CASES),
+        "cases": build_proof_pack_benchmark_cases(source),
+        "trust": agent_trust_url(),
+        "diagnostic": agent_diagnostic_url(),
+    }
 
 
 @app.get("/v1/access/health", tags=["legacy"], summary="Legacy access health compatibility", include_in_schema=False)
@@ -17576,6 +17996,14 @@ def custom_openapi() -> dict[str, Any]:
                     "description": "No-spend agent compatibility diagnostic for x402 headers, amounts, sample reports, and common fixes.",
                     "schema": {"type": "string", "format": "uri"},
                 },
+                "X-AxonGate-Agent-Trust": {
+                    "description": "No-spend trust contract covering safety policy, spend policy, output guarantees, report reuse, and benchmark cases.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Proof-Pack-Benchmarks": {
+                    "description": "No-spend benchmark cases showing expected source-trust outcomes before payment.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
                 "X-AxonGate-Buyer-Example": {
                     "description": "Repository example for creating and sending an x402 payment proof.",
                     "schema": {"type": "string", "format": "uri"},
@@ -17618,6 +18046,14 @@ def custom_openapi() -> dict[str, Any]:
                 },
                 "X-AxonGate-Agent-Diagnostic": {
                     "description": "No-spend agent compatibility diagnostic for x402 headers, amounts, sample reports, and common fixes.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Agent-Trust": {
+                    "description": "No-spend trust contract covering safety policy, spend policy, output guarantees, report reuse, and benchmark cases.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Proof-Pack-Benchmarks": {
+                    "description": "No-spend benchmark cases showing expected source-trust outcomes before payment.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Proof-Pack-Request": {
