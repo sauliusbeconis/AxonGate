@@ -66,6 +66,9 @@ https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust
 Proof Pack sample report page:
 https://api.axongate.one/proof-pack/reports/ppr_sample_source_trust
 
+Proof Pack sample verify receipt API:
+https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/verify
+
 Proof Pack sample follow-up API:
 https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/follow-up
 
@@ -95,6 +98,9 @@ https://api.axongate.one/v1/x402/proof-pack
 
 Proof Pack retained report API pattern:
 https://api.axongate.one/v1/proof-pack/reports/{report_id}
+
+Proof Pack verify receipt API pattern:
+https://api.axongate.one/v1/proof-pack/reports/{report_id}/verify
 
 Proof Pack follow-up API pattern:
 https://api.axongate.one/v1/proof-pack/reports/{report_id}/follow-up
@@ -139,6 +145,7 @@ Endpoint paths:
 /proof-pack
 /proof-pack/sample
 /proof-pack/reports/ppr_sample_source_trust
+/v1/proof-pack/reports/ppr_sample_source_trust/verify
 /proof-pack/preview
 /proof-pack/quote
 /proof-pack/request
@@ -148,9 +155,11 @@ Endpoint paths:
 /v1/proof-pack/leads
 /v1/x402/proof-pack
 /v1/proof-pack/reports/ppr_sample_source_trust
+/v1/proof-pack/reports/ppr_sample_source_trust/verify
 /v1/proof-pack/reports/ppr_sample_source_trust/follow-up
 /v1/proof-pack/reports/ppr_sample_source_trust/refresh
 /v1/proof-pack/reports/{report_id}
+/v1/proof-pack/reports/{report_id}/verify
 /v1/proof-pack/reports/{report_id}/follow-up
 /v1/proof-pack/reports/{report_id}/refresh
 /proof-pack/bundle
@@ -241,7 +250,7 @@ For standard x402 clients, set the tier with either `?tier=basic` or the `X-Axon
 
 For standard x402 clients, set the Proof Pack with either `?pack=standard` or the `X-AxonGate-Pack` header so payment requirements match the requested pack.
 
-Successful Proof Pack responses include `report_id`, `report_url`, `report_page`, `result_hash`, `source_hash`, `agent_action`, `source_quality_score`, `follow_up_url`, and `refresh_url`. Agents should store those fields, call the follow-up API for no-spend reuse, and call the refresh quote API when recency or missing evidence justifies another paid run. Reviewers can test that loop before spending with sample report `ppr_sample_source_trust`.
+Successful Proof Pack responses include `report_id`, `report_url`, `report_page`, `verify_url`, `result_hash`, `source_hash`, `agent_action`, `source_quality_score`, `follow_up_url`, and `refresh_url`. Agents should store those fields, call the verify receipt API for no-spend hash and retention checks, call the follow-up API for no-spend reuse, and call the refresh quote API when recency or missing evidence justifies another paid run. Reviewers can test that loop before spending with sample report `ppr_sample_source_trust`.
 
 ## Proof Bundle Lead Payload
 

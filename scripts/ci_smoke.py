@@ -66,9 +66,19 @@ def stripe_signature(payload: bytes, secret: str) -> str:
 
 async def main() -> None:
     manifest_path = Path(__file__).resolve().parents[1] / "manifest.json"
-    json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_json = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest_json["identity"]["version"] == gateway.app.version, "manifest version should match app"
+    assert manifest_json["endpoints"]["proof_pack_verify_api_pattern"].endswith("/{report_id}/verify"), (
+        "manifest missing Proof Pack verify pattern"
+    )
+    assert manifest_json["proof_pack_contract"]["success_response"]["verify_url"] == "string", (
+        "manifest Proof Pack contract missing verify_url"
+    )
     distribution_path = Path(__file__).resolve().parents[1] / "docs" / "distribution-payloads.json"
-    json.loads(distribution_path.read_text(encoding="utf-8"))
+    distribution_json = json.loads(distribution_path.read_text(encoding="utf-8"))
+    assert distribution_json["proof_pack_verify_api_pattern"].endswith("/{report_id}/verify"), (
+        "distribution payload missing Proof Pack verify pattern"
+    )
     resend_request = httpx.Request("POST", "https://api.resend.com/emails")
     resend_response = httpx.Response(
         403,
@@ -114,6 +124,7 @@ async def main() -> None:
             "/proof-pack/sample",
             "/v1/proof-pack/benchmarks",
             "/proof-pack/reports/ppr_sample_source_trust",
+            "/v1/proof-pack/reports/ppr_sample_source_trust/verify",
             "/proof-pack/preview",
             "/proof-pack/quote",
             "/proof-pack/request",
@@ -165,6 +176,9 @@ async def main() -> None:
         assert root_discovery_json["proof_pack_benchmarks"].endswith("/v1/proof-pack/benchmarks"), (
             "Root discovery missing Proof Pack benchmarks"
         )
+        assert root_discovery_json["proof_pack_verify_api_pattern"].endswith(
+            "/v1/proof-pack/reports/{report_id}/verify"
+        ), "Root discovery missing Proof Pack verify pattern"
         diagnostic = await client.get("/v1/agent/diagnose?source=ci-diagnostic")
         assert diagnostic.status_code == 200, "Agent diagnostic should render"
         diagnostic_json = diagnostic.json()
@@ -181,6 +195,12 @@ async def main() -> None:
         )
         assert diagnostic_json["sample_report"]["follow_up_api"].endswith("/follow-up"), (
             "Agent diagnostic should expose sample follow-up"
+        )
+        assert diagnostic_json["sample_report"]["verify_api"].endswith("/verify"), (
+            "Agent diagnostic should expose sample verify receipt"
+        )
+        assert diagnostic_json["proof_pack"]["verify_api_pattern"].endswith("/{report_id}/verify"), (
+            "Agent diagnostic should expose verify receipt pattern"
         )
         assert diagnostic_json["minimal_paid_requests"]["proof_pack"]["headers"]["PAYMENT-SIGNATURE"], (
             "Agent diagnostic missing minimal Proof Pack payment header"
@@ -204,6 +224,12 @@ async def main() -> None:
         )
         assert "source_hash" in trust_json["output_contract"]["stable_fields"], (
             "Agent trust should document source_hash"
+        )
+        assert "verify_url" in trust_json["output_contract"]["stable_fields"], (
+            "Agent trust should document verify_url"
+        )
+        assert trust_json["verification_policy"]["sample_verify_api"].endswith("/ppr_sample_source_trust/verify"), (
+            "Agent trust should expose sample verify receipt"
         )
         assert trust_json["benchmark_library"]["count"] >= 6, "Agent trust should expose benchmark cases"
         assert trust_json["benchmark_library"]["cases"][0]["trust_score_breakdown"], (
@@ -231,6 +257,9 @@ async def main() -> None:
         assert "/v1/proof-pack/reports/{report_id}/follow-up" in proof_pack_page.text, (
             "Proof Pack page should surface no-spend follow-up API"
         )
+        assert "/v1/proof-pack/reports/{report_id}/verify" in proof_pack_page.text, (
+            "Proof Pack page should surface verify receipt API"
+        )
         docs_page = await client.get("/docs")
         assert "source_quality_score" in docs_page.text, "Docs page should explain source quality score"
         assert "/v1/agent/diagnose" in docs_page.text, "Docs page should expose agent diagnostic"
@@ -238,6 +267,9 @@ async def main() -> None:
         assert "/v1/proof-pack/benchmarks" in docs_page.text, "Docs page should expose Proof Pack benchmarks"
         assert "/v1/proof-pack/reports/{report_id}/refresh" in docs_page.text, (
             "Docs page should explain refresh quote API"
+        )
+        assert "/v1/proof-pack/reports/{report_id}/verify" in docs_page.text, (
+            "Docs page should explain verify receipt API"
         )
         assert "/v1/proof-pack/reports/ppr_sample_source_trust" in docs_page.text, (
             "Docs page should expose concrete sample retained report"
@@ -248,6 +280,9 @@ async def main() -> None:
         assert "Proof Pack benchmark API" in llms_txt.text, "llms.txt should expose Proof Pack benchmarks"
         assert "Proof Pack report API pattern" in llms_txt.text, "llms.txt should expose report API pattern"
         assert "Proof Pack sample report API" in llms_txt.text, "llms.txt should expose sample report API"
+        assert "Proof Pack verify receipt API pattern" in llms_txt.text, (
+            "llms.txt should expose verify receipt pattern"
+        )
         assert "Store report_id" in llms_txt.text, "llms.txt should explain report handle storage"
         library_page = await client.get("/proof-pack/library")
         assert "Public source-trust examples" in library_page.text, "Evidence Library missing growth headline"
@@ -279,6 +314,9 @@ async def main() -> None:
         assert "/from/x402-list" in sitemap_page.text, "Sitemap missing source landing page"
         assert "/v1/agent/trust" in sitemap_page.text, "Sitemap missing agent trust"
         assert "/v1/proof-pack/benchmarks" in sitemap_page.text, "Sitemap missing Proof Pack benchmarks"
+        assert "/v1/proof-pack/reports/ppr_sample_source_trust/verify" in sitemap_page.text, (
+            "Sitemap missing sample verify receipt"
+        )
 
         secure_sample = await client.get(
             "/proof-pack/sample",
@@ -370,12 +408,18 @@ async def main() -> None:
         assert "follow_up_api_pattern" in proof_quote["next_steps"]["after_payment"], (
             "Proof Pack quote should explain follow-up reuse"
         )
+        assert proof_quote["next_steps"]["after_payment"]["verify_api_pattern"].endswith(
+            "/v1/proof-pack/reports/{report_id}/verify"
+        ), "Proof Pack quote should explain verify receipts"
         assert proof_quote["next_steps"]["after_payment"]["sample_report_id"] == "ppr_sample_source_trust", (
             "Proof Pack quote should expose sample report id"
         )
         assert proof_quote["next_steps"]["after_payment"]["sample_report_api"].endswith(
             "/v1/proof-pack/reports/ppr_sample_source_trust"
         ), "Proof Pack quote should expose sample retained report"
+        assert proof_quote["next_steps"]["after_payment"]["sample_verify_api"].endswith(
+            "/v1/proof-pack/reports/ppr_sample_source_trust/verify"
+        ), "Proof Pack quote should expose sample verify receipt"
         assert proof_quote["next_steps"]["proof_pack_sample_api"].endswith(
             "/v1/proof-pack/sample"
         ), "Proof Pack quote should point to sample JSON"
@@ -1066,6 +1110,9 @@ async def main() -> None:
         assert proof_sample["report_url"].endswith("/v1/proof-pack/reports/ppr_sample_source_trust"), (
             "Proof Pack sample should expose sample report API"
         )
+        assert proof_sample["verify_url"].endswith("/v1/proof-pack/reports/ppr_sample_source_trust/verify"), (
+            "Proof Pack sample should expose sample verify receipt"
+        )
         assert proof_sample["follow_up_url"].endswith("/ppr_sample_source_trust/follow-up"), (
             "Proof Pack sample should expose sample follow-up API"
         )
@@ -1091,6 +1138,9 @@ async def main() -> None:
         assert proof_sample["next_steps"]["sample_report_api"].endswith(
             "/v1/proof-pack/reports/ppr_sample_source_trust"
         ), "Proof Pack sample should expose concrete retained report API"
+        assert proof_sample["next_steps"]["sample_verify_api"].endswith(
+            "/v1/proof-pack/reports/ppr_sample_source_trust/verify"
+        ), "Proof Pack sample should expose concrete verify receipt API"
 
         sample_report_api = await client.get("/v1/proof-pack/reports/ppr_sample_source_trust")
         assert sample_report_api.status_code == 200, "sample retained report API should return"
@@ -1101,9 +1151,32 @@ async def main() -> None:
         assert sample_report_json["report_id"] == "ppr_sample_source_trust", "sample retained report id mismatch"
         assert sample_report_json["result_hash"], "sample retained report should expose result hash"
         assert sample_report_json["source_hash"], "sample retained report should expose source hash"
+        assert sample_report_json["verify_url"].endswith("/ppr_sample_source_trust/verify"), (
+            "sample retained report should expose verify receipt URL"
+        )
         sample_report_page = await client.get("/proof-pack/reports/ppr_sample_source_trust")
         assert sample_report_page.status_code == 200, "sample retained report page should render"
         assert "Proof Pack Report" in sample_report_page.text, "sample retained report page should identify report"
+        assert "/v1/proof-pack/reports/ppr_sample_source_trust/verify" in sample_report_page.text, (
+            "sample report page should expose verify receipt API"
+        )
+        sample_verify = await client.get("/v1/proof-pack/reports/ppr_sample_source_trust/verify?source=ci-sample")
+        assert sample_verify.status_code == 200, "sample retained report verify receipt should succeed"
+        sample_verify_json = sample_verify.json()
+        assert sample_verify_json["status"] == "verified", "sample verify receipt returned wrong status"
+        assert sample_verify_json["supplier_spend"] is False, "sample verify receipt should not spend"
+        assert sample_verify_json["payment_required"] is False, "sample verify receipt should not require payment"
+        assert sample_verify_json["result_hash"] == sample_report_json["result_hash"], (
+            "sample verify receipt hash mismatch"
+        )
+        assert sample_verify_json["source_hash"] == sample_report_json["source_hash"], (
+            "sample verify receipt source hash mismatch"
+        )
+        assert sample_verify_json["checks"]["result_hash_matches_canonical_payload"] is True, (
+            "sample verify receipt should recompute matching result hash"
+        )
+        assert sample_verify_json["checks"]["retained"] is True, "sample verify receipt should show retained report"
+        assert sample_verify_json["citation_count"] >= 1, "sample verify receipt should expose citation count"
         sample_follow_up = await client.post(
             "/v1/proof-pack/reports/ppr_sample_source_trust/follow-up",
             json={"question": "Can my agent cite reserved domains?"},
@@ -1133,6 +1206,9 @@ async def main() -> None:
         assert proof_probe.headers.get("X-AxonGate-Proof-Pack-Benchmarks", "").endswith("/v1/proof-pack/benchmarks"), (
             "Proof Pack probe missing benchmark header"
         )
+        assert proof_probe.headers.get("X-AxonGate-Proof-Pack-Verify", "").endswith(
+            "/v1/proof-pack/reports/ppr_sample_source_trust/verify"
+        ), "Proof Pack probe missing verify receipt header"
         assert proof_probe.json()["detail"]["links"]["agent_diagnostic"].endswith("/v1/agent/diagnose"), (
             "Proof Pack probe body missing agent diagnostic"
         )
@@ -1277,6 +1353,9 @@ async def main() -> None:
         assert stored_report["report_url"].endswith("/v1/proof-pack/reports/ppr_ci_smoke_report"), (
             "stored report should expose reusable JSON URL"
         )
+        assert stored_report["verify_url"].endswith("/v1/proof-pack/reports/ppr_ci_smoke_report/verify"), (
+            "stored report should expose verify receipt URL"
+        )
         assert stored_report["recommended_next_call"]["endpoint"].endswith("/ppr_ci_smoke_report"), (
             "stored report next call should use the concrete report endpoint"
         )
@@ -1288,6 +1367,22 @@ async def main() -> None:
         stored_report_page = await client.get(f"/proof-pack/reports/{stored_report['report_id']}")
         assert stored_report_page.status_code == 200, "stored report HTML page should render"
         assert "Proof Pack Report" in stored_report_page.text, "stored report page should identify the report"
+        assert f"/v1/proof-pack/reports/{stored_report['report_id']}/verify" in stored_report_page.text, (
+            "stored report page should expose verify receipt API"
+        )
+        stored_verify = await client.get(f"/v1/proof-pack/reports/{stored_report['report_id']}/verify?source=ci-report")
+        assert stored_verify.status_code == 200, "stored report verify receipt should succeed"
+        stored_verify_json = stored_verify.json()
+        assert stored_verify_json["status"] == "verified", "stored report verify receipt returned wrong status"
+        assert stored_verify_json["supplier_spend"] is False, "stored report verify receipt should not spend"
+        assert stored_verify_json["payment_required"] is False, "stored report verify receipt should not require payment"
+        assert stored_verify_json["result_hash"] == stored_report["result_hash"], "stored verify receipt hash mismatch"
+        assert stored_verify_json["source_hash"] == stored_report["source_hash"], "stored verify receipt source mismatch"
+        assert stored_verify_json["checks"]["result_hash_matches_canonical_payload"] is True, (
+            "stored verify receipt should recompute matching result hash"
+        )
+        assert stored_verify_json["checks"]["retained"] is True, "stored verify receipt should show retained report"
+        assert stored_verify_json["citation_count"] >= 1, "stored verify receipt should expose citations"
         report_follow_up = await client.post(
             f"/v1/proof-pack/reports/{stored_report['report_id']}/follow-up",
             json={"question": "Can my agent cite the source hash and refresh URL?"},
@@ -1354,11 +1449,15 @@ async def main() -> None:
         assert "proofPackRequest" in x402_discovery["metadata"], "Proof Pack request page missing from public discovery"
         assert "proofPackLeadApi" in x402_discovery["metadata"], "Proof Pack lead API missing from public discovery"
         assert "proofPackReportApiPattern" in x402_discovery["metadata"], "Proof Pack report API missing from public discovery"
+        assert "proofPackVerifyApiPattern" in x402_discovery["metadata"], "Proof Pack verify API missing from public discovery"
         assert "proofPackFollowUpApiPattern" in x402_discovery["metadata"], "Proof Pack follow-up API missing from public discovery"
         assert "proofPackRefreshQuoteApiPattern" in x402_discovery["metadata"], "Proof Pack refresh quote API missing from public discovery"
         assert x402_discovery["metadata"]["proofPackSampleReportApi"].endswith(
             "/v1/proof-pack/reports/ppr_sample_source_trust"
         ), "Proof Pack sample report missing from public discovery"
+        assert x402_discovery["metadata"]["proofPackSampleVerifyApi"].endswith(
+            "/ppr_sample_source_trust/verify"
+        ), "Proof Pack sample verify receipt missing from public discovery"
         assert x402_discovery["metadata"]["proofPackSampleFollowUpApi"].endswith(
             "/ppr_sample_source_trust/follow-up"
         ), "Proof Pack sample follow-up missing from public discovery"
@@ -1388,6 +1487,9 @@ async def main() -> None:
         assert "X-AxonGate-Agent-Trust" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI paid endpoint missing agent trust header docs"
         )
+        assert "X-AxonGate-Proof-Pack-Verify" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI paid endpoint missing Proof Pack verify header docs"
+        )
         proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
         assert proof_operation.get("x-payment-info"), "OpenAPI payment extension missing from Proof Pack endpoint"
         assert "X-AxonGate-Agent-Diagnostic" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
@@ -1395,6 +1497,9 @@ async def main() -> None:
         )
         assert "X-AxonGate-Agent-Trust" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI Proof Pack endpoint missing agent trust header docs"
+        )
+        assert "X-AxonGate-Proof-Pack-Verify" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI Proof Pack endpoint missing verify header docs"
         )
         contact_operation = openapi.get("paths", {}).get("/v1/contact", {}).get("post", {})
         assert contact_operation, "OpenAPI contact endpoint missing"
@@ -1418,6 +1523,9 @@ async def main() -> None:
         assert openapi["x-payment-info"].get("proofPackLibrary"), "OpenAPI payment info missing Evidence Library"
         assert openapi["x-payment-info"].get("sourceLandingPattern"), "OpenAPI payment info missing source landing pattern"
         assert openapi["x-payment-info"].get("proofPackReportApiPattern"), "OpenAPI payment info missing Proof Pack report pattern"
+        assert openapi["x-payment-info"].get("proofPackVerifyApiPattern"), (
+            "OpenAPI payment info missing Proof Pack verify pattern"
+        )
 
         contact_payload = {
             "name": "CI Builder",
@@ -1467,6 +1575,12 @@ async def main() -> None:
         )
         assert metrics["metrics"].get("proof_pack_reports_total", 0) >= 1, "Proof Pack report storage should be counted"
         assert metrics["metrics"].get("proof_pack_report_reads_total", 0) >= 2, "Proof Pack report reads should be counted"
+        assert metrics["metrics"].get("proof_pack_report_verifications_total", 0) >= 2, (
+            "Proof Pack report verifications should be counted"
+        )
+        assert metrics["conversion_funnel"].get("proof_pack_report_verifications", 0) >= 2, (
+            "Proof Pack report verifications missing from funnel"
+        )
         assert metrics["metrics"].get("proof_pack_followups_total", 0) >= 1, "Proof Pack follow-ups should be counted"
         assert metrics["metrics"].get("proof_pack_refresh_quotes_total", 0) >= 1, "Proof Pack refresh quotes should be counted"
         assert metrics["metrics"].get("discovery_operator_paid_requests_hits_total", 0) >= 2, (

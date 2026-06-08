@@ -32,7 +32,7 @@ def build_payload(email: str) -> dict:
             "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. "
             "It converts public web pages into clean Markdown and citation-backed evidence reports "
             "for RAG, autonomous research, and LLM context preparation. Paid Proof Packs now return "
-            "retained report IDs, no-spend follow-up APIs, refresh quotes, agent-action guidance, "
+            "retained report IDs, no-spend verification receipts, follow-up APIs, refresh quotes, agent-action guidance, "
             "source quality scores, a no-spend payment diagnostic, a no-spend trust contract, benchmark cases, and a concrete no-spend sample retained report. The starter tier gives agents a 0.012 USDC first paid "
             "conversion path before live fresh extraction."
         ),
@@ -50,14 +50,16 @@ def build_payload(email: str) -> dict:
             "a no-spend agent trust contract at /v1/agent/trust, "
             "Proof Pack benchmark cases at /v1/proof-pack/benchmarks, "
             "a supplier-free Proof Pack quote API, retained Proof Pack reports, report_id retrieval, "
-            "no-spend follow-up, refresh quotes, starter sample pricing, and cache-only pricing. "
+            "no-spend verification receipts, no-spend follow-up, refresh quotes, starter sample pricing, and cache-only pricing. "
             "Reviewers can test the retained-report loop without payment at "
             "/v1/proof-pack/reports/ppr_sample_source_trust, "
+            "/v1/proof-pack/reports/ppr_sample_source_trust/verify, "
             "/v1/proof-pack/reports/ppr_sample_source_trust/follow-up, and "
             "/v1/proof-pack/reports/ppr_sample_source_trust/refresh. "
             "Discovery metadata is available at /.well-known/x402, /.well-known/agent.json, "
             "/v1/agent/trust, /v1/agent/diagnose, /v1/proof-pack/benchmarks, "
             "/v1/x402/quote, /v1/proof-pack/quote, /v1/proof-pack/reports/{report_id}, "
+            "/v1/proof-pack/reports/{report_id}/verify, "
             "and /discovery/resources."
         ),
     }

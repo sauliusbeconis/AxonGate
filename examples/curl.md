@@ -254,6 +254,8 @@ export PROOF_PACK_REPORT_ID="<report_id from paid response>"
 
 curl -sS "$AXONGATE_BASE_URL/v1/proof-pack/reports/$PROOF_PACK_REPORT_ID"
 
+curl -sS "$AXONGATE_BASE_URL/v1/proof-pack/reports/$PROOF_PACK_REPORT_ID/verify"
+
 curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/reports/$PROOF_PACK_REPORT_ID/follow-up" \
   -H "Content-Type: application/json" \
   -d '{"question":"Can my agent cite this claim, or does it need another source?"}'
@@ -267,6 +269,8 @@ Try the same retained-report loop before paying:
 export AXONGATE_SAMPLE_REPORT_ID="ppr_sample_source_trust"
 
 curl -sS "$AXONGATE_BASE_URL/v1/proof-pack/reports/$AXONGATE_SAMPLE_REPORT_ID"
+
+curl -sS "$AXONGATE_BASE_URL/v1/proof-pack/reports/$AXONGATE_SAMPLE_REPORT_ID/verify"
 
 curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/reports/$AXONGATE_SAMPLE_REPORT_ID/follow-up" \
   -H "Content-Type: application/json" \

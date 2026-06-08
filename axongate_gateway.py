@@ -81,7 +81,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.4.2",
+    version="1.4.3",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -506,9 +506,11 @@ metrics: dict[str, int] = {
     "discovery_agent_diagnostic_hits_total": 0,
     "discovery_agent_trust_hits_total": 0,
     "discovery_proof_pack_benchmarks_hits_total": 0,
+    "discovery_proof_pack_report_verify_hits_total": 0,
     "agent_diagnostics_total": 0,
     "agent_trust_checks_total": 0,
     "proof_pack_benchmarks_total": 0,
+    "proof_pack_report_verifications_total": 0,
     "favicon_hits_total": 0,
     "crawler_guard_no_user_agent_total": 0,
     "legacy_access_health_hits_total": 0,
@@ -1250,6 +1252,7 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "agent_diagnostics": values.get("agent_diagnostics_total", 0),
         "agent_trust_checks": values.get("agent_trust_checks_total", 0),
         "proof_pack_benchmarks": values.get("proof_pack_benchmarks_total", 0),
+        "proof_pack_report_verifications": values.get("proof_pack_report_verifications_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
         "proof_bundle_checkout_reviews": values.get("proof_bundle_checkout_reviews_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
@@ -1721,6 +1724,7 @@ def build_proof_pack_output_schema() -> dict[str, Any]:
             "report_id": {"type": "string"},
             "report_url": {"type": "string"},
             "report_page": {"type": "string"},
+            "verify_url": {"type": "string"},
             "result_hash": {"type": "string"},
             "source_hash": {"type": "string"},
             "created_at": {"type": "integer"},
@@ -1785,6 +1789,7 @@ def build_proof_pack_response_example(pack: str = DEFAULT_PROOF_PACK) -> dict[st
         "report_id": "ppr_example_report",
         "report_url": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/ppr_example_report",
         "report_page": f"{PUBLIC_BASE_URL}/proof-pack/reports/ppr_example_report",
+        "verify_url": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/ppr_example_report/verify",
         "result_hash": stable_hash("example-result"),
         "source_hash": stable_hash("# Example source"),
         "created_at": 1780000000,
@@ -2003,11 +2008,13 @@ def build_x402_resource() -> dict[str, Any]:
             "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
             "proofPackReportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
             "proofPackReportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+            "proofPackVerifyApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/verify",
             "proofPackFollowUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
             "proofPackRefreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
             "proofPackSampleReportId": PROOF_PACK_SAMPLE_REPORT_ID,
             "proofPackSampleReportApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
             "proofPackSampleReportPage": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "proofPackSampleVerifyApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
             "proofPackSampleFollowUpApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
             "proofPackSampleRefreshQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
             "proofPackReportRetentionDays": proof_pack_report_retention_days(),
@@ -2088,6 +2095,10 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "contact": f"{PUBLIC_BASE_URL}/contact",
             "sample": f"{PUBLIC_BASE_URL}/proof-pack/sample",
             "sampleApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
+            "sampleReportId": PROOF_PACK_SAMPLE_REPORT_ID,
+            "sampleReportApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "sampleReportPage": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "sampleVerifyApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
             "benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
             "preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
             "previewApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
@@ -2097,6 +2108,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "leadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "reportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
             "reportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+            "verifyApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/verify",
             "followUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
             "refreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
             "reportRetentionDays": proof_pack_report_retention_days(),
@@ -2288,11 +2300,13 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "proofPackReportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
         "proofPackReportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+        "proofPackVerifyApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/verify",
         "proofPackFollowUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
         "proofPackRefreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
         "proofPackSampleReportId": PROOF_PACK_SAMPLE_REPORT_ID,
         "proofPackSampleReportApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
         "proofPackSampleReportPage": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proofPackSampleVerifyApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
         "proofPackSampleFollowUpApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
         "proofPackSampleRefreshQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
         "proofPackReportRetentionDays": proof_pack_report_retention_days(),
@@ -2401,6 +2415,7 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Agent-Trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
         "X-AxonGate-Proof-Pack": f"{PUBLIC_BASE_URL}/proof-pack",
         "X-AxonGate-Proof-Pack-Benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
+        "X-AxonGate-Proof-Pack-Verify": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
         "X-AxonGate-Proof-Pack-Sample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
         "X-AxonGate-Proof-Pack-Preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
         "X-AxonGate-Proof-Pack-Quote-Page": f"{PUBLIC_BASE_URL}/proof-pack/quote",
@@ -2419,6 +2434,7 @@ def buyer_guidance_headers() -> dict[str, str]:
             f'<{PUBLIC_BASE_URL}/v1/agent/trust>; rel="trust", '
             f'<{PUBLIC_BASE_URL}/proof-pack>; rel="service", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks>; rel="benchmarks", '
+            f'<{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify>; rel="proof-pack-verify", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/sample>; rel="proof-pack-sample", '
             f'<{PUBLIC_BASE_URL}/proof-pack/preview>; rel="proof-pack-preview", '
             f'<{PUBLIC_BASE_URL}/proof-pack/quote>; rel="proof-pack-quote-page", '
@@ -2468,6 +2484,7 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
             "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "agent_trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
             "proof_pack_benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
+            "proof_pack_sample_verify": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
             "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
@@ -2510,6 +2527,7 @@ def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -
             "sample_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
             "sample_report_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
             "sample_report_page": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "sample_verify_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
             "sample_follow_up_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
             "sample_refresh_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
             "preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
@@ -2547,11 +2565,13 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofPackLeadApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
         "proofPackReportApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
         "proofPackReportPagePattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+        "proofPackVerifyApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/verify",
         "proofPackFollowUpApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
         "proofPackRefreshQuoteApiPattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
         "proofPackSampleReportId": PROOF_PACK_SAMPLE_REPORT_ID,
         "proofPackSampleReportApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
         "proofPackSampleReportPage": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proofPackSampleVerifyApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
         "proofPackSampleFollowUpApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
         "proofPackSampleRefreshQuoteApi": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
         "proofPackReportRetentionDays": proof_pack_report_retention_days(),
@@ -4760,6 +4780,7 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
     )
     sample_report_url = proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_report_page = proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_verify_url = proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_follow_up_url = proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_refresh_url = proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)
 
@@ -4769,6 +4790,7 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
         "report_id": PROOF_PACK_SAMPLE_REPORT_ID,
         "report_url": sample_report_url,
         "report_page": sample_report_page,
+        "verify_url": sample_verify_url,
         "follow_up_url": sample_follow_up_url,
         "refresh_url": sample_refresh_url,
         "target_url": PROOF_PACK_SAMPLE_TARGET_URL,
@@ -4854,6 +4876,7 @@ def build_proof_pack_sample_response(source: str = "direct") -> dict[str, Any]:
             "sample_api": public_url("/v1/proof-pack/sample"),
             "sample_report_api": sample_report_url,
             "sample_report_page": sample_report_page,
+            "sample_verify_api": sample_verify_url,
             "sample_follow_up_api": sample_follow_up_url,
             "sample_refresh_quote_api": sample_refresh_url,
             "preview_page": proof_pack_preview_page_url(
@@ -4976,18 +4999,20 @@ async def build_proof_pack_quote(
                 normalized_source,
             ),
             "after_payment": {
-                "store_fields": ["report_id", "report_url", "result_hash", "source_hash", "agent_action"],
+                "store_fields": ["report_id", "report_url", "verify_url", "result_hash", "source_hash", "agent_action"],
                 "report_api_pattern": public_url("/v1/proof-pack/reports/{report_id}"),
                 "report_page_pattern": public_url("/proof-pack/reports/{report_id}"),
+                "verify_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/verify"),
                 "follow_up_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/follow-up"),
                 "refresh_quote_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/refresh"),
                 "sample_report_id": PROOF_PACK_SAMPLE_REPORT_ID,
                 "sample_report_api": proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID),
                 "sample_report_page": proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                "sample_verify_api": proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID),
                 "sample_follow_up_api": proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID),
                 "sample_refresh_quote_api": proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID),
                 "retention_days": proof_pack_report_retention_days(),
-                "note": "Use the retained report for no-spend follow-up before paying for a fresh rerun. Try the sample report URLs before spending.",
+                "note": "Use the retained report and verify receipt for no-spend checks before paying for a fresh rerun. Try the sample report URLs before spending.",
             },
         },
     }
@@ -8112,6 +8137,10 @@ def proof_pack_report_page_url(report_id: str) -> str:
     return public_url(f"/proof-pack/reports/{url_quote(report_id, safe='')}")
 
 
+def proof_pack_report_verify_url(report_id: str) -> str:
+    return public_url(f"/v1/proof-pack/reports/{url_quote(report_id, safe='')}/verify")
+
+
 def proof_pack_report_follow_up_url(report_id: str) -> str:
     return public_url(f"/v1/proof-pack/reports/{url_quote(report_id, safe='')}/follow-up")
 
@@ -8154,7 +8183,7 @@ PROOF_PACK_BENCHMARK_CASES: tuple[dict[str, Any], ...] = (
             "specificity": 0.86,
             "risk_flags": 0.08,
         },
-        "expected_fields": ["decision", "citation_coverage", "source_hash", "result_hash", "agent_action"],
+        "expected_fields": ["decision", "citation_coverage", "source_hash", "result_hash", "verify_url", "agent_action"],
     },
     {
         "id": "weak_marketing_page",
@@ -8246,7 +8275,7 @@ PROOF_PACK_BENCHMARK_CASES: tuple[dict[str, Any], ...] = (
             "specificity": 0.5,
             "risk_flags": 0.58,
         },
-        "expected_fields": ["source_hash", "result_hash", "refresh_url", "retention_days"],
+        "expected_fields": ["source_hash", "result_hash", "verify_url", "refresh_url", "retention_days"],
     },
     {
         "id": "multi_source_conflict",
@@ -8300,6 +8329,7 @@ def build_proof_pack_benchmark_cases(source: str = "trust") -> list[dict[str, An
                 "supplier_spend": False,
                 "quote_api": quote_api,
                 "proof_bundle_quote_api": proof_bundle_quote_api,
+                "sample_verify_api": proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID),
                 "paid_probe_url": proof_pack_payment_probe_url(DEFAULT_PROOF_PACK, normalized_source),
                 "recommended_next_call": (
                     {
@@ -8322,6 +8352,7 @@ def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
     benchmarks = build_proof_pack_benchmark_cases(normalized_source)
     sample_report_api = proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_report_page = proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_verify_api = proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID)
     standard_price = price_for_proof_pack(DEFAULT_PROOF_PACK)
 
     return {
@@ -8349,6 +8380,7 @@ def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
                 "checking whether a public source can be cited by an agent",
                 "filtering weak pages before RAG ingestion",
                 "retaining report IDs for no-spend follow-up",
+                "verifying delivered report hashes and retention without another paid run",
                 "comparing source_hash and result_hash before paying for a refresh",
             ],
             "not_for": [
@@ -8357,7 +8389,8 @@ def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
                 "turning first-party marketing copy into independent proof",
             ],
             "repeat_value": [
-                "paid reports return report_id, report_url, result_hash, source_hash, agent_action, and source_quality_score",
+                "paid reports return report_id, report_url, verify_url, result_hash, source_hash, agent_action, and source_quality_score",
+                "verify receipts confirm hashes, retention, decision, and citation counts without supplier spend",
                 "stored report follow-up is no-spend during retention",
                 "refresh quotes let agents decide whether recency justifies another paid run",
                 "benchmark cases show expected decisions before agents spend",
@@ -8370,6 +8403,7 @@ def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
                 "/v1/proof-pack/benchmarks",
                 "/v1/proof-pack/sample",
                 f"/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+                f"/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
                 "/v1/proof-pack/quote",
                 "/v1/proof-pack/preview",
             ],
@@ -8400,11 +8434,38 @@ def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
             "payment_replay_protection": True,
             "no_double_charge_guidance": "Use retry credits after accepted-payment delivery failures; use report follow-up before paying for another run.",
         },
+        "verification_policy": {
+            "supplier_spend": False,
+            "payment_required": False,
+            "verify_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/verify"),
+            "sample_verify_api": sample_verify_api,
+            "receipt_checks": [
+                "report_exists",
+                "retained",
+                "result_hash_present",
+                "source_hash_present",
+                "result_hash_matches_canonical_payload",
+                "citations_present",
+                "decision_present",
+            ],
+            "canonical_hash_excludes": [
+                "report_id",
+                "report_url",
+                "report_page",
+                "verify_url",
+                "follow_up_url",
+                "refresh_url",
+                "created_at",
+                "expires_at",
+                "retention_days",
+            ],
+        },
         "output_contract": {
             "stable_fields": [
                 "report_id",
                 "report_url",
                 "report_page",
+                "verify_url",
                 "result_hash",
                 "source_hash",
                 "decision",
@@ -8433,6 +8494,7 @@ def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
             "report_id": PROOF_PACK_SAMPLE_REPORT_ID,
             "api": sample_report_api,
             "page": sample_report_page,
+            "verify_api": sample_verify_api,
             "follow_up_api": proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID),
             "refresh_quote_api": proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID),
         },
@@ -8457,6 +8519,7 @@ def build_agent_trust_payload(source: str = "trust") -> dict[str, Any]:
             "diagnostic": agent_diagnostic_url(),
             "benchmarks": proof_pack_benchmarks_url(),
             "sample_report": sample_report_api,
+            "sample_verify_receipt": sample_verify_api,
             "docs": public_url("/docs"),
             "proof_pack": public_url("/proof-pack"),
             "quote": public_url("/v1/proof-pack/quote"),
@@ -8472,6 +8535,7 @@ def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]
     default_pack = normalize_proof_pack(DEFAULT_PROOF_PACK)
     sample_report_api = proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_report_page = proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_verify_api = proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_follow_up_api = proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_refresh_api = proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)
     sample_preview_api = proof_pack_preview_api_url(
@@ -8634,6 +8698,7 @@ def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]
             "supplier_spend": False,
             "api": sample_report_api,
             "page": sample_report_page,
+            "verify_api": sample_verify_api,
             "follow_up_api": sample_follow_up_api,
             "refresh_quote_api": sample_refresh_api,
             "sample_api": public_url("/v1/proof-pack/sample"),
@@ -8643,9 +8708,11 @@ def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]
             "library": public_url("/proof-pack/library"),
             "sample_report_api": sample_report_api,
             "sample_report_page": sample_report_page,
+            "sample_verify_api": sample_verify_api,
             "sample_follow_up_api": sample_follow_up_api,
             "sample_refresh_quote_api": sample_refresh_api,
             "report_api_pattern": public_url("/v1/proof-pack/reports/{report_id}"),
+            "verify_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/verify"),
             "follow_up_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/follow-up"),
             "refresh_quote_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/refresh"),
             "retention_days": proof_pack_report_retention_days(),
@@ -8671,12 +8738,18 @@ def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]
             },
             {
                 "step": 4,
+                "action": "verify_sample_receipt",
+                "method": "GET",
+                "url": sample_verify_api,
+            },
+            {
+                "step": 5,
                 "action": "quote_without_spend",
                 "method": "GET",
                 "url": proof_quote_api,
             },
             {
-                "step": 5,
+                "step": 6,
                 "action": "pay_and_post",
                 "method": "POST",
                 "url": public_url(f"/v1/x402/proof-pack?pack={default_pack}"),
@@ -8714,12 +8787,14 @@ def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]
             "method": "GET",
             "endpoint": f"/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
             "url": sample_report_api,
-            "reason": "No payment needed; confirms retained report, citation, follow-up, and refresh quote contract before spending.",
+            "verify_url": sample_verify_api,
+            "reason": "No payment needed; confirms retained report, receipt, citation, follow-up, and refresh quote contract before spending.",
         },
         "links": {
             "diagnostic": agent_diagnostic_url(),
             "trust": agent_trust_url(),
             "benchmarks": proof_pack_benchmarks_url(),
+            "sample_verify_receipt": sample_verify_api,
             "docs": public_url("/docs"),
             "quickstart": public_url("/quickstart"),
             "paid_test": public_url("/paid-test"),
@@ -8744,6 +8819,7 @@ def proof_pack_result_hash(payload: dict[str, Any]) -> str:
         "retention_days",
         "follow_up_url",
         "refresh_url",
+        "verify_url",
     }
     core = {key: value for key, value in payload.items() if key not in excluded}
     return stable_hash(json.dumps(core, sort_keys=True, separators=(",", ":"), default=str))
@@ -8775,6 +8851,7 @@ def build_proof_pack_report_payload(report: dict[str, Any], report_id: Optional[
         "retention_days": proof_pack_report_retention_days(),
         "report_url": proof_pack_report_api_url(normalized_report_id),
         "report_page": proof_pack_report_page_url(normalized_report_id),
+        "verify_url": proof_pack_report_verify_url(normalized_report_id),
         "follow_up_url": proof_pack_report_follow_up_url(normalized_report_id),
         "refresh_url": proof_pack_report_refresh_url(normalized_report_id),
     }
@@ -8804,7 +8881,7 @@ def build_proof_pack_sample_report() -> dict[str, Any]:
         "status": "sample_report",
         "supplier_spend": False,
         "sample": True,
-        "sample_report_note": "Public sample report for testing retained-report, follow-up, and refresh quote flows without payment.",
+        "sample_report_note": "Public sample report for testing retained-report, verification, follow-up, and refresh quote flows without payment.",
         "target_url": sample["target_url"],
         "question": sample["question"],
         "pack": sample["pack"],
@@ -8901,6 +8978,103 @@ async def read_proof_pack_report(report_id: str) -> Optional[dict[str, Any]]:
         return dict(report) if report else None
 
 
+def proof_pack_report_receipt(report: dict[str, Any]) -> dict[str, Any]:
+    """Build a no-spend verification receipt for a retained Proof Pack report."""
+    report_id = normalize_report_id(report.get("report_id"))
+    source_profile = report.get("source_profile") if isinstance(report.get("source_profile"), dict) else {}
+    decision = report.get("decision") if isinstance(report.get("decision"), dict) else {}
+    citation_coverage = report.get("citation_coverage") if isinstance(report.get("citation_coverage"), dict) else {}
+    raw_citations = report.get("citations")
+    raw_key_claims = report.get("key_claims")
+    citations = [citation for citation in raw_citations if isinstance(citation, dict)] if isinstance(raw_citations, list) else []
+    key_claims = [claim for claim in raw_key_claims if isinstance(claim, dict)] if isinstance(raw_key_claims, list) else []
+    source_hash = str(report.get("source_hash") or source_profile.get("content_sha256") or "")
+    result_hash = str(report.get("result_hash") or "")
+    computed_result_hash = proof_pack_result_hash(report)
+    now = int(time.time())
+    try:
+        expires_at = int(report.get("expires_at") or 0)
+    except (TypeError, ValueError):
+        expires_at = 0
+    retained = expires_at > now if expires_at else False
+    target_domain = target_hostname_label(str(report.get("target_url") or ""))
+    markdown_chars = source_profile.get("markdown_chars") or source_profile.get("content_chars")
+    try:
+        markdown_chars_value = int(markdown_chars) if markdown_chars is not None else None
+    except (TypeError, ValueError):
+        markdown_chars_value = None
+
+    return {
+        "status": "verified",
+        "receipt_schema": "axon-proof-pack-receipt-v1",
+        "supplier_spend": False,
+        "payment_required": False,
+        "generated_at": now,
+        "report_id": report_id,
+        "report_url": report.get("report_url") or proof_pack_report_api_url(report_id),
+        "report_page": report.get("report_page") or proof_pack_report_page_url(report_id),
+        "verify_url": report.get("verify_url") or proof_pack_report_verify_url(report_id),
+        "result_hash": result_hash,
+        "computed_result_hash": computed_result_hash,
+        "source_hash": source_hash,
+        "decision_label": decision.get("label"),
+        "agent_action": report.get("agent_action"),
+        "confidence_score": report.get("confidence_score"),
+        "source_quality_score": report.get("source_quality_score"),
+        "created_at": report.get("created_at"),
+        "expires_at": report.get("expires_at"),
+        "retention_days": report.get("retention_days"),
+        "retained": retained,
+        "citation_count": len(citations),
+        "supported_claim_count": citation_coverage.get("supported_claim_count", len(key_claims)),
+        "target_domain_hash": stable_hash(target_domain)[:16] if target_domain and target_domain != "unknown" else None,
+        "source_profile": {
+            "content_sha256": source_hash,
+            "markdown_chars": markdown_chars_value,
+            "sample": bool(source_profile.get("sample")),
+        },
+        "checks": {
+            "report_exists": True,
+            "retained": retained,
+            "result_hash_present": bool(result_hash),
+            "source_hash_present": bool(source_hash),
+            "result_hash_matches_canonical_payload": bool(result_hash) and result_hash == computed_result_hash,
+            "citations_present": len(citations) > 0,
+            "decision_present": bool(decision.get("label") or report.get("agent_action")),
+            "free_to_verify": True,
+        },
+        "canonical_hash_excludes": [
+            "report_id",
+            "report_url",
+            "report_page",
+            "verify_url",
+            "follow_up_url",
+            "refresh_url",
+            "created_at",
+            "expires_at",
+            "retention_days",
+        ],
+        "recommended_next_call": {
+            "action": "reuse_or_follow_up" if retained else "quote_refresh",
+            "method": "POST" if retained else "POST",
+            "url": report.get("follow_up_url") if retained else report.get("refresh_url"),
+            "reason": (
+                "The retained report is still available; use no-spend follow-up before paying again."
+                if retained
+                else "The report is no longer retained; request a refresh quote before paying again."
+            ),
+        },
+        "links": {
+            "report_api": report.get("report_url") or proof_pack_report_api_url(report_id),
+            "report_page": report.get("report_page") or proof_pack_report_page_url(report_id),
+            "follow_up_api": report.get("follow_up_url"),
+            "refresh_quote_api": report.get("refresh_url"),
+            "agent_trust": agent_trust_url(),
+            "benchmarks": proof_pack_benchmarks_url(),
+        },
+    }
+
+
 async def proof_pack_reports_public_snapshot() -> dict[str, Any]:
     """Return public-safe report storage health for metrics."""
     snapshot: dict[str, Any] = {
@@ -8968,6 +9142,7 @@ def proof_pack_report_follow_up(report: dict[str, Any], question: str) -> dict[s
         "supplier_spend": False,
         "report_id": report.get("report_id"),
         "report_url": report.get("report_url"),
+        "verify_url": report.get("verify_url"),
         "original_question": report.get("question"),
         "follow_up_question": normalized_question,
         "answer": answer,
@@ -9004,6 +9179,7 @@ def proof_pack_refresh_quote(report: dict[str, Any], refresh_request: ProofPackR
         "pack": normalized_pack,
         "force_refresh": bool(refresh_request.force_refresh),
         "current_source_hash": report.get("source_hash") or report.get("source_profile", {}).get("content_sha256"),
+        "verify_url": report.get("verify_url"),
         "amount_usdc": float(price),
         "amount_units": str(usdc_units(price)),
         "paid_endpoint": proof_pack_payment_probe_url(normalized_pack, normalized_source),
@@ -9012,6 +9188,7 @@ def proof_pack_refresh_quote(report: dict[str, Any], refresh_request: ProofPackR
             "probe_payment_terms": proof_pack_payment_probe_url(normalized_pack, normalized_source),
             "paid_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}&source={normalized_source}",
             "compare_result_hash": report.get("result_hash"),
+            "verify_receipt": report.get("verify_url"),
             "note": "Submit a new paid Proof Pack request with force_refresh=true to compare source_hash and result_hash.",
         },
     }
@@ -9082,6 +9259,7 @@ def build_proof_pack_report_html(report: dict[str, Any]) -> str:
     <div class="panel">
       <h2>Reuse</h2>
       <p>JSON: <a href="{esc(str(report.get('report_url') or ''))}">{esc(str(report.get('report_url') or ''))}</a></p>
+      <p>Verify receipt API: <code>{esc(str(report.get('verify_url') or ''))}</code></p>
       <p>Follow-up API: <code>{esc(str(report.get('follow_up_url') or ''))}</code></p>
       <p>Refresh quote API: <code>{esc(str(report.get('refresh_url') or ''))}</code></p>
     </div>
@@ -11433,7 +11611,7 @@ def build_faq_html() -> str:
         ),
         (
             "What is a Proof Pack?",
-            "A Proof Pack is a single-source evidence report. It answers a claim or question using one public URL and returns summary, claims, citations, risks, confidence, source hash, report ID, result hash, source quality score, agent action, and follow-up or refresh URLs.",
+            "A Proof Pack is a single-source evidence report. It answers a claim or question using one public URL and returns summary, claims, citations, risks, confidence, source hash, report ID, result hash, verification receipt URL, source quality score, agent action, and follow-up or refresh URLs.",
         ),
         (
             "What is an Evidence Bundle?",
@@ -13217,7 +13395,7 @@ def build_proof_pack_html() -> str:
       <div>
         <p class="eyebrow">Not a page parser</p>
         <h1>Can your agent safely cite this source?</h1>
-    <p class="summary">AxonGate checks whether a public URL actually supports a claim, extracts citation-ready evidence, and flags weak or noisy sources before an AI agent relies on them. Paid reports now include a reusable <code>report_id</code>, no-spend follow-up API, refresh quote, <code>agent_action</code>, and <code>source_quality_score</code>.</p>
+    <p class="summary">AxonGate checks whether a public URL actually supports a claim, extracts citation-ready evidence, and flags weak or noisy sources before an AI agent relies on them. Paid reports now include a reusable <code>report_id</code>, verification receipt, no-spend follow-up API, refresh quote, <code>agent_action</code>, and <code>source_quality_score</code>.</p>
       </div>
       <form class="trust-form" method="get" action="/proof-pack/quote">
         <label>Source URL
@@ -13255,9 +13433,10 @@ def build_proof_pack_html() -> str:
     </div>
 
     <h2>After Payment</h2>
-    <p>A successful Proof Pack is retained as a reusable report for {html.escape(str(proof_pack_report_retention_days()))} days. Agents should store <code>report_id</code>, <code>report_url</code>, <code>result_hash</code>, <code>source_hash</code>, <code>agent_action</code>, and <code>source_quality_score</code>, then use no-spend follow-up before paying for a fresh rerun.</p>
+    <p>A successful Proof Pack is retained as a reusable report for {html.escape(str(proof_pack_report_retention_days()))} days. Agents should store <code>report_id</code>, <code>report_url</code>, <code>verify_url</code>, <code>result_hash</code>, <code>source_hash</code>, <code>agent_action</code>, and <code>source_quality_score</code>, then verify hashes and use no-spend follow-up before paying for a fresh rerun.</p>
     <div class="grid">
       <div class="box"><strong>Retrieve</strong><br><code>GET /v1/proof-pack/reports/{{report_id}}</code></div>
+      <div class="box"><strong>Verify</strong><br><code>GET /v1/proof-pack/reports/{{report_id}}/verify</code></div>
       <div class="box"><strong>Follow up</strong><br><code>POST /v1/proof-pack/reports/{{report_id}}/follow-up</code></div>
       <div class="box"><strong>Refresh quote</strong><br><code>POST /v1/proof-pack/reports/{{report_id}}/refresh</code></div>
     </div>
@@ -13301,6 +13480,7 @@ Header: X-AxonGate-Pack: standard</pre>
 
       <h2>Reuse A Paid Report</h2>
       <pre>GET {public}/v1/proof-pack/reports/{{report_id}}
+GET {public}/v1/proof-pack/reports/{{report_id}}/verify
 POST {public}/v1/proof-pack/reports/{{report_id}}/follow-up
 POST {public}/v1/proof-pack/reports/{{report_id}}/refresh</pre>
 
@@ -13334,6 +13514,7 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
     paid_endpoint = html.escape(sample["next_steps"]["paid_endpoint"])
     sample_report_url = html.escape(sample["next_steps"]["sample_report_api"])
     sample_report_page = html.escape(sample["next_steps"]["sample_report_page"])
+    sample_verify_url = html.escape(sample["next_steps"]["sample_verify_api"])
     sample_follow_up_url = html.escape(sample["next_steps"]["sample_follow_up_api"])
     sample_refresh_url = html.escape(sample["next_steps"]["sample_refresh_quote_api"])
     buyer_command = html.escape(sample["next_steps"]["buyer_command"])
@@ -13402,6 +13583,7 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
             ("Sample JSON", sample_api),
             ("Reusable Report", sample_report_page),
             ("Report API", sample_report_url),
+            ("Verify Receipt", sample_verify_url),
             ("Probe Payment Terms", paid_endpoint),
             ("Docs", f"{PUBLIC_BASE_URL}/docs"),
             ("Quickstart", f"{PUBLIC_BASE_URL}/quickstart"),
@@ -13536,9 +13718,10 @@ def build_proof_pack_sample_html(source: str = "direct") -> str:
 
     <section class="panel">
       <h2>Reusable Sample Report</h2>
-      <p>Use this no-spend report ID to test the same retained report, follow-up, and refresh quote flow that a paid Proof Pack returns.</p>
+      <p>Use this no-spend report ID to test the same retained report, verification receipt, follow-up, and refresh quote flow that a paid Proof Pack returns.</p>
       <pre>GET {sample_report_url}
 GET {sample_report_page}
+GET {sample_verify_url}
 POST {sample_follow_up_url}
 POST {sample_refresh_url}</pre>
     </section>
@@ -13623,11 +13806,13 @@ Proof Pack lead API: {public_url("/v1/proof-pack/leads")}
 Proof Pack x402 endpoint: {public_url("/v1/x402/proof-pack")}
 Proof Pack report API pattern: {public_url("/v1/proof-pack/reports/{report_id}")}
 Proof Pack report page pattern: {public_url("/proof-pack/reports/{report_id}")}
+Proof Pack verify receipt API pattern: {public_url("/v1/proof-pack/reports/{report_id}/verify")}
 Proof Pack follow-up API pattern: {public_url("/v1/proof-pack/reports/{report_id}/follow-up")}
 Proof Pack refresh quote API pattern: {public_url("/v1/proof-pack/reports/{report_id}/refresh")}
 Proof Pack sample report ID: {PROOF_PACK_SAMPLE_REPORT_ID}
 Proof Pack sample report API: {proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)}
 Proof Pack sample report page: {proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)}
+Proof Pack sample verify receipt API: {proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID)}
 Proof Pack sample follow-up API: {proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)}
 Proof Pack sample refresh quote API: {proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)}
 Proof Pack report retention: {proof_pack_report_retention_days()} days
@@ -13727,11 +13912,12 @@ Body example:
 {proof_pack_request_example}
 
 After a successful paid Proof Pack:
-- Store report_id, report_url, result_hash, source_hash, agent_action, and source_quality_score.
+- Store report_id, report_url, verify_url, result_hash, source_hash, agent_action, and source_quality_score.
 - Retrieve retained report JSON with GET {public_url("/v1/proof-pack/reports/{report_id}")}.
+- Verify delivered hashes and retention with GET {public_url("/v1/proof-pack/reports/{report_id}/verify")}.
 - Ask no-spend follow-ups with POST {public_url("/v1/proof-pack/reports/{report_id}/follow-up")} and body {{"question":"Can my agent cite this claim?"}}.
 - Request a paid rerun quote with POST {public_url("/v1/proof-pack/reports/{report_id}/refresh")}; compare old result_hash and source_hash with the refreshed delivery.
-- Try the retained-report loop before spending with sample report {PROOF_PACK_SAMPLE_REPORT_ID}: GET {proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)}, POST {proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)}, POST {proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)}.
+- Try the retained-report loop before spending with sample report {PROOF_PACK_SAMPLE_REPORT_ID}: GET {proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)}, GET {proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID)}, POST {proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)}, POST {proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)}.
 
 Proof Pack prices:
 {proof_pack_lines}
@@ -13757,7 +13943,7 @@ Stripe events:
 
 Successful Proof Pack response shape:
 - status: success
-- target_url, question, pack, report_id, report_url, report_page
+- target_url, question, pack, report_id, report_url, report_page, verify_url
 - result_hash, source_hash, follow_up_url, refresh_url
 - answer and executive_summary
 - decision, confidence_score, source_quality_score, agent_action, recommended_next_call
@@ -14013,7 +14199,7 @@ def build_docs_html() -> str:
 
     <h2>Source Trust Reports</h2>
     <p>Source Trust Reports, still called Proof Packs in the API, are paid evidence checks for agent builders. Use them before RAG ingestion, web citations, autonomous actions, or customer-facing answers. They return whether the source supports the claim, what evidence is usable, and what risks make the source weak.</p>
-    <p>Successful paid reports are retained for {html.escape(str(proof_pack_report_retention_days()))} days. Store <code>report_id</code>, <code>report_url</code>, <code>result_hash</code>, <code>source_hash</code>, <code>agent_action</code>, and <code>source_quality_score</code>. Use follow-up for no-spend reuse, and refresh quotes when recency or missing evidence matters.</p>
+    <p>Successful paid reports are retained for {html.escape(str(proof_pack_report_retention_days()))} days. Store <code>report_id</code>, <code>report_url</code>, <code>verify_url</code>, <code>result_hash</code>, <code>source_hash</code>, <code>agent_action</code>, and <code>source_quality_score</code>. Use verify receipts for hash and retention checks, follow-up for no-spend reuse, and refresh quotes when recency or missing evidence matters.</p>
     <div class="table-wrap">
     <table>
       <thead><tr><th>Pack</th><th>Price</th><th>Policy</th></tr></thead>
@@ -14027,12 +14213,14 @@ def build_docs_html() -> str:
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
     <p>Post-payment reuse APIs:</p>
     <pre>curl "{public}/v1/proof-pack/reports/{{report_id}}"
+curl "{public}/v1/proof-pack/reports/{{report_id}}/verify"
 curl -X POST "{public}/v1/proof-pack/reports/{{report_id}}/follow-up" \\
   -H "Content-Type: application/json" \\
   -d '{{"question":"Can my agent cite this claim?"}}'
 curl -X POST "{public}/v1/proof-pack/reports/{{report_id}}/refresh"</pre>
     <p>No-spend retained report sample:</p>
     <pre>curl "{public}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}"
+curl "{public}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify"
 curl -X POST "{public}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up" \\
   -H "Content-Type: application/json" \\
   -d '{{"question":"Can my agent cite reserved domains?"}}'
@@ -15752,6 +15940,7 @@ def build_sitemap_xml() -> str:
         ("/proof-pack/bundle/pay", "0.8"),
         ("/proof-pack/bundle/recover", "0.8"),
         ("/v1/proof-pack/sample", "0.85"),
+        (f"/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify", "0.8"),
         ("/v1/proof-pack/preview", "0.85"),
         ("/v1/proof-pack/quote", "0.85"),
         ("/v1/proof-pack/bundle/quote", "0.85"),
@@ -16579,6 +16768,17 @@ async def proof_pack_report_api(request: Request, report_id: str):
     return report
 
 
+@app.get("/v1/proof-pack/reports/{report_id}/verify", tags=["discovery"], summary="Verify Proof Pack report receipt")
+async def proof_pack_report_verify_api(request: Request, report_id: str):
+    """Return a no-spend verification receipt for a retained Proof Pack report."""
+    report = await read_proof_pack_report(report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Proof Pack report was not found or has expired.")
+    inc_metric("proof_pack_report_verifications_total")
+    inc_discovery_hit("discovery_proof_pack_report_verify_hits_total", attribution_source_from_request(request))
+    return proof_pack_report_receipt(report)
+
+
 @app.post("/v1/proof-pack/reports/{report_id}/follow-up", tags=["discovery"], summary="Follow up on a stored Proof Pack report")
 async def proof_pack_report_follow_up_api(
     request: Request,
@@ -16866,11 +17066,13 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "proof_pack_x402_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "proof_pack_report_api_pattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}",
         "proof_pack_report_page_pattern": f"{PUBLIC_BASE_URL}/proof-pack/reports/{{report_id}}",
+        "proof_pack_verify_api_pattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/verify",
         "proof_pack_follow_up_api_pattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/follow-up",
         "proof_pack_refresh_quote_api_pattern": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{{report_id}}/refresh",
         "proof_pack_sample_report_id": PROOF_PACK_SAMPLE_REPORT_ID,
         "proof_pack_sample_report_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
         "proof_pack_sample_report_page": f"{PUBLIC_BASE_URL}/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+        "proof_pack_sample_verify_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
         "proof_pack_sample_follow_up_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/follow-up",
         "proof_pack_sample_refresh_quote_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refresh",
         "proof_pack_report_retention_days": proof_pack_report_retention_days(),
@@ -18004,6 +18206,10 @@ def custom_openapi() -> dict[str, Any]:
                     "description": "No-spend benchmark cases showing expected source-trust outcomes before payment.",
                     "schema": {"type": "string", "format": "uri"},
                 },
+                "X-AxonGate-Proof-Pack-Verify": {
+                    "description": "No-spend sample Proof Pack verification receipt for hashes, retention, and citation counts.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
                 "X-AxonGate-Buyer-Example": {
                     "description": "Repository example for creating and sending an x402 payment proof.",
                     "schema": {"type": "string", "format": "uri"},
@@ -18054,6 +18260,10 @@ def custom_openapi() -> dict[str, Any]:
                 },
                 "X-AxonGate-Proof-Pack-Benchmarks": {
                     "description": "No-spend benchmark cases showing expected source-trust outcomes before payment.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Proof-Pack-Verify": {
+                    "description": "No-spend sample Proof Pack verification receipt for hashes, retention, and citation counts.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Proof-Pack-Request": {

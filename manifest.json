@@ -10,7 +10,7 @@
     "name": "AxonGate",
     "basename": "axongate.base.eth",
     "vault_address": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
-    "version": "1.4.2",
+    "version": "1.4.3",
     "status": "active"
   },
   "service": {
@@ -62,6 +62,7 @@
       "llm_assisted_deterministic_fallback",
       "persistent_proof_pack_reports",
       "proof_pack_report_retrieval",
+      "proof_pack_verify_receipts",
       "proof_pack_follow_up",
       "proof_pack_refresh_quote",
       "agent_action_recommendations",
@@ -191,6 +192,7 @@
     "proof_pack_sample_report_id": "ppr_sample_source_trust",
     "proof_pack_sample_report_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust",
     "proof_pack_sample_report_page": "https://api.axongate.one/proof-pack/reports/ppr_sample_source_trust",
+    "proof_pack_sample_verify_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/verify",
     "proof_pack_sample_follow_up_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/follow-up",
     "proof_pack_sample_refresh_quote_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/refresh",
     "proof_pack_preview": "https://api.axongate.one/proof-pack/preview",
@@ -202,6 +204,7 @@
     "proof_pack_access": "https://api.axongate.one/v1/x402/proof-pack",
     "proof_pack_report_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}",
     "proof_pack_report_page_pattern": "https://api.axongate.one/proof-pack/reports/{report_id}",
+    "proof_pack_verify_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/verify",
     "proof_pack_follow_up_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/follow-up",
     "proof_pack_refresh_quote_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/refresh",
     "proof_bundle": "https://api.axongate.one/proof-pack/bundle",
@@ -302,6 +305,7 @@
     "sample_report_id": "ppr_sample_source_trust",
     "sample_report_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust",
     "sample_report_page": "https://api.axongate.one/proof-pack/reports/ppr_sample_source_trust",
+    "sample_verify_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/verify",
     "sample_follow_up_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/follow-up",
     "sample_refresh_quote_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/refresh",
     "preview": "https://api.axongate.one/proof-pack/preview",
@@ -312,6 +316,7 @@
     "lead_api": "https://api.axongate.one/v1/proof-pack/leads",
     "report_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}",
     "report_page_pattern": "https://api.axongate.one/proof-pack/reports/{report_id}",
+    "verify_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/verify",
     "follow_up_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/follow-up",
     "refresh_quote_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/refresh",
     "report_retention_days": 30,
@@ -333,6 +338,7 @@
       "report_id": "string",
       "report_url": "string",
       "report_page": "string",
+      "verify_url": "string",
       "result_hash": "string",
       "source_hash": "string",
       "follow_up_url": "string",
@@ -353,6 +359,18 @@
       "source_profile": "object",
       "payment": "object",
       "ueg_receipt": "object"
+    },
+    "verify_receipt_response": {
+      "status": "verified",
+      "supplier_spend": false,
+      "payment_required": false,
+      "report_id": "string",
+      "verify_url": "string",
+      "result_hash": "string",
+      "computed_result_hash": "string",
+      "source_hash": "string",
+      "retained": "boolean",
+      "checks": "object"
     },
     "packs": {
       "quick": {
@@ -445,6 +463,7 @@
       "proof_pack_sample_report_id": "ppr_sample_source_trust",
       "proof_pack_sample_report_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust",
       "proof_pack_sample_report_page": "https://api.axongate.one/proof-pack/reports/ppr_sample_source_trust",
+      "proof_pack_sample_verify_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/verify",
       "proof_pack_sample_follow_up_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/follow-up",
       "proof_pack_sample_refresh_quote_api": "https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/refresh",
       "proof_pack_preview": "https://api.axongate.one/proof-pack/preview",
@@ -456,6 +475,7 @@
       "proof_pack_endpoint": "https://api.axongate.one/v1/x402/proof-pack",
       "proof_pack_report_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}",
       "proof_pack_report_page_pattern": "https://api.axongate.one/proof-pack/reports/{report_id}",
+      "proof_pack_verify_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/verify",
       "proof_pack_follow_up_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/follow-up",
       "proof_pack_refresh_quote_api_pattern": "https://api.axongate.one/v1/proof-pack/reports/{report_id}/refresh",
       "proof_bundle": "https://api.axongate.one/proof-pack/bundle",
@@ -482,6 +502,7 @@
       "citations",
       "evidence",
       "persistent-reports",
+      "verify-receipts",
       "follow-up",
       "source-trust"
     ],
@@ -490,7 +511,7 @@
       "RAG systems that need markdown extraction",
       "LLM workflows that need token-efficient source material",
       "agent builders that need cited evidence reports before trusting a source",
-      "agents that need to retrieve, follow up on, or refresh a paid source trust report",
+      "agents that need to retrieve, verify, follow up on, or refresh a paid source trust report",
       "agent builders that need multi-source proof bundles before launch"
     ],
     "telemetry": {
