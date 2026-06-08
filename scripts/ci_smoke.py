@@ -87,6 +87,7 @@ async def main() -> None:
             "/",
             "/health",
             "/v1/access/health",
+            "/v1/agent/diagnose",
             "/manifest.json",
             "/.well-known/agent.json",
             "/.well-known/agent-card.json",
@@ -153,6 +154,33 @@ async def main() -> None:
         assert root_discovery_json["source_landing_pattern"].endswith("/from/{source}"), (
             "Root discovery missing source landing pattern"
         )
+        assert root_discovery_json["agent_diagnostic"].endswith("/v1/agent/diagnose"), (
+            "Root discovery missing agent diagnostic"
+        )
+        diagnostic = await client.get("/v1/agent/diagnose?source=ci-diagnostic")
+        assert diagnostic.status_code == 200, "Agent diagnostic should render"
+        diagnostic_json = diagnostic.json()
+        assert diagnostic_json["status"] == "ok", "Agent diagnostic returned wrong status"
+        assert diagnostic_json["supplier_spend"] is False, "Agent diagnostic should not spend"
+        assert diagnostic_json["payment_header"] == "PAYMENT-SIGNATURE", "Agent diagnostic payment header mismatch"
+        assert diagnostic_json["network"] == "eip155:8453", "Agent diagnostic network mismatch"
+        assert diagnostic_json["asset"]["address"] == gateway.BASE_USDC_ADDRESS, "Agent diagnostic asset mismatch"
+        assert diagnostic_json["paid_endpoints"]["proof_pack"]["amount_units"] == "250000", (
+            "Agent diagnostic Proof Pack amount mismatch"
+        )
+        assert diagnostic_json["proof_pack"]["sample_report_api"].endswith("/ppr_sample_source_trust"), (
+            "Agent diagnostic should expose sample retained report"
+        )
+        assert diagnostic_json["sample_report"]["follow_up_api"].endswith("/follow-up"), (
+            "Agent diagnostic should expose sample follow-up"
+        )
+        assert diagnostic_json["minimal_paid_requests"]["proof_pack"]["headers"]["PAYMENT-SIGNATURE"], (
+            "Agent diagnostic missing minimal Proof Pack payment header"
+        )
+        assert diagnostic_json["common_failure_fixes"], "Agent diagnostic missing common failure fixes"
+        assert diagnostic_json["recommended_next_call"]["method"] == "GET", (
+            "Agent diagnostic should recommend a no-spend GET next call"
+        )
 
         proof_pack_page = await client.get("/proof-pack")
         assert "<link rel=\"canonical\"" in proof_pack_page.text, "Proof Pack page missing canonical link"
@@ -165,6 +193,7 @@ async def main() -> None:
         )
         docs_page = await client.get("/docs")
         assert "source_quality_score" in docs_page.text, "Docs page should explain source quality score"
+        assert "/v1/agent/diagnose" in docs_page.text, "Docs page should expose agent diagnostic"
         assert "/v1/proof-pack/reports/{report_id}/refresh" in docs_page.text, (
             "Docs page should explain refresh quote API"
         )
@@ -172,6 +201,7 @@ async def main() -> None:
             "Docs page should expose concrete sample retained report"
         )
         llms_txt = await client.get("/llms.txt")
+        assert "Agent diagnostic API" in llms_txt.text, "llms.txt should expose agent diagnostic"
         assert "Proof Pack report API pattern" in llms_txt.text, "llms.txt should expose report API pattern"
         assert "Proof Pack sample report API" in llms_txt.text, "llms.txt should expose sample report API"
         assert "Store report_id" in llms_txt.text, "llms.txt should explain report handle storage"
@@ -1048,6 +1078,12 @@ async def main() -> None:
 
         proof_probe = await client.get("/v1/x402/proof-pack?pack=standard")
         assert proof_probe.status_code == 402, f"Proof Pack probe returned {proof_probe.status_code}"
+        assert proof_probe.headers.get("X-AxonGate-Agent-Diagnostic", "").endswith("/v1/agent/diagnose"), (
+            "Proof Pack probe missing agent diagnostic header"
+        )
+        assert proof_probe.json()["detail"]["links"]["agent_diagnostic"].endswith("/v1/agent/diagnose"), (
+            "Proof Pack probe body missing agent diagnostic"
+        )
         proof_payload = json.loads(base64.b64decode(proof_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
         assert proof_payload["accepts"][0]["amount"] == "250000", "standard Proof Pack should cost 0.25 USDC"
         assert proof_payload["accepts"][0]["extra"]["pack"] == "standard", "standard Proof Pack challenge mismatch"
@@ -1080,6 +1116,9 @@ async def main() -> None:
         assert unpaid_proof_post.status_code == 402, f"unpaid Proof Pack POST returned {unpaid_proof_post.status_code}"
         unpaid_proof_challenge = unpaid_proof_post.headers.get("PAYMENT-REQUIRED")
         assert unpaid_proof_challenge, "unpaid Proof Pack POST missing payment challenge"
+        assert unpaid_proof_post.headers.get("X-AxonGate-Agent-Diagnostic", "").endswith("/v1/agent/diagnose"), (
+            "unpaid Proof Pack POST missing agent diagnostic header"
+        )
         unpaid_proof_payload = json.loads(base64.b64decode(unpaid_proof_challenge).decode("utf-8"))
         assert unpaid_proof_payload["accepts"][0]["amount"] == "250000", "unpaid Proof Pack POST amount mismatch"
 
@@ -1226,10 +1265,16 @@ async def main() -> None:
         assert "bazaar" in post_payload["extensions"], "POST x402 challenge missing Bazaar discovery"
         assert "payment-identifier" in post_payload["extensions"], "POST x402 challenge missing payment identifier"
         assert unpaid_post.headers.get("X-AxonGate-Buyer-Example"), "unpaid POST missing buyer example header"
+        assert unpaid_post.headers.get("X-AxonGate-Agent-Diagnostic", "").endswith("/v1/agent/diagnose"), (
+            "unpaid POST missing agent diagnostic header"
+        )
 
         x402_discovery = (await client.get("/.well-known/x402")).json()
         assert "extensions" in x402_discovery, "public x402 discovery missing protocol extensions"
         assert "metadata" in x402_discovery, "public x402 discovery should keep non-protocol metadata"
+        assert x402_discovery["metadata"].get("agentDiagnostic", "").endswith("/v1/agent/diagnose"), (
+            "public x402 discovery missing agent diagnostic"
+        )
         assert "cached" in x402_discovery["metadata"]["tiers"], "cached tier missing from public discovery"
         assert "proofPacks" in x402_discovery["metadata"], "Proof Pack pricing missing from public discovery"
         assert "proofPackSampleApi" in x402_discovery["metadata"], "Proof Pack sample missing from public discovery"
@@ -1264,8 +1309,17 @@ async def main() -> None:
         assert schemas.get("ContactRequest", {}).get("examples"), "ContactRequest examples missing"
         post_operation = openapi.get("paths", {}).get("/v1/x402/access", {}).get("post", {})
         assert post_operation.get("x-payment-info"), "OpenAPI payment extension missing from paid endpoint"
+        assert post_operation["x-payment-info"].get("agentDiagnostic", "").endswith("/v1/agent/diagnose"), (
+            "OpenAPI paid endpoint missing agent diagnostic"
+        )
+        assert "X-AxonGate-Agent-Diagnostic" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI paid endpoint missing agent diagnostic header docs"
+        )
         proof_operation = openapi.get("paths", {}).get("/v1/x402/proof-pack", {}).get("post", {})
         assert proof_operation.get("x-payment-info"), "OpenAPI payment extension missing from Proof Pack endpoint"
+        assert "X-AxonGate-Agent-Diagnostic" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI Proof Pack endpoint missing agent diagnostic header docs"
+        )
         contact_operation = openapi.get("paths", {}).get("/v1/contact", {}).get("post", {})
         assert contact_operation, "OpenAPI contact endpoint missing"
         openapi_paths = openapi.get("paths", {})
@@ -1282,6 +1336,7 @@ async def main() -> None:
         )
         assert "/v1/stripe/webhook" not in openapi_paths, "OpenAPI should not advertise private Stripe webhook"
         assert openapi.get("x-payment-info"), "OpenAPI root payment extension missing"
+        assert openapi["x-payment-info"].get("agentDiagnostic"), "OpenAPI payment info missing agent diagnostic"
         assert openapi["x-payment-info"].get("proofPackLibrary"), "OpenAPI payment info missing Evidence Library"
         assert openapi["x-payment-info"].get("sourceLandingPattern"), "OpenAPI payment info missing source landing pattern"
         assert openapi["x-payment-info"].get("proofPackReportApiPattern"), "OpenAPI payment info missing Proof Pack report pattern"
@@ -1343,6 +1398,8 @@ async def main() -> None:
         assert metrics["conversion_funnel"].get("proof_pack_previews", 0) >= 3, "Proof Pack previews missing from funnel"
         assert metrics["metrics"].get("proof_pack_leads_total", 0) >= 2, "Proof Pack leads should be counted"
         assert metrics["conversion_funnel"].get("proof_pack_leads", 0) >= 2, "Proof Pack leads missing from funnel"
+        assert metrics["metrics"].get("agent_diagnostics_total", 0) >= 2, "Agent diagnostics should be counted"
+        assert metrics["conversion_funnel"].get("agent_diagnostics", 0) >= 2, "Agent diagnostics missing from funnel"
         assert metrics["metrics"].get("contact_form_submits_total", 0) >= 2, "Contact submissions should be counted"
         assert metrics["conversion_funnel"].get("contact_form_submits", 0) >= 2, "Contact submissions missing from funnel"
         assert metrics["metrics"].get("proof_bundle_quotes_total", 0) >= 2, "Proof Bundle quotes should be counted"

@@ -81,7 +81,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.4.0",
+    version="1.4.1",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -503,6 +503,8 @@ metrics: dict[str, int] = {
     "discovery_x402_hits_total": 0,
     "discovery_resources_hits_total": 0,
     "discovery_alias_hits_total": 0,
+    "discovery_agent_diagnostic_hits_total": 0,
+    "agent_diagnostics_total": 0,
     "favicon_hits_total": 0,
     "crawler_guard_no_user_agent_total": 0,
     "legacy_access_health_hits_total": 0,
@@ -1241,6 +1243,7 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_quotes": values.get("proof_pack_quotes_total", 0),
         "proof_pack_leads": values.get("proof_pack_leads_total", 0),
         "contact_form_submits": values.get("contact_form_submits_total", 0),
+        "agent_diagnostics": values.get("agent_diagnostics_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
         "proof_bundle_checkout_reviews": values.get("proof_bundle_checkout_reviews_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
@@ -1967,6 +1970,7 @@ def build_x402_resource() -> dict[str, Any]:
             "tags": ["x402", "base", "usdc", "source-trust", "web-to-markdown", "rag", "context-broker"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
+            "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "docs": f"{PUBLIC_BASE_URL}/docs",
             "about": f"{PUBLIC_BASE_URL}/about",
             "faq": f"{PUBLIC_BASE_URL}/faq",
@@ -2066,6 +2070,7 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "description": "Paid evidence trust decision for agent builders: supported, weak, unsupported, and citation-ready source findings.",
             "tags": ["x402", "base", "usdc", "source-trust", "proof-pack", "citations", "agent-builders", "evidence", "persistent-reports", "follow-up"],
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
+            "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2148,6 +2153,7 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "service": "AxonGate Evidence Bundles",
             "description": "No-spend quote, tracked checkout, and delivery pipeline for multi-source claim support checks aimed at agent builders.",
             "tags": ["source-trust", "proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
+            "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2247,6 +2253,7 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "agentManifest": f"{PUBLIC_BASE_URL}/manifest.json",
         "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
         "agentCardAlias": f"{PUBLIC_BASE_URL}/.well-known/agent-card.json",
+        "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
@@ -2377,6 +2384,7 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "X-AxonGate-Paid-Test": f"{PUBLIC_BASE_URL}/paid-test",
         "X-AxonGate-Quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
+        "X-AxonGate-Agent-Diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "X-AxonGate-Proof-Pack": f"{PUBLIC_BASE_URL}/proof-pack",
         "X-AxonGate-Proof-Pack-Sample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
         "X-AxonGate-Proof-Pack-Preview": f"{PUBLIC_BASE_URL}/proof-pack/preview",
@@ -2392,6 +2400,7 @@ def buyer_guidance_headers() -> dict[str, str]:
             f'<{PUBLIC_BASE_URL}/quickstart>; rel="quickstart", '
             f'<{PUBLIC_BASE_URL}/paid-test>; rel="payment-test", '
             f'<{PUBLIC_BASE_URL}/v1/x402/quote>; rel="quote", '
+            f'<{PUBLIC_BASE_URL}/v1/agent/diagnose>; rel="diagnostic", '
             f'<{PUBLIC_BASE_URL}/proof-pack>; rel="service", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/sample>; rel="proof-pack-sample", '
             f'<{PUBLIC_BASE_URL}/proof-pack/preview>; rel="proof-pack-preview", '
@@ -2415,6 +2424,7 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
         "message": error,
         "next_steps": [
             "Decode the PAYMENT-REQUIRED header for Base USDC payment terms.",
+            "Call GET /v1/agent/diagnose if your client needs compatibility, amount, or header confirmation.",
             "Create an x402 payment proof for the selected tier.",
             "Retry with POST /v1/x402/access, PAYMENT-SIGNATURE, and a JSON target_url body.",
         ],
@@ -2438,6 +2448,7 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
             "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paid_test": f"{PUBLIC_BASE_URL}/paid-test",
             "quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
+            "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "demo": f"{PUBLIC_BASE_URL}/demo",
             "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
             "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
@@ -2455,6 +2466,7 @@ def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -
         "message": error,
         "next_steps": [
             "Decode the PAYMENT-REQUIRED header for Base USDC payment terms.",
+            "Call GET /v1/agent/diagnose if your client needs compatibility, amount, or header confirmation.",
             "Create an x402 payment proof for the selected Proof Pack.",
             "Retry with POST /v1/x402/proof-pack, PAYMENT-SIGNATURE, and a matching ?pack= or X-AxonGate-Pack value.",
         ],
@@ -2488,6 +2500,7 @@ def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -
             "request": f"{PUBLIC_BASE_URL}/proof-pack/request",
             "lead_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "docs": f"{PUBLIC_BASE_URL}/docs",
+            "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
             "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
         },
@@ -2501,6 +2514,7 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "x402Version": 2,
         "endpoint": f"{PUBLIC_BASE_URL}/v1/x402/access",
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+        "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "proofPackLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
         "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proofPackSample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
@@ -8071,6 +8085,275 @@ def proof_pack_report_refresh_url(report_id: str) -> str:
     return public_url(f"/v1/proof-pack/reports/{url_quote(report_id, safe='')}/refresh")
 
 
+def agent_diagnostic_url() -> str:
+    return public_url("/v1/agent/diagnose")
+
+
+def build_agent_diagnostic_payload(source: str = "diagnostic") -> dict[str, Any]:
+    """Return a no-spend compatibility map for agents stuck at the 402 boundary."""
+    normalized_source = normalize_attribution_source(source)
+    recommended_tier = normalize_tier(RECOMMENDED_TIER)
+    default_pack = normalize_proof_pack(DEFAULT_PROOF_PACK)
+    sample_report_api = proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_report_page = proof_pack_report_page_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_follow_up_api = proof_pack_report_follow_up_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_refresh_api = proof_pack_report_refresh_url(PROOF_PACK_SAMPLE_REPORT_ID)
+    sample_preview_api = proof_pack_preview_api_url(
+        PROOF_PACK_SAMPLE_TARGET_URL,
+        PROOF_PACK_SAMPLE_QUESTION,
+        "quick",
+        normalized_source,
+    )
+    sample_preview_page = proof_pack_preview_page_url(
+        PROOF_PACK_SAMPLE_TARGET_URL,
+        PROOF_PACK_SAMPLE_QUESTION,
+        "quick",
+        normalized_source,
+    )
+    proof_quote_api = (
+        f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
+        f"target_url={url_quote(PROOF_PACK_SAMPLE_TARGET_URL, safe='')}"
+        f"&question={url_quote(PROOF_PACK_SAMPLE_QUESTION, safe='')}"
+        f"&pack={default_pack}&source={normalized_source}"
+    )
+    context_quote_api = (
+        f"{PUBLIC_BASE_URL}/v1/x402/quote?"
+        f"target_url={url_quote(PROOF_PACK_SAMPLE_TARGET_URL, safe='')}"
+        f"&source={normalized_source}"
+    )
+    access_amount = str(usdc_units(price_for_tier(recommended_tier)))
+    proof_amount = str(usdc_units(price_for_proof_pack(default_pack)))
+
+    return {
+        "status": "ok",
+        "service": "AxonGate",
+        "version": app.version,
+        "supplier_spend": False,
+        "payment_required": False,
+        "diagnostic_for": "agents validating x402 compatibility or stopping after a 402 challenge",
+        "canonical_base_url": PUBLIC_BASE_URL,
+        "diagnostic_url": agent_diagnostic_url(),
+        "source": normalized_source,
+        "agent_action": "inspect_quote_or_sample_before_payment",
+        "health": {
+            "status": "alive",
+            "vault_address": load_vault_address(),
+            "public_base_url": PUBLIC_BASE_URL,
+            "openapi": public_url("/openapi.json"),
+            "x402_discovery": public_url("/.well-known/x402"),
+        },
+        "payment_header": "PAYMENT-SIGNATURE",
+        "network": "eip155:8453",
+        "asset": {
+            "symbol": "USDC",
+            "address": BASE_USDC_ADDRESS,
+            "name": BASE_USDC_TOKEN_NAME,
+            "version": BASE_USDC_TOKEN_VERSION,
+            "decimals": USDC_DECIMALS,
+        },
+        "pay_to": load_vault_address(),
+        "facilitator": PAYAI_FACILITATOR_URL,
+        "x402": {
+            "version": 2,
+            "scheme": "exact",
+            "network": "eip155:8453",
+            "asset": BASE_USDC_ADDRESS,
+            "pay_to": load_vault_address(),
+            "facilitator": PAYAI_FACILITATOR_URL,
+            "payment_header": "PAYMENT-SIGNATURE",
+            "accepted_payment_headers": list(PAYMENT_PROOF_HEADERS),
+            "challenge_headers": ["PAYMENT-REQUIRED", "X-Payment-Required"],
+            "decode_challenge": "Base64-decode PAYMENT-REQUIRED, then create an exact Base USDC x402 proof for accepts[0].amount.",
+            "tier_header": "X-AxonGate-Tier",
+            "pack_header": "X-AxonGate-Pack",
+            "source_header": "X-AxonGate-Source",
+            "retry_credit_header": "X-AxonGate-Retry-Credit",
+            "payment_identifier_extension": PAYMENT_IDENTIFIER is not None,
+            "bazaar_extension": declare_discovery_extension is not None,
+        },
+        "paid_endpoints": {
+            "context": {
+                "method": "POST",
+                "url": public_url("/v1/x402/access"),
+                "probe_url": quote_payment_probe_url(recommended_tier, normalized_source),
+                "recommended_tier": recommended_tier,
+                "amount_units": access_amount,
+                "price_usdc": float(price_for_tier(recommended_tier)),
+            },
+            "proof_pack": {
+                "method": "POST",
+                "url": public_url(f"/v1/x402/proof-pack?pack={default_pack}"),
+                "probe_url": proof_pack_payment_probe_url(default_pack, normalized_source),
+                "default_pack": default_pack,
+                "amount_units": proof_amount,
+                "price_usdc": float(price_for_proof_pack(default_pack)),
+            },
+        },
+        "pricing": {
+            "tiers": {
+                tier: {
+                    "price_usdc": float(price),
+                    "amount_units": str(usdc_units(price)),
+                    "currency": "USDC",
+                    "cache_policy": cache_policy_for_tier(tier),
+                }
+                for tier, price in TIER_PRICING_USDC.items()
+            },
+            "proof_packs": {
+                pack: {
+                    "price_usdc": float(price),
+                    "amount_units": str(usdc_units(price)),
+                    "currency": "USDC",
+                    "cache_policy": proof_pack_cache_policy(pack),
+                }
+                for pack, price in PROOF_PACK_PRICING_USDC.items()
+            },
+            "recommended_tier": recommended_tier,
+            "default_proof_pack": default_pack,
+            "amount_units_are_usdc_base_units": True,
+        },
+        "quote_urls": {
+            "context_quote_api": context_quote_api,
+            "proof_pack_quote_api": proof_quote_api,
+            "proof_pack_quote_page": public_url(
+                f"/proof-pack/quote?target_url={url_quote(PROOF_PACK_SAMPLE_TARGET_URL, safe='')}"
+                f"&question={url_quote(PROOF_PACK_SAMPLE_QUESTION, safe='')}"
+                f"&pack={default_pack}&source={normalized_source}"
+            ),
+            "proof_pack_preview_api": sample_preview_api,
+            "proof_pack_preview_page": sample_preview_page,
+        },
+        "minimal_paid_requests": {
+            "context": {
+                "method": "POST",
+                "url": public_url(f"/v1/x402/access?tier={recommended_tier}&source={normalized_source}"),
+                "headers": {
+                    "Content-Type": "application/json",
+                    "PAYMENT-SIGNATURE": "<x402-payment-proof>",
+                    "X-AxonGate-Tier": recommended_tier,
+                    "X-AxonGate-Source": normalized_source,
+                },
+                "body": build_access_request_example(recommended_tier),
+                "amount_units": access_amount,
+            },
+            "proof_pack": {
+                "method": "POST",
+                "url": public_url(f"/v1/x402/proof-pack?pack={default_pack}&source={normalized_source}"),
+                "headers": {
+                    "Content-Type": "application/json",
+                    "PAYMENT-SIGNATURE": "<x402-payment-proof>",
+                    "X-AxonGate-Pack": default_pack,
+                    "X-AxonGate-Source": normalized_source,
+                },
+                "body": build_proof_pack_request_example(default_pack),
+                "amount_units": proof_amount,
+            },
+        },
+        "sample_report": {
+            "report_id": PROOF_PACK_SAMPLE_REPORT_ID,
+            "target_url": PROOF_PACK_SAMPLE_TARGET_URL,
+            "question": PROOF_PACK_SAMPLE_QUESTION,
+            "pack": PROOF_PACK_SAMPLE_PACK,
+            "supplier_spend": False,
+            "api": sample_report_api,
+            "page": sample_report_page,
+            "follow_up_api": sample_follow_up_api,
+            "refresh_quote_api": sample_refresh_api,
+            "sample_api": public_url("/v1/proof-pack/sample"),
+        },
+        "proof_pack": {
+            "docs": public_url("/proof-pack"),
+            "library": public_url("/proof-pack/library"),
+            "sample_report_api": sample_report_api,
+            "sample_report_page": sample_report_page,
+            "sample_follow_up_api": sample_follow_up_api,
+            "sample_refresh_quote_api": sample_refresh_api,
+            "report_api_pattern": public_url("/v1/proof-pack/reports/{report_id}"),
+            "follow_up_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/follow-up"),
+            "refresh_quote_api_pattern": public_url("/v1/proof-pack/reports/{report_id}/refresh"),
+            "retention_days": proof_pack_report_retention_days(),
+        },
+        "recommended_flow": [
+            {
+                "step": 1,
+                "action": "read_discovery",
+                "method": "GET",
+                "url": public_url("/.well-known/x402"),
+            },
+            {
+                "step": 2,
+                "action": "confirm_compatibility",
+                "method": "GET",
+                "url": agent_diagnostic_url(),
+            },
+            {
+                "step": 3,
+                "action": "try_retained_sample_report",
+                "method": "GET",
+                "url": sample_report_api,
+            },
+            {
+                "step": 4,
+                "action": "quote_without_spend",
+                "method": "GET",
+                "url": proof_quote_api,
+            },
+            {
+                "step": 5,
+                "action": "pay_and_post",
+                "method": "POST",
+                "url": public_url(f"/v1/x402/proof-pack?pack={default_pack}"),
+                "header": "PAYMENT-SIGNATURE",
+            },
+        ],
+        "common_failure_fixes": [
+            {
+                "symptom": "402 response only",
+                "fix": "Decode PAYMENT-REQUIRED or X-Payment-Required, create an exact x402 proof for accepts[0], then retry with PAYMENT-SIGNATURE.",
+            },
+            {
+                "symptom": "payment_validation_rejection",
+                "fix": "Use the exact amount_units for the selected tier or pack, Base network eip155:8453, USDC token address, and payTo vault shown here.",
+            },
+            {
+                "symptom": "pack or tier mismatch",
+                "fix": "Keep ?pack=, X-AxonGate-Pack, and body.pack aligned for Proof Packs; keep ?tier=, X-AxonGate-Tier, and body.tier aligned for context.",
+            },
+            {
+                "symptom": "target_url rejected",
+                "fix": "Use a public http or https URL. Localhost, private IP ranges, link-local, multicast, unsupported ports, and unsafe redirects are rejected before supplier work.",
+            },
+            {
+                "symptom": "replay rejection",
+                "fix": "Create a fresh payment proof for each paid request. Do not reuse a successful proof or transaction identifier.",
+            },
+            {
+                "symptom": "paid delivery failed after accepted payment",
+                "fix": "If the response includes X-AxonGate-Retry-Credit, retry through /v1/x402/retry with that credit before paying again.",
+            },
+        ],
+        "recommended_next_call": {
+            "action": "try_sample_report",
+            "method": "GET",
+            "endpoint": f"/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}",
+            "url": sample_report_api,
+            "reason": "No payment needed; confirms retained report, citation, follow-up, and refresh quote contract before spending.",
+        },
+        "links": {
+            "diagnostic": agent_diagnostic_url(),
+            "docs": public_url("/docs"),
+            "quickstart": public_url("/quickstart"),
+            "paid_test": public_url("/paid-test"),
+            "openapi": public_url("/openapi.json"),
+            "x402_discovery": public_url("/.well-known/x402"),
+            "resource_listing": public_url("/discovery/resources"),
+            "proof_pack": public_url("/proof-pack"),
+            "buyer_example": f"{GITHUB_REPO_URL}/blob/main/examples/paid_buyer.mjs",
+            "curl_examples": f"{GITHUB_REPO_URL}/blob/main/examples/curl.md",
+        },
+    }
+
+
 def proof_pack_result_hash(payload: dict[str, Any]) -> str:
     excluded = {
         "report_id",
@@ -12942,6 +13225,7 @@ Operator dashboard: {public_url("/operator")}
 Private operator lead and order consoles require AXONGATE_OPERATOR_TOKEN and are reached from the operator dashboard.
 Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
+Agent diagnostic API: {public_url("/v1/agent/diagnose")}
 Quote API: {public_url("/v1/x402/quote")}
 Quote page: {public_url("/quote")}
 Proof Pack page: {public_url("/proof-pack")}
@@ -13004,6 +13288,11 @@ Retry credit header: X-AxonGate-Retry-Credit
 Source attribution header: X-AxonGate-Source
 Facilitator: {PAYAI_FACILITATOR_URL}
 Private operator token header: X-AxonGate-Operator-Token
+
+## Agent Diagnostic
+
+GET {public_url("/v1/agent/diagnose")}
+Use this no-spend endpoint after a 402 to confirm the accepted payment header, Base USDC amounts, x402 network and vault, Proof Pack sample report reuse, minimal paid request bodies, and common validation fixes before paying.
 
 ## Paid Endpoint
 
@@ -13210,6 +13499,7 @@ def build_docs_html() -> str:
                 [
                     ("Manifest", f"{PUBLIC_BASE_URL}/manifest.json"),
                     ("Agent card", f"{PUBLIC_BASE_URL}/.well-known/agent.json"),
+                    ("Agent diagnostic", f"{PUBLIC_BASE_URL}/v1/agent/diagnose"),
                     ("x402 discovery", f"{PUBLIC_BASE_URL}/.well-known/x402"),
                     ("Resource listing", f"{PUBLIC_BASE_URL}/discovery/resources"),
                     ("Source landing", f"{PUBLIC_BASE_URL}/from/x402-list"),
@@ -15056,6 +15346,7 @@ def build_sitemap_xml() -> str:
         ("/operator", "0.9"),
         ("/quickstart", "0.95"),
         ("/paid-test", "0.9"),
+        ("/v1/agent/diagnose", "0.9"),
         ("/quote", "0.9"),
         ("/v1/x402/quote", "0.8"),
         ("/proof-pack", "0.95"),
@@ -16164,6 +16455,7 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
+        "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quote_api": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
@@ -16239,6 +16531,15 @@ async def root(request: Request):
 @app.get("/health", tags=["operations"], summary="Railway health check")
 async def health():
     return {"status": "alive", "vault_address": load_vault_address()}
+
+
+@app.get("/v1/agent/diagnose", tags=["discovery"], summary="Agent payment compatibility diagnostic")
+async def agent_diagnostic(request: Request):
+    """Expose a no-spend compatibility map for agents that stop at payment challenge handling."""
+    source = attribution_source_from_request(request)
+    inc_metric("agent_diagnostics_total")
+    inc_discovery_hit("discovery_agent_diagnostic_hits_total", source)
+    return build_agent_diagnostic_payload(source)
 
 
 @app.get("/v1/access/health", tags=["legacy"], summary="Legacy access health compatibility", include_in_schema=False)
@@ -17271,6 +17572,10 @@ def custom_openapi() -> dict[str, Any]:
                     "description": "Supplier-free tier quote endpoint for choosing the right paid path.",
                     "schema": {"type": "string", "format": "uri"},
                 },
+                "X-AxonGate-Agent-Diagnostic": {
+                    "description": "No-spend agent compatibility diagnostic for x402 headers, amounts, sample reports, and common fixes.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
                 "X-AxonGate-Buyer-Example": {
                     "description": "Repository example for creating and sending an x402 payment proof.",
                     "schema": {"type": "string", "format": "uri"},
@@ -17309,6 +17614,10 @@ def custom_openapi() -> dict[str, Any]:
                 },
                 "X-AxonGate-Proof-Pack-Quote": {
                     "description": "Supplier-free Proof Pack quote endpoint.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Agent-Diagnostic": {
+                    "description": "No-spend agent compatibility diagnostic for x402 headers, amounts, sample reports, and common fixes.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Proof-Pack-Request": {

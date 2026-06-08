@@ -21,7 +21,8 @@ and `X-Payment-Required` headers. Those headers contain the x402 payment
 requirements for Base USDC, plus official Bazaar discovery and optional
 payment-identifier extensions. The response also includes low-friction buyer
 headers such as `X-AxonGate-Docs`, `X-AxonGate-Quickstart`, `X-AxonGate-Paid-Test`,
-`X-AxonGate-Quote`, `X-AxonGate-Demo`, and `X-AxonGate-Buyer-Example`.
+`X-AxonGate-Quote`, `X-AxonGate-Agent-Diagnostic`, `X-AxonGate-Demo`, and
+`X-AxonGate-Buyer-Example`.
 
 Directories that cannot submit query-string source tags can use a path alias:
 
@@ -31,6 +32,16 @@ curl -i "$AXONGATE_BASE_URL/from/x402-list/v1/x402/access"
 
 That alias serves the same canonical x402 payment terms while attributing the
 probe to `x402-list`.
+
+## Diagnose Agent Payment Compatibility
+
+Use the diagnostic endpoint after a 402 to confirm the accepted payment header,
+Base USDC amount units, vault, facilitator, paid endpoint URLs, minimal request
+bodies, and no-spend retained sample report loop.
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/agent/diagnose?source=$AXONGATE_SOURCE"
+```
 
 ## Quote Before Spending
 
