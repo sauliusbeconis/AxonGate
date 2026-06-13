@@ -98,6 +98,19 @@ curl "$AXONGATE_BASE_URL/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana
 curl "$AXONGATE_BASE_URL/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
 ```
 
+## Checkout Confidence
+
+Use this no-spend guide when an agent wants to inspect the deliverable, sample
+verification receipt, payment-failure fixes, and recovery path before paying.
+
+```bash
+curl "$AXONGATE_BASE_URL/checkout/confidence?product=proof_pack&target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
+```
+
+```bash
+curl "$AXONGATE_BASE_URL/v1/checkout/confidence?product=proof_bundle&target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&question=Which%20claims%20can%20our%20agent%20cite%3F&bundle=scout&source=$AXONGATE_SOURCE"
+```
+
 ## Proof Pack Request Capture
 
 Use this when a buyer wants a report but is not ready to run x402 payment yet.

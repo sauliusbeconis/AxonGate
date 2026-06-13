@@ -31,6 +31,8 @@ No-spend Proof Pack sample URLs for marketplace reviewers:
 ```text
 https://api.axongate.one/v1/agent/diagnose?source=reviewer
 https://api.axongate.one/v1/agent/trust?source=reviewer
+https://api.axongate.one/checkout/confidence?source=reviewer
+https://api.axongate.one/v1/checkout/confidence?source=reviewer
 https://api.axongate.one/v1/proof-pack/benchmarks?source=reviewer
 https://api.axongate.one/proof-pack/sample?source=reviewer
 https://api.axongate.one/v1/proof-pack/sample?source=reviewer
@@ -49,6 +51,7 @@ https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/follow-up
 https://api.axongate.one/v1/proof-pack/reports/ppr_sample_source_trust/refresh
 https://api.axongate.one/proof-pack/bundle?source=reviewer
 https://api.axongate.one/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=reviewer
+https://api.axongate.one/checkout/confidence?product=proof_bundle&target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=scout&source=reviewer
 ```
 
 Private operator diagnostics:
@@ -70,6 +73,7 @@ Stripe Proof Bundle fulfillment:
 Webhook URL: https://api.axongate.one/v1/stripe/webhook
 Post-payment redirect URL: https://api.axongate.one/proof-pack/bundle/delivery?session_id={CHECKOUT_SESSION_ID}
 Delivery recovery URL: https://api.axongate.one/proof-pack/bundle/recover
+Checkout confidence URL: https://api.axongate.one/checkout/confidence?product=proof_bundle&bundle=scout
 Required env: AXONGATE_STRIPE_WEBHOOK_SECRET=whsec_...
 Events: checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed
 ```
@@ -142,7 +146,7 @@ Proof Pack service payload:
   "pricingModel": "per_request",
   "priceInCents": 25,
   "endpoint": "https://api.axongate.one/v1/x402/proof-pack?pack=standard&source=payanagent",
-  "tags": ["x402", "base", "usdc", "proof-pack", "citations", "evidence", "agent-builders", "persistent-reports", "follow-up"]
+  "tags": ["x402", "base", "usdc", "proof-pack", "citations", "evidence", "agent-builders", "persistent-reports", "follow-up", "checkout-confidence"]
 }
 ```
 
@@ -151,13 +155,13 @@ Proof Bundle service payload:
 ```json
 {
   "name": "AxonGate Proof Bundles",
-  "description": "Higher-value multi-source evidence bundle quotes and lead capture for agent builders. Validates public URLs, returns exact USDC units, and routes buyers to payment/request follow-up.",
+  "description": "Higher-value multi-source evidence bundle quotes, checkout confidence, and lead capture for agent builders. Validates public URLs, returns exact USDC units, and routes buyers to payment/request follow-up.",
   "serviceType": "api",
   "category": "Data",
   "pricingModel": "per_request",
   "priceInCents": 700,
   "endpoint": "https://api.axongate.one/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&bundle=builder&source=payanagent",
-  "tags": ["proof-bundle", "proof-pack", "citations", "evidence", "agent-builders"]
+  "tags": ["proof-bundle", "proof-pack", "citations", "evidence", "agent-builders", "checkout-confidence"]
 }
 ```
 
@@ -218,10 +222,10 @@ Suggested update payload:
   "website_url": "https://api.axongate.one/manifest.json?source=x402-list",
   "email": "<operator email>",
   "category": "Data",
-  "description": "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation, now with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, and agent-action recommendations.",
+  "description": "AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation, now with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, agent-action recommendations, and a no-spend checkout confidence guide.",
   "endpoint_paths": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
   "endpoints": ["/from/x402-list/v1/x402/starter", "/from/x402-list/v1/x402/proof-pack"],
-  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Paid Proof Packs now return report_id, report_url, verify_url, result_hash, source_hash, agent_action, source_quality_score, follow_up_url, and refresh_url so agents can verify and reuse a report instead of paying again immediately. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, the no-spend agent diagnostic at /v1/agent/diagnose, the no-spend trust contract at /v1/agent/trust, benchmark cases at /v1/proof-pack/benchmarks, no-spend Proof Pack samples, no-spend mini previews, supplier-free quote APIs, retained Proof Pack reports, a concrete sample retained report at ppr_sample_source_trust, verification receipts, follow-up API, refresh quotes, and Proof Pack request capture."
+  "notes": "Basename axongate.base.eth resolves to the AxonGate vault. Submitted endpoints are source-attribution aliases that serve canonical x402 terms for starter context and standard Proof Packs. Standard x402 endpoint supports tiered pricing via ?tier= or X-AxonGate-Tier; Proof Packs support pack pricing via ?pack= or X-AxonGate-Pack. Paid Proof Packs now return report_id, report_url, verify_url, result_hash, source_hash, agent_action, source_quality_score, follow_up_url, and refresh_url so agents can verify and reuse a report instead of paying again immediately. Discovery includes Bazaar metadata, payment-identifier, source attribution, starter sample pricing, cache-only pricing, the no-spend agent diagnostic at /v1/agent/diagnose, the no-spend trust contract at /v1/agent/trust, checkout confidence at /checkout/confidence and /v1/checkout/confidence, benchmark cases at /v1/proof-pack/benchmarks, no-spend Proof Pack samples, no-spend mini previews, supplier-free quote APIs, retained Proof Pack reports, a concrete sample retained report at ppr_sample_source_trust, verification receipts, follow-up API, refresh quotes, and Proof Pack request capture."
 }
 ```
 

@@ -81,7 +81,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.4.3",
+    version="1.4.4",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -507,10 +507,13 @@ metrics: dict[str, int] = {
     "discovery_agent_trust_hits_total": 0,
     "discovery_proof_pack_benchmarks_hits_total": 0,
     "discovery_proof_pack_report_verify_hits_total": 0,
+    "discovery_checkout_confidence_hits_total": 0,
     "agent_diagnostics_total": 0,
     "agent_trust_checks_total": 0,
     "proof_pack_benchmarks_total": 0,
     "proof_pack_report_verifications_total": 0,
+    "checkout_confidence_views_total": 0,
+    "checkout_confidence_api_hits_total": 0,
     "favicon_hits_total": 0,
     "crawler_guard_no_user_agent_total": 0,
     "legacy_access_health_hits_total": 0,
@@ -1253,6 +1256,8 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "agent_trust_checks": values.get("agent_trust_checks_total", 0),
         "proof_pack_benchmarks": values.get("proof_pack_benchmarks_total", 0),
         "proof_pack_report_verifications": values.get("proof_pack_report_verifications_total", 0),
+        "checkout_confidence_views": values.get("checkout_confidence_views_total", 0),
+        "checkout_confidence_api_hits": values.get("checkout_confidence_api_hits_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
         "proof_bundle_checkout_reviews": values.get("proof_bundle_checkout_reviews_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
@@ -1289,6 +1294,10 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
             "accepted_per_paid_attempt": conversion_rate(accepted, paid_attempts),
             "delivered_per_accepted": conversion_rate(delivered, accepted),
             "bundle_lead_per_quote": conversion_rate(values.get("proof_bundle_leads_total", 0), values.get("proof_bundle_quotes_total", 0)),
+            "checkout_confidence_per_quote": conversion_rate(
+                values.get("checkout_confidence_views_total", 0),
+                values.get("proof_pack_quotes_total", 0) + values.get("proof_bundle_quotes_total", 0),
+            ),
             "bundle_checkout_review_per_quote": conversion_rate(
                 values.get("proof_bundle_checkout_reviews_total", 0),
                 values.get("proof_bundle_quotes_total", 0),
@@ -1931,6 +1940,7 @@ def build_x402_accepts(tier: str = RECOMMENDED_TIER) -> list[dict[str, Any]]:
                 "tier": normalized_tier,
                 "mimeType": "application/json",
                 "resource": f"{PUBLIC_BASE_URL}/v1/x402/access",
+                "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
                 "description": "Clean Web-to-Markdown context extraction for autonomous agents.",
             },
         }
@@ -1957,6 +1967,7 @@ def build_proof_pack_x402_accepts(pack: str = DEFAULT_PROOF_PACK) -> list[dict[s
                 "pack": normalized_pack,
                 "mimeType": "application/json",
                 "resource": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
+                "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence?product=proof_pack",
                 "description": "Citation-backed Proof Pack for agent builders.",
             },
         }
@@ -1983,6 +1994,8 @@ def build_x402_resource() -> dict[str, Any]:
             "agentCard": f"{PUBLIC_BASE_URL}/.well-known/agent.json",
             "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+            "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
+            "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
             "docs": f"{PUBLIC_BASE_URL}/docs",
             "about": f"{PUBLIC_BASE_URL}/about",
             "faq": f"{PUBLIC_BASE_URL}/faq",
@@ -2087,6 +2100,8 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "manifest": f"{PUBLIC_BASE_URL}/manifest.json",
             "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+            "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence?product=proof_pack",
+            "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence?product=proof_pack",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2177,6 +2192,8 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "tags": ["source-trust", "proof-bundle", "proof-pack", "citations", "agent-builders", "evidence", "lead-capture", "checkout"],
             "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+            "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence?product=proof_bundle&bundle=scout",
+            "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence?product=proof_bundle&bundle=scout",
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2278,6 +2295,8 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "agentCardAlias": f"{PUBLIC_BASE_URL}/.well-known/agent-card.json",
         "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+        "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
+        "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
@@ -2413,6 +2432,7 @@ def buyer_guidance_headers() -> dict[str, str]:
         "X-AxonGate-Quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "X-AxonGate-Agent-Diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "X-AxonGate-Agent-Trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+        "X-AxonGate-Checkout-Confidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
         "X-AxonGate-Proof-Pack": f"{PUBLIC_BASE_URL}/proof-pack",
         "X-AxonGate-Proof-Pack-Benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
         "X-AxonGate-Proof-Pack-Verify": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
@@ -2432,6 +2452,7 @@ def buyer_guidance_headers() -> dict[str, str]:
             f'<{PUBLIC_BASE_URL}/v1/x402/quote>; rel="quote", '
             f'<{PUBLIC_BASE_URL}/v1/agent/diagnose>; rel="diagnostic", '
             f'<{PUBLIC_BASE_URL}/v1/agent/trust>; rel="trust", '
+            f'<{PUBLIC_BASE_URL}/checkout/confidence>; rel="payment-confidence", '
             f'<{PUBLIC_BASE_URL}/proof-pack>; rel="service", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks>; rel="benchmarks", '
             f'<{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify>; rel="proof-pack-verify", '
@@ -2483,6 +2504,8 @@ def payment_required_detail(error: str, tier: Optional[str] = None) -> dict[str,
             "quote": f"{PUBLIC_BASE_URL}/v1/x402/quote",
             "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
             "agent_trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+            "checkout_confidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
+            "checkout_confidence_api": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
             "proof_pack_benchmarks": f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks",
             "proof_pack_sample_verify": f"{PUBLIC_BASE_URL}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify",
             "demo": f"{PUBLIC_BASE_URL}/demo",
@@ -2534,6 +2557,8 @@ def proof_pack_payment_required_detail(error: str, pack: Optional[str] = None) -
             "preview_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/preview",
             "quote_page": f"{PUBLIC_BASE_URL}/proof-pack/quote",
             "quote": f"{PUBLIC_BASE_URL}/v1/proof-pack/quote",
+            "checkout_confidence": f"{PUBLIC_BASE_URL}/checkout/confidence?product=proof_pack&pack={normalized_pack}",
+            "checkout_confidence_api": f"{PUBLIC_BASE_URL}/v1/checkout/confidence?product=proof_pack&pack={normalized_pack}",
             "request": f"{PUBLIC_BASE_URL}/proof-pack/request",
             "lead_api": f"{PUBLIC_BASE_URL}/v1/proof-pack/leads",
             "docs": f"{PUBLIC_BASE_URL}/docs",
@@ -2555,6 +2580,8 @@ def build_openapi_payment_info() -> dict[str, Any]:
         "proofPackEndpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
         "agentDiagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+        "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
+        "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
         "proofPackLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
         "proofPackSharePattern": f"{PUBLIC_BASE_URL}/proof-pack/share/{{slug}}",
         "proofPackSample": f"{PUBLIC_BASE_URL}/v1/proof-pack/sample",
@@ -4976,6 +5003,20 @@ async def build_proof_pack_quote(
                 normalized_pack,
                 normalized_source,
             ),
+            "checkout_confidence_page": checkout_confidence_url(
+                product="proof_pack",
+                target_url=normalized_target,
+                question=normalized_question,
+                pack=normalized_pack,
+                source=normalized_source,
+            ),
+            "checkout_confidence_api": checkout_confidence_api_url(
+                product="proof_pack",
+                target_url=normalized_target,
+                question=normalized_question,
+                pack=normalized_pack,
+                source=normalized_source,
+            ),
             "proof_pack_page": public_url("/proof-pack"),
             "proof_pack_sample": public_url("/proof-pack/sample"),
             "proof_pack_sample_api": public_url("/v1/proof-pack/sample"),
@@ -5065,6 +5106,20 @@ async def build_proof_pack_preview(
             f"&question={url_quote(normalized_question, safe='')}"
             f"&pack={url_quote(normalized_pack, safe='')}"
             f"&source={url_quote(normalized_source, safe='')}"
+        ),
+        "checkout_confidence_page": checkout_confidence_url(
+            product="proof_pack",
+            target_url=normalized_target,
+            question=normalized_question,
+            pack=normalized_pack,
+            source=normalized_source,
+        ),
+        "checkout_confidence_api": checkout_confidence_api_url(
+            product="proof_pack",
+            target_url=normalized_target,
+            question=normalized_question,
+            pack=normalized_pack,
+            source=normalized_source,
         ),
         "request_page": proof_pack_request_page_url(
             normalized_target,
@@ -7360,6 +7415,91 @@ def proof_bundle_target_query(target_urls: list[str]) -> str:
     return url_quote("\n".join(target_urls), safe="")
 
 
+def normalize_checkout_product(product: Optional[str]) -> str:
+    normalized = str(product or "proof_bundle").strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in {"proof_pack", "proofpack", "pack", "source_trust"}:
+        return "proof_pack"
+    if normalized in {"proof_bundle", "proofbundle", "bundle", "evidence_bundle", "evidence_bundles"}:
+        return "proof_bundle"
+    return "proof_bundle"
+
+
+def checkout_confidence_path(
+    product: str = "proof_bundle",
+    source: str = "checkout-confidence",
+    target_url: str = "",
+    target_urls: Any = None,
+    question: str = "",
+    pack: str = "",
+    bundle: str = "",
+    api: bool = False,
+) -> str:
+    normalized_product = normalize_checkout_product(product)
+    normalized_source = normalize_attribution_source(source)
+    parts = [
+        f"product={url_quote(normalized_product, safe='')}",
+        f"source={url_quote(normalized_source, safe='')}",
+    ]
+    if target_url:
+        parts.append(f"target_url={url_quote(target_url, safe='')}")
+    raw_targets = split_bundle_target_urls(target_urls)
+    if raw_targets:
+        parts.append(f"target_urls={proof_bundle_target_query(raw_targets)}")
+    if question:
+        parts.append(f"question={url_quote(question, safe='')}")
+    if pack:
+        parts.append(f"pack={url_quote(normalize_proof_pack(pack), safe='')}")
+    if bundle:
+        parts.append(f"bundle={url_quote(normalize_proof_bundle(bundle), safe='')}")
+    prefix = "/v1" if api else ""
+    return f"{prefix}/checkout/confidence?{'&'.join(parts)}"
+
+
+def checkout_confidence_url(
+    product: str = "proof_bundle",
+    source: str = "checkout-confidence",
+    target_url: str = "",
+    target_urls: Any = None,
+    question: str = "",
+    pack: str = "",
+    bundle: str = "",
+) -> str:
+    return public_url(
+        checkout_confidence_path(
+            product=product,
+            source=source,
+            target_url=target_url,
+            target_urls=target_urls,
+            question=question,
+            pack=pack,
+            bundle=bundle,
+        )
+    )
+
+
+def checkout_confidence_api_url(
+    product: str = "proof_bundle",
+    source: str = "checkout-confidence",
+    target_url: str = "",
+    target_urls: Any = None,
+    question: str = "",
+    pack: str = "",
+    bundle: str = "",
+) -> str:
+    return public_url(
+        checkout_confidence_path(
+            product=product,
+            source=source,
+            target_url=target_url,
+            target_urls=target_urls,
+            question=question,
+            pack=pack,
+            bundle=bundle,
+            api=True,
+        )
+    )
+
+
 def proof_bundle_quote_page_url(target_urls: list[str], question: str, bundle: str, source: str) -> str:
     normalized_bundle = normalize_proof_bundle(bundle)
     normalized_source = normalize_attribution_source(source)
@@ -7537,6 +7677,20 @@ async def build_proof_bundle_quote(
         f"&source={url_quote(normalized_source, safe='')}"
     )
     payment_url = proof_bundle_payment_url(normalized_bundle)
+    checkout_confidence_page = checkout_confidence_url(
+        product="proof_bundle",
+        target_urls=normalized_targets,
+        question=normalized_question,
+        bundle=normalized_bundle,
+        source=normalized_source,
+    )
+    checkout_confidence_api = checkout_confidence_api_url(
+        product="proof_bundle",
+        target_urls=normalized_targets,
+        question=normalized_question,
+        bundle=normalized_bundle,
+        source=normalized_source,
+    )
 
     bundles: dict[str, dict[str, Any]] = {}
     for bundle_name, price in PROOF_BUNDLE_PRICING_USDC.items():
@@ -7544,6 +7698,20 @@ async def build_proof_bundle_quote(
         bundle_request_page = proof_bundle_request_page_url(normalized_targets, normalized_question, bundle_name, normalized_source)
         bundle_checkout_url = proof_bundle_checkout_url(normalized_targets, normalized_question, bundle_name, normalized_source)
         bundle_external_payment_url = proof_bundle_payment_url(bundle_name)
+        bundle_confidence_page = checkout_confidence_url(
+            product="proof_bundle",
+            target_urls=normalized_targets,
+            question=normalized_question,
+            bundle=bundle_name,
+            source=normalized_source,
+        )
+        bundle_confidence_api = checkout_confidence_api_url(
+            product="proof_bundle",
+            target_urls=normalized_targets,
+            question=normalized_question,
+            bundle=bundle_name,
+            source=normalized_source,
+        )
         bundles[bundle_name] = {
             "price_usdc": float(price),
             "amount_units": str(usdc_units(price)),
@@ -7552,6 +7720,8 @@ async def build_proof_bundle_quote(
             "checkout_url": bundle_checkout_url,
             "payment_url": bundle_checkout_url,
             "external_payment_url_configured": bool(bundle_external_payment_url),
+            "checkout_confidence_page": bundle_confidence_page,
+            "checkout_confidence_api": bundle_confidence_api,
             "quote_page": bundle_quote_page,
             "request_page": bundle_request_page,
         }
@@ -7576,6 +7746,8 @@ async def build_proof_bundle_quote(
             "quote_page": quote_page,
             "quote_api": quote_api,
             "request_page": request_page,
+            "checkout_confidence_page": checkout_confidence_page,
+            "checkout_confidence_api": checkout_confidence_api,
             "checkout_review_url": checkout_review_url,
             "checkout_url": checkout_url,
             "payment_url": checkout_url,
@@ -7584,6 +7756,215 @@ async def build_proof_bundle_quote(
             "single_source_proof_pack_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
             "single_source_quote_api": public_url("/v1/proof-pack/quote"),
             "note": "Proof Bundle checkout clicks are tracked; configured payment links redirect to checkout, otherwise AxonGate falls back to request capture.",
+        },
+    }
+
+
+async def build_checkout_confidence(
+    product: str = "proof_bundle",
+    target_url: str = "",
+    target_urls: Any = None,
+    question: Optional[str] = None,
+    pack: str = DEFAULT_PROOF_PACK,
+    bundle: str = "scout",
+    source: str = "checkout-confidence",
+) -> dict[str, Any]:
+    """Return no-spend confidence guidance for agents hesitating before payment."""
+    normalized_product = normalize_checkout_product(product)
+    normalized_source = normalize_attribution_source(source)
+    normalized_pack = normalize_proof_pack(pack or DEFAULT_PROOF_PACK)
+    normalized_bundle = normalize_proof_bundle(bundle or "scout")
+    raw_targets = split_bundle_target_urls(target_urls)
+
+    if normalized_product == "proof_pack":
+        target_candidate = target_url or (raw_targets[0] if raw_targets else PROOF_PACK_SAMPLE_TARGET_URL)
+        normalized_target = await assert_public_target_url(target_candidate)
+        normalized_targets = [normalized_target]
+        normalized_question = proof_pack_question(question)
+        selected_price = price_for_proof_pack(normalized_pack)
+        selected = {
+            "product": "proof_pack",
+            "label": "Single-source Proof Pack",
+            "pack": normalized_pack,
+            "price_usdc": float(selected_price),
+            "amount_units": str(usdc_units(selected_price)),
+            "payment_rail": "x402 Base USDC",
+            "best_for": "One public source that an agent wants to cite, ingest, or act on.",
+        }
+        quote_page = proof_pack_quote_page_url(normalized_target, normalized_question, normalized_pack, normalized_source)
+        quote_api = (
+            f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
+            f"target_url={url_quote(normalized_target, safe='')}"
+            f"&question={url_quote(normalized_question, safe='')}"
+            f"&pack={url_quote(normalized_pack, safe='')}"
+            f"&source={url_quote(normalized_source, safe='')}"
+        )
+        primary_next_steps = {
+            "quote_page": quote_page,
+            "quote_api": quote_api,
+            "preview_page": proof_pack_preview_page_url(normalized_target, normalized_question, normalized_pack, normalized_source),
+            "preview_api": proof_pack_preview_api_url(normalized_target, normalized_question, normalized_pack, normalized_source),
+            "probe_payment_terms": proof_pack_payment_probe_url(normalized_pack, normalized_source),
+            "paid_endpoint": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack?pack={normalized_pack}&source={normalized_source}",
+            "buyer_command": proof_pack_buyer_command(normalized_target, normalized_question, normalized_pack, normalized_source),
+        }
+    else:
+        normalized_question = proof_bundle_question(question)
+        if raw_targets:
+            normalized_targets = await validate_proof_bundle_targets(raw_targets, normalized_bundle)
+        else:
+            normalized_targets = [PROOF_PACK_SAMPLE_TARGET_URL, "https://example.com"]
+        normalized_target = normalized_targets[0]
+        selected_price = price_for_proof_bundle(normalized_bundle)
+        selected = {
+            "product": "proof_bundle",
+            "label": "Multi-source Proof Bundle",
+            "bundle": normalized_bundle,
+            "price_usdc": float(selected_price),
+            "amount_units": str(usdc_units(selected_price)),
+            "source_limit": proof_bundle_source_limit(normalized_bundle),
+            "payment_rail": "tracked Stripe checkout",
+            "best_for": "Several public sources that need one citation-backed evidence decision.",
+        }
+        quote_page = proof_bundle_quote_page_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
+        quote_api = proof_bundle_quote_api_url(normalized_targets, normalized_question, normalized_bundle, normalized_source)
+        primary_next_steps = {
+            "quote_page": quote_page,
+            "quote_api": quote_api,
+            "checkout_review_url": f"{PUBLIC_BASE_URL}{proof_bundle_checkout_path(normalized_targets, normalized_question, normalized_bundle, normalized_source)}",
+            "checkout_url": proof_bundle_checkout_url(normalized_targets, normalized_question, normalized_bundle, normalized_source),
+            "payment_url": proof_bundle_checkout_url(normalized_targets, normalized_question, normalized_bundle, normalized_source),
+            "delivery_after_checkout": public_url("/proof-pack/bundle/delivery?session_id={CHECKOUT_SESSION_ID}"),
+            "recovery_page": public_url("/proof-pack/bundle/recover"),
+            "recovery_api": public_url("/v1/proof-pack/bundle/recover"),
+        }
+
+    confidence_page = checkout_confidence_url(
+        product=normalized_product,
+        source=normalized_source,
+        target_url=normalized_target if normalized_product == "proof_pack" else "",
+        target_urls=normalized_targets if normalized_product == "proof_bundle" else [],
+        question=normalized_question,
+        pack=normalized_pack,
+        bundle=normalized_bundle,
+    )
+    confidence_api = checkout_confidence_api_url(
+        product=normalized_product,
+        source=normalized_source,
+        target_url=normalized_target if normalized_product == "proof_pack" else "",
+        target_urls=normalized_targets if normalized_product == "proof_bundle" else [],
+        question=normalized_question,
+        pack=normalized_pack,
+        bundle=normalized_bundle,
+    )
+
+    low_friction_targets = normalized_targets if normalized_product == "proof_bundle" else [normalized_target]
+    low_friction_options = [
+        {
+            "label": "Try a single-source quick Proof Pack",
+            "product": "proof_pack",
+            "price_usdc": float(price_for_proof_pack("quick")),
+            "amount_units": str(usdc_units(price_for_proof_pack("quick"))),
+            "quote_api": (
+                f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
+                f"target_url={url_quote(low_friction_targets[0], safe='')}"
+                f"&question={url_quote(normalized_question, safe='')}"
+                f"&pack=quick&source={url_quote(normalized_source, safe='')}"
+            ),
+        },
+        {
+            "label": "Use the standard Proof Pack for one decisive source",
+            "product": "proof_pack",
+            "price_usdc": float(price_for_proof_pack(DEFAULT_PROOF_PACK)),
+            "amount_units": str(usdc_units(price_for_proof_pack(DEFAULT_PROOF_PACK))),
+            "quote_api": (
+                f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
+                f"target_url={url_quote(low_friction_targets[0], safe='')}"
+                f"&question={url_quote(normalized_question, safe='')}"
+                f"&pack={DEFAULT_PROOF_PACK}&source={url_quote(normalized_source, safe='')}"
+            ),
+        },
+        {
+            "label": "Move to a scout Proof Bundle when multiple sources matter",
+            "product": "proof_bundle",
+            "price_usdc": float(price_for_proof_bundle("scout")),
+            "amount_units": str(usdc_units(price_for_proof_bundle("scout"))),
+            "quote_api": proof_bundle_quote_api_url(low_friction_targets[: proof_bundle_source_limit("scout")], normalized_question, "scout", normalized_source),
+        },
+    ]
+
+    return {
+        "status": "checkout_confidence",
+        "supplier_spend": False,
+        "payment_required": False,
+        "source": normalized_source,
+        "product": normalized_product,
+        "target_url": normalized_target,
+        "target_urls": normalized_targets,
+        "question": normalized_question,
+        "selected": selected,
+        "payment_boundary": {
+            "before_payment": "This confidence endpoint, quote endpoints, sample reports, benchmarks, diagnostics, and verify receipts do not call suppliers or require USDC.",
+            "after_payment": "Paid work begins only after x402 verification for Proof Packs or Stripe confirmation for Proof Bundles.",
+            "spend_guard": "AxonGate rejects unsafe targets, rate-limits unpaid probes, and checks unit economics before supplier-backed delivery.",
+        },
+        "what_you_get": [
+            "Evidence decision that separates supported findings from weak or unsupported claims.",
+            "Claim-to-citation map with source excerpts and source quality notes.",
+            "Risks, gaps, content hashes, and delivery metadata that an agent can store.",
+            "Retained report IDs and verification receipts for repeat checks without paying again.",
+        ],
+        "proof_before_payment": [
+            {
+                "label": "Sample retained report",
+                "url": proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                "checks": ["report_id", "citations", "agent_action", "source_quality_score"],
+            },
+            {
+                "label": "Sample verification receipt",
+                "url": proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID),
+                "checks": ["result_hash", "source_hash", "retention", "citation_count"],
+            },
+            {
+                "label": "Benchmark cases",
+                "url": public_url("/v1/proof-pack/benchmarks"),
+                "checks": ["supported", "weak", "unsupported", "unsupported_without_evidence"],
+            },
+            {
+                "label": "Agent trust contract",
+                "url": agent_trust_url(),
+                "checks": ["spend policy", "output guarantees", "recovery contract", "privacy posture"],
+            },
+        ],
+        "payment_failure_fixes": [
+            {
+                "rail": "x402 Proof Packs",
+                "fixes": [
+                    "Send the proof in PAYMENT-SIGNATURE, X-PAYMENT, or X-402-PAYMENT.",
+                    "Match the pack in the query/header to the exact Base USDC amount_units.",
+                    "Use network eip155:8453, USDC asset address, vault payTo, and a fresh proof.",
+                    "If the target preflight fails, retry the quote with a public http or https URL on an allowed port.",
+                ],
+            },
+            {
+                "rail": "Stripe Proof Bundles",
+                "fixes": [
+                    "Use the tracked /proof-pack/bundle/pay route so checkout intent is counted.",
+                    "Let Stripe redirect to delivery when possible; if the browser closes, use recovery by checkout email and one submitted target URL.",
+                    "If a Payment Link is missing, the route falls back to request capture instead of a dead end.",
+                ],
+            },
+        ],
+        "low_friction_options": low_friction_options,
+        "next_steps": {
+            "checkout_confidence_page": confidence_page,
+            "checkout_confidence_api": confidence_api,
+            "sample_report_api": proof_pack_report_api_url(PROOF_PACK_SAMPLE_REPORT_ID),
+            "sample_verify_api": proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID),
+            "agent_diagnostic": agent_diagnostic_url(),
+            "agent_trust": agent_trust_url(),
+            "docs": public_url("/docs"),
+            **primary_next_steps,
         },
     }
 
@@ -10392,6 +10773,7 @@ def site_footer_html() -> str:
         <div class="footer-group">
           <strong>Learn</strong>
           <a href="{html.escape(public_url('/proof-pack/sample'), quote=True)}">Sample Report</a>
+          <a href="{html.escape(public_url('/checkout/confidence'), quote=True)}">Payment Confidence</a>
           <a href="{html.escape(public_url('/proof-pack/share/source-trust-for-agent-builders'), quote=True)}">Share Public Example</a>
           <a href="{html.escape(public_url('/faq'), quote=True)}">FAQ</a>
           <a href="{html.escape(public_url('/about'), quote=True)}">About</a>
@@ -10448,6 +10830,7 @@ def site_nav_html(active: str = "") -> str:
             ("Instant Quote", public_url("/proof-pack/quote")),
             ("Request Report", public_url("/proof-pack/request")),
             ("Recover Delivery", public_url("/proof-pack/bundle/recover")),
+            ("Payment Confidence", public_url("/checkout/confidence")),
             ("Agent API / x402", public_url("/proof-pack")),
             ("Share Public Example", public_url("/proof-pack/share/source-trust-for-agent-builders")),
             ("Quickstart", public_url("/quickstart")),
@@ -12206,11 +12589,13 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     selector_hint = html.escape(f"pack={pack}, source={quote['source']}")
     request_url = html.escape(proof_pack_request_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
     preview_url = html.escape(proof_pack_preview_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
+    confidence_url = str(quote["next_steps"]["checkout_confidence_page"])
     nav = site_nav_html("Proof Packs")
     actions = action_bar_html(
         [
             ("Request This Report", request_url),
             ("Try Mini Preview", preview_url),
+            ("Payment Confidence", confidence_url),
             ("Probe Payment Terms", probe_url),
         ],
         [
@@ -12308,6 +12693,12 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
       <button type="submit">Quote</button>
     </form>
     {actions}
+
+    <div class="box">
+      <strong>Payment Confidence</strong><br>
+      Agents can inspect the deliverable, sample verification receipt, x402 fixes, and recovery promise before paying:
+      <a href="{html.escape(confidence_url, quote=True)}">open confidence guide</a>.
+    </div>
 
     <div class="grid">
       <div class="box"><strong>Selected Pack</strong><br><code>{html.escape(pack)}</code></div>
@@ -12893,6 +13284,13 @@ def build_proof_bundle_checkout_html(
     trust_notes = checkout_trust_notes_html(preview)
     source_rows = checkout_source_rows_html(source_profiles)
     payment_path = proof_bundle_payment_path(target_urls, normalized_question, normalized_bundle, normalized_source)
+    confidence_url = checkout_confidence_url(
+        product="proof_bundle",
+        target_urls=target_urls,
+        question=normalized_question,
+        bundle=normalized_bundle,
+        source=normalized_source,
+    )
     checkout_state = "Stripe Payment Link is configured" if proof_bundle_payment_url(normalized_bundle) else "Stripe link is not configured; this continues to request capture"
     source_label = f"{target_count} of {source_limit} sources" if target_count else f"Stripe will collect up to {source_limit} source URLs"
     target_text = "\n".join(target_urls) if target_urls else "Collected in Stripe checkout custom fields"
@@ -12905,6 +13303,7 @@ def build_proof_bundle_checkout_html(
     actions = action_bar_html(
         [
             ("Change Quote", quote_page),
+            ("Payment Confidence", confidence_url),
             ("Sample Report", public_url("/proof-pack/sample")),
             ("Contact", public_url("/contact")),
         ],
@@ -12991,6 +13390,11 @@ def build_proof_bundle_checkout_html(
       </div>
     </section>
     {actions}
+    <section class="panel">
+      <h2>Payment Confidence</h2>
+      <p>Review the exact deliverable, sample verification receipt, delivery recovery path, and payment-failure fixes before continuing.</p>
+      <p><a href="{html.escape(confidence_url, quote=True)}">Open confidence guide</a></p>
+    </section>
     {parser_comparison_html()}
     {delivery_promise_html()}
     <section class="panel">
@@ -13045,6 +13449,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
         f"<td>{html.escape(str(info['source_limit']))}</td>"
         f"<td>{html.escape(str(info['policy']))}</td>"
         f"<td><a href=\"{html.escape(str(info['checkout_url']))}\">Pay with Stripe</a></td>"
+        f"<td><a href=\"{html.escape(str(info['checkout_confidence_page']))}\">Confidence</a></td>"
         f"<td><a href=\"{html.escape(str(info['quote_page']))}\">Quote</a></td>"
         "</tr>"
         for bundle_name, info in quote["bundles"].items()
@@ -13052,6 +13457,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     request_page = html.escape(str(quote["next_steps"]["request_page"]))
     quote_api = html.escape(str(quote["next_steps"]["quote_api"]))
     payment_url = html.escape(str(quote["next_steps"]["payment_url"]))
+    confidence_url = str(quote["next_steps"]["checkout_confidence_page"])
     stripe_checkout_href = proof_bundle_checkout_path(list(quote["target_urls"]), question, bundle, source)
     checkout_state = "Stripe Payment Link configured" if quote["next_steps"].get("payment_link_configured") else "request capture fallback"
     single_source_endpoint = html.escape(str(quote["next_steps"]["single_source_proof_pack_endpoint"]))
@@ -13059,6 +13465,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     actions = action_bar_html(
         [
             ("Request Bundle", request_page),
+            ("Payment Confidence", confidence_url),
             ("Change Quote", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
             ("Contact", f"{PUBLIC_BASE_URL}/contact"),
         ],
@@ -13189,6 +13596,11 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
         <small>Review the selected bundle and delivery promise, then continue to Stripe. The final tracked payment redirect remains <code>/proof-pack/bundle/pay</code>.</small>
       </div>
     </section>
+    <section class="panel">
+      <h2>Payment Confidence</h2>
+      <p>Agents can inspect the exact deliverable, sample verification receipt, Stripe recovery path, and lower-friction alternatives before opening checkout.</p>
+      <p><a href="{html.escape(confidence_url, quote=True)}">Open the confidence guide</a></p>
+    </section>
     {parser_comparison_html()}
     <section class="panel">
       <h2>What This Payment Buys</h2>
@@ -13224,10 +13636,203 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     <h2>Bundles</h2>
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th><th>Checkout</th><th>Quote</th></tr></thead>
+      <thead><tr><th>Bundle</th><th>Price</th><th>USDC Units</th><th>Sources</th><th>Policy</th><th>Checkout</th><th>Confidence</th><th>Quote</th></tr></thead>
       <tbody>{bundle_rows}</tbody>
     </table>
     </div>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
+
+
+def build_checkout_confidence_html(payload: dict[str, Any]) -> str:
+    """Render the no-spend payment confidence page for agents and buyers."""
+    selected = payload.get("selected") if isinstance(payload.get("selected"), dict) else {}
+    next_steps = payload.get("next_steps") if isinstance(payload.get("next_steps"), dict) else {}
+    product = str(payload.get("product") or "proof_bundle")
+    product_label = str(selected.get("label") or product.replace("_", " ").title())
+    price = html.escape(str(selected.get("price_usdc", "")))
+    amount_units = html.escape(str(selected.get("amount_units", "")))
+    payment_rail = html.escape(str(selected.get("payment_rail") or ""))
+    target_text = "\n".join(str(target) for target in payload.get("target_urls", []) if str(target).strip()) or str(payload.get("target_url") or "")
+    question = html.escape(str(payload.get("question") or ""))
+    selected_code = html.escape(
+        str(
+            selected.get("pack")
+            or selected.get("bundle")
+            or selected.get("product")
+            or ""
+        )
+    )
+    primary_continue = (
+        str(next_steps.get("checkout_review_url") or next_steps.get("quote_page") or next_steps.get("checkout_confidence_api") or public_url("/proof-pack"))
+    )
+    primary_label = "Review checkout" if product == "proof_bundle" else "Open quote"
+
+    def bullet_list(items: Any) -> str:
+        if not isinstance(items, list):
+            return '<p class="muted">No details are available.</p>'
+        rows = "".join(f"<li>{html.escape(str(item))}</li>" for item in items if str(item).strip())
+        return f"<ul>{rows}</ul>" if rows else '<p class="muted">No details are available.</p>'
+
+    proof_cards = []
+    for item in payload.get("proof_before_payment", []):
+        if not isinstance(item, dict):
+            continue
+        checks = item.get("checks") if isinstance(item.get("checks"), list) else []
+        check_text = ", ".join(str(check) for check in checks)
+        proof_cards.append(
+            '<div class="card">'
+            f'<span>{html.escape(str(item.get("label") or "Proof point"))}</span>'
+            f'<a href="{html.escape(str(item.get("url") or ""), quote=True)}">{html.escape(str(item.get("url") or ""))}</a>'
+            f'<small>{html.escape(check_text)}</small>'
+            "</div>"
+        )
+    proof_cards_html = "\n".join(proof_cards) or '<p class="muted">No proof points are available.</p>'
+
+    option_rows = []
+    for option in payload.get("low_friction_options", []):
+        if not isinstance(option, dict):
+            continue
+        option_rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(option.get('label') or 'Option'))}</td>"
+            f"<td>{html.escape(str(option.get('price_usdc') or ''))} USDC</td>"
+            f"<td><code>{html.escape(str(option.get('amount_units') or ''))}</code></td>"
+            f"<td><a href=\"{html.escape(str(option.get('quote_api') or ''), quote=True)}\">Quote API</a></td>"
+            "</tr>"
+        )
+    option_rows_html = "\n".join(option_rows) or '<tr><td colspan="4">No alternatives are available.</td></tr>'
+
+    fixes_html = []
+    for group in payload.get("payment_failure_fixes", []):
+        if not isinstance(group, dict):
+            continue
+        fixes_html.append(
+            '<div class="fix-card">'
+            f"<h3>{html.escape(str(group.get('rail') or 'Payment rail'))}</h3>"
+            f"{bullet_list(group.get('fixes'))}"
+            "</div>"
+        )
+    fixes_cards_html = "\n".join(fixes_html) or '<p class="muted">No payment fixes are available.</p>'
+
+    boundary = payload.get("payment_boundary") if isinstance(payload.get("payment_boundary"), dict) else {}
+    nav = site_nav_html("Trust")
+    actions = action_bar_html(
+        [
+            (primary_label, primary_continue),
+            ("Verify sample", str(next_steps.get("sample_verify_api") or proof_pack_report_verify_url(PROOF_PACK_SAMPLE_REPORT_ID))),
+            ("Open JSON", str(next_steps.get("checkout_confidence_api") or public_url("/v1/checkout/confidence"))),
+        ],
+        [
+            ("Agent Trust", str(next_steps.get("agent_trust") or agent_trust_url())),
+            ("Diagnostics", str(next_steps.get("agent_diagnostic") or agent_diagnostic_url())),
+            ("Docs", str(next_steps.get("docs") or public_url("/docs"))),
+        ],
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html("AxonGate Payment Confidence", "No-spend checkout confidence guide for agents deciding whether an AxonGate Proof Pack or Evidence Bundle is worth paying for.", "/checkout/confidence")}
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; background: var(--bg); color: var(--text); }}
+    main {{ max-width: 1080px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.05rem, 4vw, 3.25rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 0 0 12px; font-size: 1.3rem; }}
+    h3 {{ margin: 0 0 8px; font-size: 1rem; }}
+    p, li, td, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: clamp(16px, 3vw, 26px); margin: 0 0 16px; }}
+    .hero {{ border-left: 5px solid var(--accent); }}
+    .hero p {{ max-width: 82ch; }}
+    .eyebrow {{ margin: 0 0 8px; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }}
+    .box, .card, .fix-card {{ border: 1px solid var(--line); border-radius: 8px; background: #131722; padding: 14px; min-width: 0; }}
+    .box span, .card span {{ display: block; color: var(--accent); font-size: .75rem; font-weight: 800; text-transform: uppercase; }}
+    .box strong, .card strong {{ display: block; margin-top: 5px; overflow-wrap: anywhere; }}
+    .proof-grid, .fix-grid {{ display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    .card a {{ display: block; margin: 6px 0; overflow-wrap: anywhere; }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ display: inline-block; max-width: 100%; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; overflow-x: auto; white-space: pre-wrap; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    table {{ width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }}
+    th, td {{ padding: 10px 11px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }}
+    th {{ color: var(--text); }}
+    .table-wrap {{ max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }}
+    .table-wrap table {{ min-width: 620px; border: 0; }}
+    @media (max-width: 760px) {{
+      main {{ padding: 24px 14px 52px; }}
+      .grid, .proof-grid, .fix-grid {{ grid-template-columns: 1fr; }}
+    }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="panel hero">
+      <p class="eyebrow">No-spend payment confidence</p>
+      <h1>Payment Confidence</h1>
+      <p>Before an agent pays, AxonGate exposes the exact deliverable, proof points, payment boundary, and recovery path for the selected purchase.</p>
+      <div class="grid">
+        <div class="box"><span>Selected</span><strong>{html.escape(product_label)}</strong><small><code>{selected_code}</code></small></div>
+        <div class="box"><span>Price</span><strong>{price} USDC</strong><small><code>{amount_units}</code> units</small></div>
+        <div class="box"><span>Rail</span><strong>{payment_rail}</strong></div>
+        <div class="box"><span>Source</span><strong>{html.escape(str(payload.get("source") or ""))}</strong></div>
+      </div>
+    </section>
+    {actions}
+    <section class="panel">
+      <h2>Target And Question</h2>
+      <pre>{html.escape(target_text)}</pre>
+      <p>{question}</p>
+    </section>
+    <section class="panel">
+      <h2>What You Get</h2>
+      {bullet_list(payload.get("what_you_get"))}
+    </section>
+    <section class="panel">
+      <h2>Payment Boundary</h2>
+      <div class="grid">
+        <div class="box"><span>Before</span><strong>{html.escape(str(boundary.get("before_payment") or ""))}</strong></div>
+        <div class="box"><span>After</span><strong>{html.escape(str(boundary.get("after_payment") or ""))}</strong></div>
+        <div class="box"><span>Guard</span><strong>{html.escape(str(boundary.get("spend_guard") or ""))}</strong></div>
+        <div class="box"><span>Recovery</span><strong><a href="{html.escape(str(next_steps.get("recovery_page") or public_url("/proof-pack/bundle/recover")), quote=True)}">Delivery recovery</a></strong></div>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Proof Before Payment</h2>
+      <div class="proof-grid">{proof_cards_html}</div>
+    </section>
+    <section class="panel">
+      <h2>Lower-Friction Options</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Option</th><th>Price</th><th>USDC Units</th><th>Quote</th></tr></thead>
+          <tbody>{option_rows_html}</tbody>
+        </table>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Payment Failure Fixes</h2>
+      <div class="fix-grid">{fixes_cards_html}</div>
+    </section>
     {site_footer_html()}
   </main>
 </body>
@@ -13789,6 +14394,8 @@ Quickstart: {public_url("/quickstart")}
 Paid smoke test guide: {public_url("/paid-test")}
 Agent diagnostic API: {public_url("/v1/agent/diagnose")}
 Agent trust API: {public_url("/v1/agent/trust")}
+Checkout confidence page: {public_url("/checkout/confidence")}
+Checkout confidence API: {public_url("/v1/checkout/confidence")}
 Quote API: {public_url("/v1/x402/quote")}
 Quote page: {public_url("/quote")}
 Proof Pack page: {public_url("/proof-pack")}
@@ -14057,6 +14664,7 @@ def build_docs_html() -> str:
                     ("Evidence Library", f"{PUBLIC_BASE_URL}/proof-pack/library"),
                     ("Share Public Example", f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders"),
                     ("Evidence Bundles", f"{PUBLIC_BASE_URL}/proof-pack/bundle"),
+                    ("Payment Confidence", f"{PUBLIC_BASE_URL}/checkout/confidence"),
                     ("About", f"{PUBLIC_BASE_URL}/about"),
                     ("FAQ", f"{PUBLIC_BASE_URL}/faq"),
                     ("Contact", f"{PUBLIC_BASE_URL}/contact"),
@@ -14074,6 +14682,7 @@ def build_docs_html() -> str:
                     ("Agent card", f"{PUBLIC_BASE_URL}/.well-known/agent.json"),
                     ("Agent diagnostic", f"{PUBLIC_BASE_URL}/v1/agent/diagnose"),
                     ("Agent trust", f"{PUBLIC_BASE_URL}/v1/agent/trust"),
+                    ("Checkout confidence API", f"{PUBLIC_BASE_URL}/v1/checkout/confidence"),
                     ("Proof benchmarks", f"{PUBLIC_BASE_URL}/v1/proof-pack/benchmarks"),
                     ("x402 discovery", f"{PUBLIC_BASE_URL}/.well-known/x402"),
                     ("Resource listing", f"{PUBLIC_BASE_URL}/discovery/resources"),
@@ -14211,6 +14820,8 @@ def build_docs_html() -> str:
     <pre>curl "{public}/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs"</pre>
     <p>Quote page: <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/proof-pack/quote</a></p>
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
+    <p>Payment confidence page: <a href="{public}/checkout/confidence?product=proof_pack&amp;target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/checkout/confidence</a></p>
+    <pre>curl "{public}/v1/checkout/confidence?product=proof_pack&amp;target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
     <p>Post-payment reuse APIs:</p>
     <pre>curl "{public}/v1/proof-pack/reports/{{report_id}}"
 curl "{public}/v1/proof-pack/reports/{{report_id}}/verify"
@@ -14242,6 +14853,7 @@ curl -X POST "{public}/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/refre
     </table>
     </div>
     <p>Bundle page: <a href="{public}/proof-pack/bundle?source=docs">{public}/proof-pack/bundle</a></p>
+    <p>Bundle confidence page: <a href="{public}/checkout/confidence?product=proof_bundle&amp;bundle=scout&amp;source=docs">{public}/checkout/confidence</a></p>
     <p>Tracked checkout route: <code>{public}/proof-pack/bundle/pay</code>. Configure payment URLs with <code>AXONGATE_PROOF_BUNDLE_SCOUT_PAYMENT_URL</code>, <code>AXONGATE_PROOF_BUNDLE_BUILDER_PAYMENT_URL</code>, and <code>AXONGATE_PROOF_BUNDLE_AUDIT_PAYMENT_URL</code>.</p>
     <p>Stripe fulfillment webhook: configure the private Stripe endpoint path in the Stripe Dashboard, send <code>checkout.session.completed</code>, <code>checkout.session.async_payment_succeeded</code>, and <code>checkout.session.async_payment_failed</code>, then set <code>AXONGATE_STRIPE_WEBHOOK_SECRET</code> from the Stripe signing secret.</p>
     <p>Stripe Payment Links should redirect after payment to <code>{public}/proof-pack/bundle/delivery?session_id={{CHECKOUT_SESSION_ID}}</code>. The webhook still handles fulfillment if the buyer closes Stripe before redirecting, and buyers can recover delivery at <code>{public}/proof-pack/bundle/recover</code> with their checkout email and one submitted target URL.</p>
@@ -14331,6 +14943,7 @@ def build_operator_dashboard_html(
             card("Delivered", count(metric("delivery_success_total")), percent(delivered_rate)),
             card("Proof Previews", count(metric("proof_pack_previews_total")), f'{count(metric("proof_pack_preview_cache_hits_total"))} cache hits'),
             card("Proof Quotes", count(metric("proof_pack_quotes_total")), "No-spend report quotes"),
+            card("Payment Confidence", count(metric("checkout_confidence_views_total")), percent(rates.get("checkout_confidence_per_quote", 0))),
             card("Proof Leads", count(metric("proof_pack_leads_total")), "Request capture submits"),
             card("Contact Inquiries", count(metric("contact_form_submits_total")), "General buyer/support messages"),
             card("Bundle Quotes", count(metric("proof_bundle_quotes_total")), "Multi-source quote interest"),
@@ -14357,6 +14970,7 @@ def build_operator_dashboard_html(
     bundle_funnel_steps = [
         ("Bundle visits", metric("discovery_proof_bundle_hits_total"), None, "Human-facing bundle and checkout traffic"),
         ("Quotes", metric("proof_bundle_quotes_total"), metric("discovery_proof_bundle_hits_total"), "Buyer submitted URLs for a no-spend quote"),
+        ("Confidence views", metric("checkout_confidence_views_total"), metric("proof_bundle_quotes_total") + metric("proof_pack_quotes_total"), "Buyer or agent opened the no-spend payment confidence guide"),
         ("Checkout reviews", metric("proof_bundle_checkout_reviews_total"), metric("proof_bundle_quotes_total"), "Buyer opened the review step before Stripe"),
         ("Payment clicks", metric("proof_bundle_payment_clicks_total"), metric("proof_bundle_checkout_reviews_total"), "Buyer clicked the tracked pay route"),
         ("Stripe redirects", metric("proof_bundle_payment_configured_clicks_total"), metric("proof_bundle_payment_clicks_total"), "Configured Payment Link redirects"),
@@ -15925,6 +16539,8 @@ def build_sitemap_xml() -> str:
         ("/paid-test", "0.9"),
         ("/v1/agent/diagnose", "0.9"),
         ("/v1/agent/trust", "0.9"),
+        ("/checkout/confidence", "0.9"),
+        ("/v1/checkout/confidence", "0.85"),
         ("/quote", "0.9"),
         ("/v1/x402/quote", "0.8"),
         ("/proof-pack", "0.95"),
@@ -16418,6 +17034,56 @@ async def source_landing_page(request: Request, source: str):
     """Serve a landing page tailored to discovery or marketplace source traffic."""
     inc_discovery_hit("discovery_source_landing_hits_total", attribution_source_from_request(request))
     return build_source_landing_html(source)
+
+
+@app.get("/checkout/confidence", response_class=HTMLResponse, tags=["discovery"], summary="No-spend checkout confidence page")
+async def checkout_confidence_page(
+    request: Request,
+    product: str = "proof_bundle",
+    target_url: str = "",
+    target_urls: str = "",
+    question: Optional[str] = None,
+    pack: str = DEFAULT_PROOF_PACK,
+    bundle: str = "scout",
+):
+    """Serve a no-spend confidence guide before agents or buyers pay."""
+    source = attribution_source_from_request(request)
+    inc_metric("checkout_confidence_views_total")
+    inc_attribution("checkout_confidence_views", source)
+    inc_discovery_hit("discovery_checkout_confidence_hits_total", source)
+    try:
+        await enforce_rate_limit("checkout_confidence_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        payload = await build_checkout_confidence(product, target_url, target_urls, question, pack, bundle, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+    return build_checkout_confidence_html(payload)
+
+
+@app.get("/v1/checkout/confidence", tags=["discovery"], summary="No-spend checkout confidence JSON")
+async def checkout_confidence_api(
+    request: Request,
+    product: str = "proof_bundle",
+    target_url: str = "",
+    target_urls: str = "",
+    question: Optional[str] = None,
+    pack: str = DEFAULT_PROOF_PACK,
+    bundle: str = "scout",
+):
+    """Return a no-spend payment confidence contract for agents before checkout."""
+    source = attribution_source_from_request(request)
+    inc_metric("checkout_confidence_views_total")
+    inc_metric("checkout_confidence_api_hits_total")
+    inc_attribution("checkout_confidence_views", source)
+    inc_discovery_hit("discovery_checkout_confidence_hits_total", source)
+    try:
+        await enforce_rate_limit("checkout_confidence_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        return await build_checkout_confidence(product, target_url, target_urls, question, pack, bundle, source)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
 
 
 @app.get("/proof-pack/bundle", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate Proof Bundle product page")
@@ -17048,6 +17714,8 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
         "agent_trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
+        "checkout_confidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
+        "checkout_confidence_api": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quote_api": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
@@ -18202,6 +18870,10 @@ def custom_openapi() -> dict[str, Any]:
                     "description": "No-spend trust contract covering safety policy, spend policy, output guarantees, report reuse, and benchmark cases.",
                     "schema": {"type": "string", "format": "uri"},
                 },
+                "X-AxonGate-Checkout-Confidence": {
+                    "description": "No-spend guide for the deliverable, proof-before-payment links, recovery path, and common payment fixes.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
                 "X-AxonGate-Proof-Pack-Benchmarks": {
                     "description": "No-spend benchmark cases showing expected source-trust outcomes before payment.",
                     "schema": {"type": "string", "format": "uri"},
@@ -18256,6 +18928,10 @@ def custom_openapi() -> dict[str, Any]:
                 },
                 "X-AxonGate-Agent-Trust": {
                     "description": "No-spend trust contract covering safety policy, spend policy, output guarantees, report reuse, and benchmark cases.",
+                    "schema": {"type": "string", "format": "uri"},
+                },
+                "X-AxonGate-Checkout-Confidence": {
+                    "description": "No-spend guide for the deliverable, proof-before-payment links, recovery path, and common payment fixes.",
                     "schema": {"type": "string", "format": "uri"},
                 },
                 "X-AxonGate-Proof-Pack-Benchmarks": {

@@ -11,7 +11,7 @@ Basename: axongate.base.eth
 Category: Data & Context
 
 Description:
-AxonGate is an x402-paid evidence trust layer for autonomous agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, and agent-action recommendations; clean Markdown extraction is available as a supporting endpoint.
+AxonGate is an x402-paid evidence trust layer for autonomous agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, agent-action recommendations, and a no-spend checkout confidence guide; clean Markdown extraction is available as a supporting endpoint.
 
 Short description:
 x402-paid source trust checks, citation-backed evidence decisions, and multi-source claim support bundles for agent builders.
@@ -44,6 +44,12 @@ https://api.axongate.one/v1/agent/diagnose
 
 Agent trust API:
 https://api.axongate.one/v1/agent/trust
+
+Checkout confidence page:
+https://api.axongate.one/checkout/confidence
+
+Checkout confidence API:
+https://api.axongate.one/v1/checkout/confidence
 
 Proof Pack benchmark API:
 https://api.axongate.one/v1/proof-pack/benchmarks
@@ -139,6 +145,8 @@ Endpoint paths:
 /paid-test
 /v1/agent/diagnose
 /v1/agent/trust
+/checkout/confidence
+/v1/checkout/confidence
 /v1/proof-pack/benchmarks
 /quote
 /v1/x402/quote
@@ -201,7 +209,7 @@ Pay to:
 
 ## Search Keywords
 
-x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, retained report, report_id, follow-up API, refresh quote, source quality score, agent action, agent diagnostic, agent trust contract, benchmark cases, payment compatibility, citations, evidence report, multi-source evidence, paid API, agent marketplace
+x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, retained report, report_id, follow-up API, refresh quote, source quality score, agent action, agent diagnostic, agent trust contract, checkout confidence, benchmark cases, payment compatibility, citations, evidence report, multi-source evidence, paid API, agent marketplace
 
 ## Source Attribution
 
@@ -356,7 +364,7 @@ Category:
 Data
 
 Description:
-AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation.
+AxonGate is an x402-paid Clean Context Broker and Proof Pack service on Base. It converts public web pages into clean Markdown and citation-backed evidence reports for RAG, autonomous research, and LLM context preparation, with no-spend checkout confidence for agents before payment.
 
 Endpoint paths:
 
@@ -365,10 +373,11 @@ Endpoint paths:
 /from/x402-list/v1/x402/proof-pack
 /.well-known/x402
 /discovery/resources
+/checkout/confidence
 ```
 
 Notes:
-Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, and Proof Packs support pack pricing via query param or X-AxonGate-Pack header. AxonGate includes official Bazaar discovery metadata, optional payment-identifier, supplier-free quote APIs, no-spend Proof Pack mini previews, request capture for Proof Pack demand, a starter sample tier for first paid conversion, cache-only low-cost tiers, and citation-backed Proof Packs. The custom domain is now connected at api.axongate.one, so use the custom-domain URLs for re-submission.
+Basename axongate.base.eth resolves to the AxonGate vault and advertises the manifest URL in its text records. Standard x402 endpoint supports tiered pricing via query param or X-AxonGate-Tier header, and Proof Packs support pack pricing via query param or X-AxonGate-Pack header. AxonGate includes official Bazaar discovery metadata, optional payment-identifier, supplier-free quote APIs, no-spend checkout confidence at /checkout/confidence, no-spend Proof Pack mini previews, request capture for Proof Pack demand, a starter sample tier for first paid conversion, cache-only low-cost tiers, and citation-backed Proof Packs. The custom domain is now connected at api.axongate.one, so use the custom-domain URLs for re-submission.
 
 ## 402agents Fields
 

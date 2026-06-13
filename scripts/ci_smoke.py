@@ -115,6 +115,8 @@ async def main() -> None:
             "/operator",
             "/quickstart",
             "/paid-test",
+            "/checkout/confidence",
+            "/v1/checkout/confidence",
             "/quote",
             "/proof-pack",
             "/proof-pack/library",
@@ -161,6 +163,9 @@ async def main() -> None:
         assert root_discovery.status_code == 200, "Root discovery JSON should still render"
         root_discovery_json = root_discovery.json()
         assert root_discovery_json["status"] == "alive", "Root discovery JSON returned wrong status"
+        assert root_discovery_json["checkout_confidence"].endswith("/checkout/confidence"), (
+            "Root discovery missing checkout confidence"
+        )
         assert root_discovery_json["proof_pack_library"].endswith("/proof-pack/library"), (
             "Root discovery missing Evidence Library"
         )
@@ -427,6 +432,12 @@ async def main() -> None:
         assert proof_quote["next_steps"]["proof_pack_quote_page"].endswith(
             "/proof-pack/quote"
         ), "Proof Pack quote should point to the quote page"
+        assert "checkout/confidence" in proof_quote["next_steps"]["checkout_confidence_page"], (
+            "Proof Pack quote should point to checkout confidence"
+        )
+        assert "/v1/checkout/confidence" in proof_quote["next_steps"]["checkout_confidence_api"], (
+            "Proof Pack quote should point to checkout confidence API"
+        )
 
         proof_preview = (
             await client.get(
@@ -439,6 +450,9 @@ async def main() -> None:
         assert proof_preview["payment"]["full_pack_amount_units"] == "100000", "preview should expose quick amount"
         assert proof_preview["citations"], "cached mini preview should include citations"
         assert "buyer_command" in proof_preview["next_steps"], "Proof Pack preview missing buyer command"
+        assert "checkout/confidence" in proof_preview["next_steps"]["checkout_confidence_page"], (
+            "Proof Pack preview missing checkout confidence"
+        )
 
         preview_miss = (
             await client.get(
@@ -469,8 +483,31 @@ async def main() -> None:
         assert "Probe Payment Terms" in proof_quote_page.text, "Proof Pack quote page missing paid next step"
         assert "Request This Report" in proof_quote_page.text, "Proof Pack quote page missing request CTA"
         assert "Try Mini Preview" in proof_quote_page.text, "Proof Pack quote page missing preview CTA"
+        assert "Payment Confidence" in proof_quote_page.text, "Proof Pack quote page missing confidence CTA"
         assert "POST /v1/x402/proof-pack" in proof_quote_page.text, "Proof Pack quote page missing short endpoint"
         assert "Full Paid Endpoint" in proof_quote_page.text, "Proof Pack quote page should keep full URL in a scroll-safe block"
+
+        pack_confidence = (
+            await client.get(
+                "/v1/checkout/confidence?product=proof_pack&target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
+            )
+        ).json()
+        assert pack_confidence["status"] == "checkout_confidence", "Proof Pack confidence returned wrong status"
+        assert pack_confidence["supplier_spend"] is False, "Proof Pack confidence should not spend"
+        assert pack_confidence["payment_required"] is False, "Proof Pack confidence should not require payment"
+        assert pack_confidence["selected"]["product"] == "proof_pack", "Proof Pack confidence selected wrong product"
+        assert pack_confidence["selected"]["amount_units"] == "100000", "Proof Pack confidence quick amount mismatch"
+        assert pack_confidence["proof_before_payment"], "Proof Pack confidence missing proof points"
+        assert pack_confidence["next_steps"]["sample_verify_api"].endswith(
+            "/v1/proof-pack/reports/ppr_sample_source_trust/verify"
+        ), "Proof Pack confidence missing sample verify receipt"
+        pack_confidence_page = await client.get(
+            "/checkout/confidence?product=proof_pack&target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
+        )
+        assert pack_confidence_page.status_code == 200, "Proof Pack confidence page should render"
+        assert "Payment Confidence" in pack_confidence_page.text, "Proof Pack confidence page missing heading"
+        assert "Proof Before Payment" in pack_confidence_page.text, "Proof Pack confidence page missing proof section"
+        assert "Payment Failure Fixes" in pack_confidence_page.text, "Proof Pack confidence page missing payment fixes"
 
         proof_request_page = await client.get(
             "/proof-pack/request?target_url=https://www.iana.org/domains/reserved&pack=quick&source=ci"
@@ -526,12 +563,30 @@ async def main() -> None:
         assert "proof-pack/bundle/checkout" in proof_bundle_quote["next_steps"]["checkout_review_url"], (
             "Proof Bundle quote missing customer checkout review URL"
         )
+        assert "checkout/confidence" in proof_bundle_quote["next_steps"]["checkout_confidence_page"], (
+            "Proof Bundle quote missing checkout confidence page"
+        )
+        assert "/v1/checkout/confidence" in proof_bundle_quote["next_steps"]["checkout_confidence_api"], (
+            "Proof Bundle quote missing checkout confidence API"
+        )
+        assert "checkout_confidence_page" in proof_bundle_quote["bundles"]["scout"], (
+            "Proof Bundle variants missing confidence links"
+        )
+
+        bundle_confidence = (await client.get(f"/v1/checkout/confidence?product=proof_bundle&{bundle_query}")).json()
+        assert bundle_confidence["status"] == "checkout_confidence", "Proof Bundle confidence returned wrong status"
+        assert bundle_confidence["supplier_spend"] is False, "Proof Bundle confidence should not spend"
+        assert bundle_confidence["selected"]["product"] == "proof_bundle", "Proof Bundle confidence selected wrong product"
+        assert bundle_confidence["selected"]["amount_units"] == "2000000", "Proof Bundle confidence scout amount mismatch"
+        assert bundle_confidence["target_urls"], "Proof Bundle confidence should preserve targets"
+        assert bundle_confidence["low_friction_options"], "Proof Bundle confidence missing alternatives"
 
         proof_bundle_page = await client.get(f"/proof-pack/bundle/quote?{bundle_query}")
         assert proof_bundle_page.status_code == 200, "Proof Bundle quote page should render"
         assert "Proof Bundle Quote" in proof_bundle_page.text, "Proof Bundle quote page missing heading"
         assert "Request Bundle" in proof_bundle_page.text, "Proof Bundle quote page missing request CTA"
         assert "Review checkout" in proof_bundle_page.text, "Proof Bundle quote page missing checkout review CTA"
+        assert "Payment Confidence" in proof_bundle_page.text, "Proof Bundle quote page missing confidence CTA"
         assert "Before you pay" in proof_bundle_page.text, "Proof Bundle quote page should explain value before payment"
         assert "What This Payment Buys" in proof_bundle_page.text, "Proof Bundle quote page missing deliverables"
         assert "After Checkout" in proof_bundle_page.text, "Proof Bundle quote page missing post-payment flow"
@@ -549,6 +604,7 @@ async def main() -> None:
         assert proof_bundle_checkout_review.status_code == 200, "Proof Bundle checkout review should render"
         assert "Review your Evidence Bundle" in proof_bundle_checkout_review.text, "Checkout review missing heading"
         assert "Continue to" in proof_bundle_checkout_review.text, "Checkout review missing final continue CTA"
+        assert "Payment Confidence" in proof_bundle_checkout_review.text, "Checkout review missing confidence CTA"
         assert "What This Payment Buys" in proof_bundle_checkout_review.text, "Checkout review missing value section"
         assert "Parser returns text. AxonGate returns a decision." in proof_bundle_checkout_review.text, (
             "Checkout review should keep parser contrast before payment"
@@ -1203,6 +1259,9 @@ async def main() -> None:
         assert proof_probe.headers.get("X-AxonGate-Agent-Trust", "").endswith("/v1/agent/trust"), (
             "Proof Pack probe missing agent trust header"
         )
+        assert proof_probe.headers.get("X-AxonGate-Checkout-Confidence", "").endswith("/checkout/confidence"), (
+            "Proof Pack probe missing checkout confidence header"
+        )
         assert proof_probe.headers.get("X-AxonGate-Proof-Pack-Benchmarks", "").endswith("/v1/proof-pack/benchmarks"), (
             "Proof Pack probe missing benchmark header"
         )
@@ -1214,6 +1273,9 @@ async def main() -> None:
         )
         assert proof_probe.json()["detail"]["links"]["agent_trust"].endswith("/v1/agent/trust"), (
             "Proof Pack probe body missing agent trust"
+        )
+        assert proof_probe.json()["detail"]["links"]["checkout_confidence"].endswith("product=proof_pack&pack=standard"), (
+            "Proof Pack probe body missing checkout confidence"
         )
         proof_payload = json.loads(base64.b64decode(proof_probe.headers["PAYMENT-REQUIRED"]).decode("utf-8"))
         assert proof_payload["accepts"][0]["amount"] == "250000", "standard Proof Pack should cost 0.25 USDC"
@@ -1252,6 +1314,9 @@ async def main() -> None:
         )
         assert unpaid_proof_post.headers.get("X-AxonGate-Agent-Trust", "").endswith("/v1/agent/trust"), (
             "unpaid Proof Pack POST missing agent trust header"
+        )
+        assert unpaid_proof_post.headers.get("X-AxonGate-Checkout-Confidence", "").endswith("/checkout/confidence"), (
+            "unpaid Proof Pack POST missing checkout confidence header"
         )
         unpaid_proof_payload = json.loads(base64.b64decode(unpaid_proof_challenge).decode("utf-8"))
         assert unpaid_proof_payload["accepts"][0]["amount"] == "250000", "unpaid Proof Pack POST amount mismatch"
@@ -1424,6 +1489,9 @@ async def main() -> None:
         assert unpaid_post.headers.get("X-AxonGate-Agent-Trust", "").endswith("/v1/agent/trust"), (
             "unpaid POST missing agent trust header"
         )
+        assert unpaid_post.headers.get("X-AxonGate-Checkout-Confidence", "").endswith("/checkout/confidence"), (
+            "unpaid POST missing checkout confidence header"
+        )
 
         x402_discovery = (await client.get("/.well-known/x402")).json()
         assert "extensions" in x402_discovery, "public x402 discovery missing protocol extensions"
@@ -1433,6 +1501,12 @@ async def main() -> None:
         )
         assert x402_discovery["metadata"].get("agentTrust", "").endswith("/v1/agent/trust"), (
             "public x402 discovery missing agent trust"
+        )
+        assert x402_discovery["metadata"].get("checkoutConfidence", "").endswith("/checkout/confidence"), (
+            "public x402 discovery missing checkout confidence"
+        )
+        assert x402_discovery["metadata"].get("checkoutConfidenceApi", "").endswith("/v1/checkout/confidence"), (
+            "public x402 discovery missing checkout confidence API"
         )
         assert x402_discovery["metadata"].get("proofPackBenchmarks", "").endswith("/v1/proof-pack/benchmarks"), (
             "public x402 discovery missing Proof Pack benchmarks"
@@ -1481,11 +1555,17 @@ async def main() -> None:
         assert post_operation["x-payment-info"].get("agentTrust", "").endswith("/v1/agent/trust"), (
             "OpenAPI paid endpoint missing agent trust"
         )
+        assert post_operation["x-payment-info"].get("checkoutConfidence", "").endswith("/checkout/confidence"), (
+            "OpenAPI paid endpoint missing checkout confidence"
+        )
         assert "X-AxonGate-Agent-Diagnostic" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI paid endpoint missing agent diagnostic header docs"
         )
         assert "X-AxonGate-Agent-Trust" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI paid endpoint missing agent trust header docs"
+        )
+        assert "X-AxonGate-Checkout-Confidence" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI paid endpoint missing checkout confidence header docs"
         )
         assert "X-AxonGate-Proof-Pack-Verify" in post_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI paid endpoint missing Proof Pack verify header docs"
@@ -1497,6 +1577,9 @@ async def main() -> None:
         )
         assert "X-AxonGate-Agent-Trust" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI Proof Pack endpoint missing agent trust header docs"
+        )
+        assert "X-AxonGate-Checkout-Confidence" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
+            "OpenAPI Proof Pack endpoint missing checkout confidence header docs"
         )
         assert "X-AxonGate-Proof-Pack-Verify" in proof_operation.get("responses", {}).get("402", {}).get("headers", {}), (
             "OpenAPI Proof Pack endpoint missing verify header docs"
@@ -1597,6 +1680,15 @@ async def main() -> None:
         assert metrics["metrics"].get("proof_pack_benchmarks_total", 0) >= 2, "Proof Pack benchmarks should be counted"
         assert metrics["conversion_funnel"].get("proof_pack_benchmarks", 0) >= 2, (
             "Proof Pack benchmarks missing from funnel"
+        )
+        assert metrics["metrics"].get("checkout_confidence_views_total", 0) >= 3, (
+            "Checkout confidence views should be counted"
+        )
+        assert metrics["metrics"].get("checkout_confidence_api_hits_total", 0) >= 2, (
+            "Checkout confidence API hits should be counted"
+        )
+        assert metrics["conversion_funnel"].get("checkout_confidence_views", 0) >= 3, (
+            "Checkout confidence views missing from funnel"
         )
         assert metrics["metrics"].get("contact_form_submits_total", 0) >= 2, "Contact submissions should be counted"
         assert metrics["conversion_funnel"].get("contact_form_submits", 0) >= 2, "Contact submissions missing from funnel"

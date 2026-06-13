@@ -33,7 +33,7 @@ def build_payload(email: str) -> dict:
             "It converts public web pages into clean Markdown and citation-backed evidence reports "
             "for RAG, autonomous research, and LLM context preparation. Paid Proof Packs now return "
             "retained report IDs, no-spend verification receipts, follow-up APIs, refresh quotes, agent-action guidance, "
-            "source quality scores, a no-spend payment diagnostic, a no-spend trust contract, benchmark cases, and a concrete no-spend sample retained report. The starter tier gives agents a 0.012 USDC first paid "
+            "source quality scores, a no-spend payment diagnostic, a no-spend trust contract, checkout confidence, benchmark cases, and a concrete no-spend sample retained report. The starter tier gives agents a 0.012 USDC first paid "
             "conversion path before live fresh extraction."
         ),
         "endpoint_paths": [X402_LIST_SOURCE_PATH, X402_LIST_PROOF_PACK_PATH],
@@ -48,6 +48,7 @@ def build_payload(email: str) -> dict:
             "optional payment-identifier, source attribution, a supplier-free quote API, "
             "a no-spend agent payment diagnostic at /v1/agent/diagnose, "
             "a no-spend agent trust contract at /v1/agent/trust, "
+            "a no-spend checkout confidence guide at /checkout/confidence and /v1/checkout/confidence, "
             "Proof Pack benchmark cases at /v1/proof-pack/benchmarks, "
             "a supplier-free Proof Pack quote API, retained Proof Pack reports, report_id retrieval, "
             "no-spend verification receipts, no-spend follow-up, refresh quotes, starter sample pricing, and cache-only pricing. "
@@ -58,6 +59,7 @@ def build_payload(email: str) -> dict:
             "/v1/proof-pack/reports/ppr_sample_source_trust/refresh. "
             "Discovery metadata is available at /.well-known/x402, /.well-known/agent.json, "
             "/v1/agent/trust, /v1/agent/diagnose, /v1/proof-pack/benchmarks, "
+            "/checkout/confidence, /v1/checkout/confidence, "
             "/v1/x402/quote, /v1/proof-pack/quote, /v1/proof-pack/reports/{report_id}, "
             "/v1/proof-pack/reports/{report_id}/verify, "
             "and /discovery/resources."
