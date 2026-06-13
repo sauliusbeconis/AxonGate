@@ -11,7 +11,7 @@ Basename: axongate.base.eth
 Category: Data & Context
 
 Description:
-AxonGate is an x402-paid evidence trust layer for autonomous agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions with retained report IDs, a no-spend sample retained report, follow-ups, refresh quotes, agent-action recommendations, and a no-spend checkout confidence guide; clean Markdown extraction is available as a supporting endpoint.
+AxonGate is an x402-paid evidence trust layer for autonomous agents. It checks whether public web sources actually support a claim, flags weak or noisy pages, and returns citation-ready trust decisions with retained report IDs, resumable quote IDs, a no-spend sample retained report, follow-ups, refresh quotes, agent-action recommendations, and a no-spend checkout confidence guide; clean Markdown extraction is available as a supporting endpoint.
 
 Short description:
 x402-paid source trust checks, citation-backed evidence decisions, and multi-source claim support bundles for agent builders.
@@ -50,6 +50,12 @@ https://api.axongate.one/checkout/confidence
 
 Checkout confidence API:
 https://api.axongate.one/v1/checkout/confidence
+
+Checkout resume pattern:
+https://api.axongate.one/checkout/{quote_id}
+
+Quote receipt API pattern:
+https://api.axongate.one/v1/quotes/{quote_id}
 
 Proof Pack benchmark API:
 https://api.axongate.one/v1/proof-pack/benchmarks
@@ -147,6 +153,8 @@ Endpoint paths:
 /v1/agent/trust
 /checkout/confidence
 /v1/checkout/confidence
+/checkout/{quote_id}
+/v1/quotes/{quote_id}
 /v1/proof-pack/benchmarks
 /quote
 /v1/x402/quote
@@ -209,7 +217,7 @@ Pay to:
 
 ## Search Keywords
 
-x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, retained report, report_id, follow-up API, refresh quote, source quality score, agent action, agent diagnostic, agent trust contract, checkout confidence, benchmark cases, payment compatibility, citations, evidence report, multi-source evidence, paid API, agent marketplace
+x402, Base, USDC, source trust, claim verification, weak evidence detection, citation quality, RAG trust, autonomous research, Proof Pack, Proof Bundle, retained report, report_id, quote_id, quote receipt, checkout resume, follow-up API, refresh quote, source quality score, agent action, agent diagnostic, agent trust contract, checkout confidence, benchmark cases, payment compatibility, citations, evidence report, multi-source evidence, paid API, agent marketplace
 
 ## Source Attribution
 

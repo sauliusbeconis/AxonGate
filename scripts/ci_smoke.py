@@ -71,6 +71,12 @@ async def main() -> None:
     assert manifest_json["endpoints"]["proof_pack_verify_api_pattern"].endswith("/{report_id}/verify"), (
         "manifest missing Proof Pack verify pattern"
     )
+    assert manifest_json["endpoints"]["quote_receipt_api_pattern"].endswith("/v1/quotes/{quote_id}"), (
+        "manifest missing quote receipt pattern"
+    )
+    assert manifest_json["endpoints"]["checkout_resume_pattern"].endswith("/checkout/{quote_id}"), (
+        "manifest missing checkout resume pattern"
+    )
     assert manifest_json["proof_pack_contract"]["success_response"]["verify_url"] == "string", (
         "manifest Proof Pack contract missing verify_url"
     )
@@ -78,6 +84,9 @@ async def main() -> None:
     distribution_json = json.loads(distribution_path.read_text(encoding="utf-8"))
     assert distribution_json["proof_pack_verify_api_pattern"].endswith("/{report_id}/verify"), (
         "distribution payload missing Proof Pack verify pattern"
+    )
+    assert distribution_json["quote_receipt_api_pattern"].endswith("/v1/quotes/{quote_id}"), (
+        "distribution payload missing quote receipt pattern"
     )
     resend_request = httpx.Request("POST", "https://api.resend.com/emails")
     resend_response = httpx.Response(
@@ -165,6 +174,12 @@ async def main() -> None:
         assert root_discovery_json["status"] == "alive", "Root discovery JSON returned wrong status"
         assert root_discovery_json["checkout_confidence"].endswith("/checkout/confidence"), (
             "Root discovery missing checkout confidence"
+        )
+        assert root_discovery_json["quote_receipt_api_pattern"].endswith("/v1/quotes/{quote_id}"), (
+            "Root discovery missing quote receipt pattern"
+        )
+        assert root_discovery_json["checkout_resume_pattern"].endswith("/checkout/{quote_id}"), (
+            "Root discovery missing checkout resume pattern"
         )
         assert root_discovery_json["proof_pack_library"].endswith("/proof-pack/library"), (
             "Root discovery missing Evidence Library"
@@ -438,6 +453,30 @@ async def main() -> None:
         assert "/v1/checkout/confidence" in proof_quote["next_steps"]["checkout_confidence_api"], (
             "Proof Pack quote should point to checkout confidence API"
         )
+        proof_quote_id = proof_quote.get("quote_id", "")
+        assert proof_quote_id.startswith("qr_"), "Proof Pack quote should include a stable quote_id"
+        assert proof_quote["quote_receipt"]["resume_checkout_url"].endswith(f"/checkout/{proof_quote_id}"), (
+            "Proof Pack quote should include a resume URL"
+        )
+        assert proof_quote["next_steps"]["quote_receipt_api"].endswith(f"/v1/quotes/{proof_quote_id}"), (
+            "Proof Pack quote should include quote receipt API"
+        )
+        proof_quote_receipt = await client.get(f"/v1/quotes/{proof_quote_id}")
+        assert proof_quote_receipt.status_code == 200, "Proof Pack quote receipt should be readable"
+        proof_quote_receipt_json = proof_quote_receipt.json()
+        assert proof_quote_receipt_json["status"] == "quote_receipt", "Proof Pack receipt returned wrong status"
+        assert proof_quote_receipt_json["product"] == "proof_pack", "Proof Pack receipt returned wrong product"
+        assert proof_quote_receipt_json["quote"]["status"] == "proof_pack_quote", "Receipt should retain the quote"
+        proof_quote_resume = await client.get(f"/checkout/{proof_quote_id}")
+        assert proof_quote_resume.status_code == 200, "Proof Pack quote resume page should render"
+        assert "Quote ID" in proof_quote_resume.text, "Proof Pack quote resume page missing quote ID"
+        resumed_proof_quote = (await client.get(f"/v1/proof-pack/quote?quote_id={proof_quote_id}")).json()
+        assert resumed_proof_quote["quote_id"] == proof_quote_id, "Proof Pack quote should resume by quote_id"
+        proof_confidence_by_quote = (await client.get(f"/v1/checkout/confidence?quote_id={proof_quote_id}")).json()
+        assert proof_confidence_by_quote["quote_id"] == proof_quote_id, "Proof Pack confidence should load by quote_id"
+        assert proof_confidence_by_quote["selected"]["product"] == "proof_pack", (
+            "Proof Pack confidence-by-quote selected wrong product"
+        )
 
         proof_preview = (
             await client.get(
@@ -484,6 +523,7 @@ async def main() -> None:
         assert "Request This Report" in proof_quote_page.text, "Proof Pack quote page missing request CTA"
         assert "Try Mini Preview" in proof_quote_page.text, "Proof Pack quote page missing preview CTA"
         assert "Payment Confidence" in proof_quote_page.text, "Proof Pack quote page missing confidence CTA"
+        assert "Quote ID" in proof_quote_page.text, "Proof Pack quote page missing quote ID"
         assert "POST /v1/x402/proof-pack" in proof_quote_page.text, "Proof Pack quote page missing short endpoint"
         assert "Full Paid Endpoint" in proof_quote_page.text, "Proof Pack quote page should keep full URL in a scroll-safe block"
 
@@ -572,6 +612,21 @@ async def main() -> None:
         assert "checkout_confidence_page" in proof_bundle_quote["bundles"]["scout"], (
             "Proof Bundle variants missing confidence links"
         )
+        proof_bundle_quote_id = proof_bundle_quote.get("quote_id", "")
+        assert proof_bundle_quote_id.startswith("qr_"), "Proof Bundle quote should include a stable quote_id"
+        assert proof_bundle_quote["quote_receipt"]["resume_checkout_url"].endswith(f"/checkout/{proof_bundle_quote_id}"), (
+            "Proof Bundle quote should include a resume URL"
+        )
+        assert proof_bundle_quote["next_steps"]["checkout_url"].endswith(f"/proof-pack/bundle/pay?quote_id={proof_bundle_quote_id}"), (
+            "Proof Bundle quote should shorten tracked checkout with quote_id"
+        )
+        proof_bundle_receipt = await client.get(f"/v1/quotes/{proof_bundle_quote_id}")
+        assert proof_bundle_receipt.status_code == 200, "Proof Bundle quote receipt should be readable"
+        proof_bundle_receipt_json = proof_bundle_receipt.json()
+        assert proof_bundle_receipt_json["product"] == "proof_bundle", "Proof Bundle receipt returned wrong product"
+        assert proof_bundle_receipt_json["quote"]["status"] == "proof_bundle_quote", "Bundle receipt should retain quote"
+        resumed_bundle_quote = (await client.get(f"/v1/proof-pack/bundle/quote?quote_id={proof_bundle_quote_id}")).json()
+        assert resumed_bundle_quote["quote_id"] == proof_bundle_quote_id, "Proof Bundle quote should resume by quote_id"
 
         bundle_confidence = (await client.get(f"/v1/checkout/confidence?product=proof_bundle&{bundle_query}")).json()
         assert bundle_confidence["status"] == "checkout_confidence", "Proof Bundle confidence returned wrong status"
@@ -580,6 +635,13 @@ async def main() -> None:
         assert bundle_confidence["selected"]["amount_units"] == "2000000", "Proof Bundle confidence scout amount mismatch"
         assert bundle_confidence["target_urls"], "Proof Bundle confidence should preserve targets"
         assert bundle_confidence["low_friction_options"], "Proof Bundle confidence missing alternatives"
+        bundle_confidence_by_quote = (await client.get(f"/v1/checkout/confidence?quote_id={proof_bundle_quote_id}")).json()
+        assert bundle_confidence_by_quote["quote_id"] == proof_bundle_quote_id, (
+            "Proof Bundle confidence should load by quote_id"
+        )
+        assert bundle_confidence_by_quote["selected"]["product"] == "proof_bundle", (
+            "Proof Bundle confidence-by-quote selected wrong product"
+        )
 
         proof_bundle_page = await client.get(f"/proof-pack/bundle/quote?{bundle_query}")
         assert proof_bundle_page.status_code == 200, "Proof Bundle quote page should render"
@@ -587,6 +649,7 @@ async def main() -> None:
         assert "Request Bundle" in proof_bundle_page.text, "Proof Bundle quote page missing request CTA"
         assert "Review checkout" in proof_bundle_page.text, "Proof Bundle quote page missing checkout review CTA"
         assert "Payment Confidence" in proof_bundle_page.text, "Proof Bundle quote page missing confidence CTA"
+        assert "Quote ID" in proof_bundle_page.text, "Proof Bundle quote page missing quote ID"
         assert "Before you pay" in proof_bundle_page.text, "Proof Bundle quote page should explain value before payment"
         assert "What This Payment Buys" in proof_bundle_page.text, "Proof Bundle quote page missing deliverables"
         assert "After Checkout" in proof_bundle_page.text, "Proof Bundle quote page missing post-payment flow"
@@ -611,6 +674,17 @@ async def main() -> None:
         )
         assert "Delivery promise" in proof_bundle_checkout_review.text, "Checkout review missing delivery promise"
         assert "/proof-pack/bundle/pay" in proof_bundle_checkout_review.text, "Checkout review should preserve tracked pay redirect"
+        proof_bundle_checkout_by_quote = await client.get(f"/proof-pack/bundle/checkout?quote_id={proof_bundle_quote_id}")
+        assert proof_bundle_checkout_by_quote.status_code == 200, "Proof Bundle checkout should resume by quote_id"
+        assert "Quote ID" in proof_bundle_checkout_by_quote.text, "Resumed checkout should show quote ID"
+        assert f"quote_id={proof_bundle_quote_id}" in proof_bundle_checkout_by_quote.text, (
+            "Resumed checkout should preserve quote_id in pay redirect"
+        )
+        proof_bundle_pay_by_quote = await client.get(
+            f"/proof-pack/bundle/pay?quote_id={proof_bundle_quote_id}",
+            follow_redirects=False,
+        )
+        assert proof_bundle_pay_by_quote.status_code == 302, "Proof Bundle pay should accept quote_id"
         proof_bundle_checkout = await client.get(f"/proof-pack/bundle/pay?{bundle_query}", follow_redirects=False)
         assert proof_bundle_checkout.status_code == 302, "Proof Bundle checkout should redirect"
         assert "/proof-pack/bundle" in proof_bundle_checkout.headers["location"], (
@@ -1689,6 +1763,20 @@ async def main() -> None:
         )
         assert metrics["conversion_funnel"].get("checkout_confidence_views", 0) >= 3, (
             "Checkout confidence views missing from funnel"
+        )
+        assert metrics["metrics"].get("quote_receipts_total", 0) >= 2, "quote receipts should be counted"
+        assert metrics["metrics"].get("quote_receipt_reads_total", 0) >= 4, "quote receipt reads should be counted"
+        assert metrics["metrics"].get("quote_resume_checkout_hits_total", 0) >= 2, (
+            "quote resume checkout hits should be counted"
+        )
+        assert metrics["conversion_funnel"].get("quote_receipts", 0) >= 2, "quote receipts missing from funnel"
+        assert metrics["conversion_funnel"].get("quote_receipt_reads", 0) >= 4, (
+            "quote receipt reads missing from funnel"
+        )
+        assert "quote_receipts" in metrics, "quote receipt storage snapshot missing from metrics"
+        assert metrics["quote_receipts"]["count"] >= 2, "quote receipt snapshot should count retained quotes"
+        assert metrics["quote_receipts"]["latest"]["quote_id"].startswith("qr_"), (
+            "quote receipt snapshot should expose latest quote id"
         )
         assert metrics["metrics"].get("contact_form_submits_total", 0) >= 2, "Contact submissions should be counted"
         assert metrics["conversion_funnel"].get("contact_form_submits", 0) >= 2, "Contact submissions missing from funnel"

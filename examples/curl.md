@@ -98,6 +98,15 @@ curl "$AXONGATE_BASE_URL/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana
 curl "$AXONGATE_BASE_URL/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE"
 ```
 
+Quotes return a 7-day `quote_id` so an agent can resume without replaying the
+long target URL query:
+
+```bash
+QUOTE_ID=$(curl -sS "$AXONGATE_BASE_URL/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&question=What%20does%20this%20source%20establish%3F&pack=standard&source=$AXONGATE_SOURCE" | python -c "import json,sys; print(json.load(sys.stdin)['quote_id'])")
+curl "$AXONGATE_BASE_URL/v1/quotes/$QUOTE_ID"
+curl "$AXONGATE_BASE_URL/checkout/$QUOTE_ID"
+```
+
 ## Checkout Confidence
 
 Use this no-spend guide when an agent wants to inspect the deliverable, sample
@@ -156,6 +165,9 @@ curl "$AXONGATE_BASE_URL/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.i
 ```bash
 curl "$AXONGATE_BASE_URL/v1/proof-pack/bundle/quote?target_urls=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved%0Ahttps%3A%2F%2Fexample.com&question=Which%20claims%20can%20our%20agent%20cite%3F&bundle=scout&source=$AXONGATE_SOURCE"
 ```
+
+Bundle quotes use the same `quote_id` contract; the checkout review can resume
+at `/proof-pack/bundle/checkout?quote_id=<quote_id>`.
 
 ```bash
 curl -sS -X POST "$AXONGATE_BASE_URL/v1/proof-pack/bundle/leads" \

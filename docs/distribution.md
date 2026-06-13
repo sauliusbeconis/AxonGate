@@ -33,6 +33,8 @@ https://api.axongate.one/v1/agent/diagnose?source=reviewer
 https://api.axongate.one/v1/agent/trust?source=reviewer
 https://api.axongate.one/checkout/confidence?source=reviewer
 https://api.axongate.one/v1/checkout/confidence?source=reviewer
+https://api.axongate.one/checkout/{quote_id}
+https://api.axongate.one/v1/quotes/{quote_id}
 https://api.axongate.one/v1/proof-pack/benchmarks?source=reviewer
 https://api.axongate.one/proof-pack/sample?source=reviewer
 https://api.axongate.one/v1/proof-pack/sample?source=reviewer
@@ -77,6 +79,10 @@ Checkout confidence URL: https://api.axongate.one/checkout/confidence?product=pr
 Required env: AXONGATE_STRIPE_WEBHOOK_SECRET=whsec_...
 Events: checkout.session.completed, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed
 ```
+
+Supplier-free Proof Pack and Proof Bundle quotes return a retained `quote_id`,
+`/checkout/{quote_id}`, and `/v1/quotes/{quote_id}` for 7-day checkout resume
+without replaying long target URL query strings.
 
 The webhook verifies Stripe signatures, dedupes event IDs, creates or updates a
 paid Proof Bundle lead from Checkout custom fields, generates the cited delivery
@@ -140,7 +146,7 @@ Proof Pack service payload:
 ```json
 {
   "name": "AxonGate Proof Packs",
-  "description": "Paid citation-backed evidence reports for agent builders. Returns report_id, reusable report_url, verify_url, answer, executive summary, decision, agent_action, source_quality_score, citations, result_hash, source_hash, payment metadata, and UEG receipt. Verify, follow-up, and refresh quote APIs let agents check and reuse the report after purchase.",
+  "description": "Paid citation-backed evidence reports for agent builders. Supplier-free quotes return quote_id, /checkout/{quote_id}, and /v1/quotes/{quote_id}; paid reports return report_id, reusable report_url, verify_url, answer, executive summary, decision, agent_action, source_quality_score, citations, result_hash, source_hash, payment metadata, and UEG receipt. Verify, follow-up, and refresh quote APIs let agents check and reuse the report after purchase.",
   "serviceType": "api",
   "category": "Data",
   "pricingModel": "per_request",
@@ -155,7 +161,7 @@ Proof Bundle service payload:
 ```json
 {
   "name": "AxonGate Proof Bundles",
-  "description": "Higher-value multi-source evidence bundle quotes, checkout confidence, and lead capture for agent builders. Validates public URLs, returns exact USDC units, and routes buyers to payment/request follow-up.",
+  "description": "Higher-value multi-source evidence bundle quotes, checkout confidence, and lead capture for agent builders. Validates public URLs, returns exact USDC units, includes 7-day quote_id resume links, and routes buyers to payment/request follow-up.",
   "serviceType": "api",
   "category": "Data",
   "pricingModel": "per_request",

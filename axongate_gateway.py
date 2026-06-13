@@ -81,7 +81,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.4.4",
+    version="1.4.5",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -130,6 +130,10 @@ PROOF_PACK_REPORTS_REDIS_PREFIX = os.getenv("AXONGATE_PROOF_PACK_REPORTS_REDIS_P
 PROOF_PACK_REPORT_INDEX_REDIS_KEY = os.getenv("AXONGATE_PROOF_PACK_REPORT_INDEX_REDIS_KEY", "axongate:proof_pack_reports")
 PROOF_PACK_REPORT_RETENTION_SECONDS = int(os.getenv("AXONGATE_PROOF_PACK_REPORT_RETENTION_SECONDS", str(30 * 24 * 60 * 60)))
 PROOF_PACK_REPORTS_MEMORY_MAX = int(os.getenv("AXONGATE_PROOF_PACK_REPORTS_MEMORY_MAX", "200"))
+QUOTE_RECEIPTS_REDIS_PREFIX = os.getenv("AXONGATE_QUOTE_RECEIPTS_REDIS_PREFIX", "axongate:quote_receipt")
+QUOTE_RECEIPT_INDEX_REDIS_KEY = os.getenv("AXONGATE_QUOTE_RECEIPT_INDEX_REDIS_KEY", "axongate:quote_receipts")
+QUOTE_RECEIPT_RETENTION_SECONDS = int(os.getenv("AXONGATE_QUOTE_RECEIPT_RETENTION_SECONDS", str(7 * 24 * 60 * 60)))
+QUOTE_RECEIPTS_MEMORY_MAX = int(os.getenv("AXONGATE_QUOTE_RECEIPTS_MEMORY_MAX", "500"))
 ATTRIBUTION_EVENT_RETENTION_SECONDS = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_RETENTION_SECONDS", str(7 * 24 * 60 * 60)))
 ATTRIBUTION_EVENT_MEMORY_MAX = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_MEMORY_MAX", "10000"))
 ALERT_WEBHOOK_URL = os.getenv("AXONGATE_ALERT_WEBHOOK_URL")
@@ -446,6 +450,9 @@ paid_request_events_lock = asyncio.Lock()
 proof_pack_reports: dict[str, dict[str, Any]] = {}
 proof_pack_report_order: list[str] = []
 proof_pack_reports_lock = asyncio.Lock()
+quote_receipts: dict[str, dict[str, Any]] = {}
+quote_receipt_order: list[str] = []
+quote_receipts_lock = asyncio.Lock()
 processed_stripe_events: set[str] = set()
 processed_stripe_events_lock = asyncio.Lock()
 metrics: dict[str, int] = {
@@ -508,12 +515,17 @@ metrics: dict[str, int] = {
     "discovery_proof_pack_benchmarks_hits_total": 0,
     "discovery_proof_pack_report_verify_hits_total": 0,
     "discovery_checkout_confidence_hits_total": 0,
+    "discovery_quote_receipt_hits_total": 0,
     "agent_diagnostics_total": 0,
     "agent_trust_checks_total": 0,
     "proof_pack_benchmarks_total": 0,
     "proof_pack_report_verifications_total": 0,
     "checkout_confidence_views_total": 0,
     "checkout_confidence_api_hits_total": 0,
+    "quote_receipts_total": 0,
+    "quote_receipt_reads_total": 0,
+    "quote_resume_checkout_hits_total": 0,
+    "quote_receipt_misses_total": 0,
     "favicon_hits_total": 0,
     "crawler_guard_no_user_agent_total": 0,
     "legacy_access_health_hits_total": 0,
@@ -1258,6 +1270,9 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
         "proof_pack_report_verifications": values.get("proof_pack_report_verifications_total", 0),
         "checkout_confidence_views": values.get("checkout_confidence_views_total", 0),
         "checkout_confidence_api_hits": values.get("checkout_confidence_api_hits_total", 0),
+        "quote_receipts": values.get("quote_receipts_total", 0),
+        "quote_receipt_reads": values.get("quote_receipt_reads_total", 0),
+        "quote_resume_checkout_hits": values.get("quote_resume_checkout_hits_total", 0),
         "proof_bundle_quotes": values.get("proof_bundle_quotes_total", 0),
         "proof_bundle_checkout_reviews": values.get("proof_bundle_checkout_reviews_total", 0),
         "proof_bundle_leads": values.get("proof_bundle_leads_total", 0),
@@ -1297,6 +1312,10 @@ def conversion_funnel_snapshot(metric_values: Optional[dict[str, int]] = None) -
             "checkout_confidence_per_quote": conversion_rate(
                 values.get("checkout_confidence_views_total", 0),
                 values.get("proof_pack_quotes_total", 0) + values.get("proof_bundle_quotes_total", 0),
+            ),
+            "quote_resume_per_receipt": conversion_rate(
+                values.get("quote_resume_checkout_hits_total", 0),
+                values.get("quote_receipts_total", 0),
             ),
             "bundle_checkout_review_per_quote": conversion_rate(
                 values.get("proof_bundle_checkout_reviews_total", 0),
@@ -1941,6 +1960,8 @@ def build_x402_accepts(tier: str = RECOMMENDED_TIER) -> list[dict[str, Any]]:
                 "mimeType": "application/json",
                 "resource": f"{PUBLIC_BASE_URL}/v1/x402/access",
                 "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
+                "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
+                "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
                 "description": "Clean Web-to-Markdown context extraction for autonomous agents.",
             },
         }
@@ -1968,6 +1989,8 @@ def build_proof_pack_x402_accepts(pack: str = DEFAULT_PROOF_PACK) -> list[dict[s
                 "mimeType": "application/json",
                 "resource": f"{PUBLIC_BASE_URL}/v1/x402/proof-pack",
                 "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence?product=proof_pack",
+                "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
+                "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
                 "description": "Citation-backed Proof Pack for agent builders.",
             },
         }
@@ -1996,6 +2019,9 @@ def build_x402_resource() -> dict[str, Any]:
             "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
             "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
             "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
+            "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+            "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
+            "quoteReceiptRetentionDays": quote_receipt_retention_days(),
             "docs": f"{PUBLIC_BASE_URL}/docs",
             "about": f"{PUBLIC_BASE_URL}/about",
             "faq": f"{PUBLIC_BASE_URL}/faq",
@@ -2102,6 +2128,9 @@ def build_proof_pack_resource() -> dict[str, Any]:
             "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
             "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence?product=proof_pack",
             "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence?product=proof_pack",
+            "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+            "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
+            "quoteReceiptRetentionDays": quote_receipt_retention_days(),
             "docs": f"{PUBLIC_BASE_URL}/proof-pack",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2194,6 +2223,9 @@ def build_proof_bundle_resource() -> dict[str, Any]:
             "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
             "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence?product=proof_bundle&bundle=scout",
             "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence?product=proof_bundle&bundle=scout",
+            "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+            "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
+            "quoteReceiptRetentionDays": quote_receipt_retention_days(),
             "docs": f"{PUBLIC_BASE_URL}/proof-pack/bundle",
             "evidenceLibrary": f"{PUBLIC_BASE_URL}/proof-pack/library",
             "shareExample": f"{PUBLIC_BASE_URL}/proof-pack/share/source-trust-for-agent-builders",
@@ -2297,6 +2329,9 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "agentTrust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
         "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
         "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
+        "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+        "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
+        "quoteReceiptRetentionDays": quote_receipt_retention_days(),
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
         "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
@@ -7500,6 +7535,213 @@ def checkout_confidence_api_url(
     )
 
 
+def quote_receipt_retention_days() -> int:
+    return max(1, int(QUOTE_RECEIPT_RETENTION_SECONDS / 86400))
+
+
+def normalize_quote_id(value: Any) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "", str(value or "").strip())[:96]
+    return cleaned if cleaned.startswith("qr_") else ""
+
+
+def quote_receipt_key(quote_id: str) -> str:
+    return f"{QUOTE_RECEIPTS_REDIS_PREFIX}:{quote_id}"
+
+
+def quote_receipt_url(quote_id: str) -> str:
+    return public_url(f"/checkout/{url_quote(quote_id, safe='')}")
+
+
+def quote_receipt_api_url(quote_id: str) -> str:
+    return public_url(f"/v1/quotes/{url_quote(quote_id, safe='')}")
+
+
+def quote_receipt_confidence_url(quote_id: str, api: bool = False) -> str:
+    prefix = "/v1" if api else ""
+    return public_url(f"{prefix}/checkout/confidence?quote_id={url_quote(quote_id, safe='')}")
+
+
+def quote_receipt_checkout_review_url(quote_id: str) -> str:
+    return public_url(f"/proof-pack/bundle/checkout?quote_id={url_quote(quote_id, safe='')}")
+
+
+def quote_receipt_checkout_url(quote_id: str) -> str:
+    return public_url(f"/proof-pack/bundle/pay?quote_id={url_quote(quote_id, safe='')}")
+
+
+def json_safe_dict(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return json.loads(json.dumps(value, separators=(",", ":"), sort_keys=True, default=str))
+
+
+def quote_receipt_selected(product: str, quote: dict[str, Any]) -> dict[str, Any]:
+    normalized_product = normalize_checkout_product(product)
+    selected: dict[str, Any] = {
+        "product": normalized_product,
+        "source": str(quote.get("source") or ""),
+        "price_usdc": quote.get("price_usdc"),
+        "amount_units": str(quote.get("amount_units") or ""),
+    }
+    if normalized_product == "proof_pack":
+        selected.update(
+            {
+                "target_url": str(quote.get("target_url") or ""),
+                "question": str(quote.get("question") or ""),
+                "pack": normalize_proof_pack(str(quote.get("pack") or DEFAULT_PROOF_PACK)),
+                "payment_rail": "x402 Base USDC",
+            }
+        )
+    else:
+        targets = split_bundle_target_urls(quote.get("target_urls") or [])
+        bundle = normalize_proof_bundle(str(quote.get("bundle") or DEFAULT_PROOF_BUNDLE))
+        selected.update(
+            {
+                "target_urls": targets,
+                "target_count": len(targets),
+                "question": str(quote.get("question") or ""),
+                "bundle": bundle,
+                "source_limit": proof_bundle_source_limit(bundle),
+                "payment_rail": "tracked Stripe checkout",
+            }
+        )
+    return selected
+
+
+def quote_receipt_id(product: str, quote: dict[str, Any]) -> str:
+    selected = quote_receipt_selected(product, quote)
+    canonical = {
+        "product": normalize_checkout_product(product),
+        "selected": selected,
+        "status": quote.get("status"),
+    }
+    return f"qr_{stable_hash(json.dumps(canonical, separators=(',', ':'), sort_keys=True, default=str))[:24]}"
+
+
+def quote_receipt_public_summary(receipt: dict[str, Any]) -> dict[str, Any]:
+    quote_id = normalize_quote_id(receipt.get("quote_id"))
+    return {
+        "quote_id": quote_id,
+        "status": "stored",
+        "receipt_schema": "axon-quote-receipt-v1",
+        "retention_days": receipt.get("retention_days"),
+        "expires_at": receipt.get("expires_at"),
+        "quote_hash": receipt.get("quote_hash"),
+        "resume_checkout_url": quote_receipt_url(quote_id),
+        "quote_receipt_api": quote_receipt_api_url(quote_id),
+        "checkout_confidence_page": quote_receipt_confidence_url(quote_id),
+        "checkout_confidence_api": quote_receipt_confidence_url(quote_id, api=True),
+    }
+
+
+def augment_quote_with_receipt(quote: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
+    """Attach a stable quote ID and short resume links without changing the quote contract."""
+    quote_id = normalize_quote_id(receipt.get("quote_id"))
+    if not quote_id:
+        return dict(quote)
+    product = normalize_checkout_product(str(receipt.get("product") or quote.get("product") or "proof_bundle"))
+    enriched = json_safe_dict(quote)
+    enriched["quote_id"] = quote_id
+    enriched["quote_receipt"] = quote_receipt_public_summary(receipt)
+    next_steps = dict(enriched.get("next_steps") if isinstance(enriched.get("next_steps"), dict) else {})
+    next_steps.update(
+        {
+            "quote_receipt_api": quote_receipt_api_url(quote_id),
+            "resume_checkout_url": quote_receipt_url(quote_id),
+            "checkout_confidence_for_quote": quote_receipt_confidence_url(quote_id),
+            "checkout_confidence_api_for_quote": quote_receipt_confidence_url(quote_id, api=True),
+        }
+    )
+    if product == "proof_bundle":
+        next_steps.update(
+            {
+                "checkout_review_url": quote_receipt_checkout_review_url(quote_id),
+                "checkout_url": quote_receipt_checkout_url(quote_id),
+                "payment_url": quote_receipt_checkout_url(quote_id),
+            }
+        )
+    else:
+        next_steps.update(
+            {
+                "quote_page": public_url(f"/proof-pack/quote?quote_id={url_quote(quote_id, safe='')}"),
+                "quote_api": public_url(f"/v1/proof-pack/quote?quote_id={url_quote(quote_id, safe='')}"),
+            }
+        )
+    enriched["next_steps"] = next_steps
+    return enriched
+
+
+def quote_from_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    quote = receipt.get("quote") if isinstance(receipt.get("quote"), dict) else {}
+    return augment_quote_with_receipt(quote, receipt)
+
+
+def build_quote_receipt(product: str, quote: dict[str, Any]) -> dict[str, Any]:
+    safe_quote = json_safe_dict(quote)
+    normalized_product = normalize_checkout_product(product)
+    quote_id = normalize_quote_id(safe_quote.get("quote_id")) or quote_receipt_id(normalized_product, safe_quote)
+    selected = quote_receipt_selected(normalized_product, safe_quote)
+    now = int(time.time())
+    expires_at = now + QUOTE_RECEIPT_RETENTION_SECONDS
+    quote_hash = stable_hash(
+        json.dumps(
+            {
+                "product": normalized_product,
+                "selected": selected,
+                "quote": safe_quote,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+            default=str,
+        )
+    )
+    next_steps = dict(safe_quote.get("next_steps") if isinstance(safe_quote.get("next_steps"), dict) else {})
+    next_steps.update(
+        {
+            "resume_checkout_url": quote_receipt_url(quote_id),
+            "quote_receipt_api": quote_receipt_api_url(quote_id),
+            "checkout_confidence_page": quote_receipt_confidence_url(quote_id),
+            "checkout_confidence_api": quote_receipt_confidence_url(quote_id, api=True),
+        }
+    )
+    if normalized_product == "proof_bundle":
+        next_steps.update(
+            {
+                "checkout_review_url": quote_receipt_checkout_review_url(quote_id),
+                "checkout_url": quote_receipt_checkout_url(quote_id),
+                "payment_url": quote_receipt_checkout_url(quote_id),
+            }
+        )
+
+    return {
+        "status": "quote_receipt",
+        "receipt_schema": "axon-quote-receipt-v1",
+        "supplier_spend": False,
+        "payment_required": False,
+        "quote_id": quote_id,
+        "product": normalized_product,
+        "source": str(safe_quote.get("source") or selected.get("source") or ""),
+        "created_at": now,
+        "expires_at": expires_at,
+        "retention_seconds": QUOTE_RECEIPT_RETENTION_SECONDS,
+        "retention_days": quote_receipt_retention_days(),
+        "selected": selected,
+        "target_url": selected.get("target_url"),
+        "target_urls": selected.get("target_urls") or ([selected["target_url"]] if selected.get("target_url") else []),
+        "question": selected.get("question"),
+        "amount_units": selected.get("amount_units"),
+        "price_usdc": selected.get("price_usdc"),
+        "quote_hash": quote_hash,
+        "quote": safe_quote,
+        "next_steps": next_steps,
+        "agent_guidance": {
+            "why_store_this": "Use quote_id to resume the exact quote, checkout review, or confidence guide without replaying long target URL query strings.",
+            "no_spend_to_read": True,
+            "safe_to_reuse_until": expires_at,
+        },
+    }
+
+
 def proof_bundle_quote_page_url(target_urls: list[str], question: str, bundle: str, source: str) -> str:
     normalized_bundle = normalize_proof_bundle(bundle)
     normalized_source = normalize_attribution_source(source)
@@ -7967,6 +8209,50 @@ async def build_checkout_confidence(
             **primary_next_steps,
         },
     }
+
+
+async def build_checkout_confidence_from_receipt(receipt: dict[str, Any], source: str) -> dict[str, Any]:
+    quote_id = normalize_quote_id(receipt.get("quote_id"))
+    product = normalize_checkout_product(str(receipt.get("product") or "proof_bundle"))
+    selected = receipt.get("selected") if isinstance(receipt.get("selected"), dict) else {}
+    if product == "proof_pack":
+        payload = await build_checkout_confidence(
+            product="proof_pack",
+            target_url=str(selected.get("target_url") or receipt.get("target_url") or PROOF_PACK_SAMPLE_TARGET_URL),
+            target_urls=[],
+            question=str(selected.get("question") or receipt.get("question") or ""),
+            pack=str(selected.get("pack") or DEFAULT_PROOF_PACK),
+            source=source,
+        )
+    else:
+        payload = await build_checkout_confidence(
+            product="proof_bundle",
+            target_urls=selected.get("target_urls") or receipt.get("target_urls") or [],
+            question=str(selected.get("question") or receipt.get("question") or ""),
+            bundle=str(selected.get("bundle") or DEFAULT_PROOF_BUNDLE),
+            source=source,
+        )
+    payload["quote_id"] = quote_id
+    payload["quote_receipt"] = quote_receipt_public_summary(receipt)
+    next_steps = dict(payload.get("next_steps") if isinstance(payload.get("next_steps"), dict) else {})
+    next_steps.update(
+        {
+            "quote_receipt_api": quote_receipt_api_url(quote_id),
+            "resume_checkout_url": quote_receipt_url(quote_id),
+            "checkout_confidence_page": quote_receipt_confidence_url(quote_id),
+            "checkout_confidence_api": quote_receipt_confidence_url(quote_id, api=True),
+        }
+    )
+    if product == "proof_bundle":
+        next_steps.update(
+            {
+                "checkout_review_url": quote_receipt_checkout_review_url(quote_id),
+                "checkout_url": quote_receipt_checkout_url(quote_id),
+                "payment_url": quote_receipt_checkout_url(quote_id),
+            }
+        )
+    payload["next_steps"] = next_steps
+    return payload
 
 
 def normalize_lead_status(status: Any) -> str:
@@ -9486,6 +9772,110 @@ async def proof_pack_reports_public_snapshot() -> dict[str, Any]:
 
     if latest:
         snapshot["latest"] = proof_pack_report_public_summary(latest)
+    return snapshot
+
+
+def prune_memory_quote_receipts(now: Optional[int] = None) -> None:
+    current = int(now or time.time())
+    for quote_id, receipt in list(quote_receipts.items()):
+        try:
+            expired = int(receipt.get("expires_at") or 0) <= current
+        except (TypeError, ValueError):
+            expired = True
+        if expired:
+            quote_receipts.pop(quote_id, None)
+            if quote_id in quote_receipt_order:
+                quote_receipt_order.remove(quote_id)
+
+    overflow = len(quote_receipt_order) - QUOTE_RECEIPTS_MEMORY_MAX
+    if overflow > 0:
+        for quote_id in quote_receipt_order[-overflow:]:
+            quote_receipts.pop(quote_id, None)
+        del quote_receipt_order[-overflow:]
+
+
+async def store_quote_receipt(product: str, quote: dict[str, Any]) -> dict[str, Any]:
+    """Persist one no-spend quote so agents can resume checkout by ID."""
+    payload = build_quote_receipt(product, quote)
+    quote_id = str(payload["quote_id"])
+    serialized = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
+    inc_metric("quote_receipts_total")
+
+    if redis_client:
+        try:
+            await redis_client.set(quote_receipt_key(quote_id), serialized, ex=QUOTE_RECEIPT_RETENTION_SECONDS)
+            await redis_client.lpush(QUOTE_RECEIPT_INDEX_REDIS_KEY, quote_id)
+            await redis_client.ltrim(QUOTE_RECEIPT_INDEX_REDIS_KEY, 0, QUOTE_RECEIPTS_MEMORY_MAX - 1)
+            return payload
+        except Exception as exc:
+            print(f"[QUOTE_RECEIPTS] Redis quote storage failed: {exc}")
+
+    async with quote_receipts_lock:
+        quote_receipts[quote_id] = payload
+        if quote_id in quote_receipt_order:
+            quote_receipt_order.remove(quote_id)
+        quote_receipt_order.insert(0, quote_id)
+        prune_memory_quote_receipts()
+    return payload
+
+
+async def read_quote_receipt(quote_id: str) -> Optional[dict[str, Any]]:
+    """Return a retained quote receipt by stable quote id."""
+    normalized_quote_id = normalize_quote_id(quote_id)
+    if not normalized_quote_id:
+        return None
+
+    if redis_client:
+        try:
+            raw = await redis_client.get(quote_receipt_key(normalized_quote_id))
+            if raw:
+                parsed = parse_proof_pack_lead_record(raw)
+                if parsed:
+                    return parsed
+        except Exception as exc:
+            print(f"[QUOTE_RECEIPTS] Redis quote read failed: {exc}")
+
+    async with quote_receipts_lock:
+        prune_memory_quote_receipts()
+        receipt = quote_receipts.get(normalized_quote_id)
+        return dict(receipt) if receipt else None
+
+
+async def attach_quote_receipt(product: str, quote: dict[str, Any]) -> dict[str, Any]:
+    receipt = await store_quote_receipt(product, quote)
+    return augment_quote_with_receipt(quote, receipt)
+
+
+async def quote_receipts_public_snapshot() -> dict[str, Any]:
+    """Return public-safe quote receipt storage health for metrics."""
+    snapshot: dict[str, Any] = {
+        "backend": "redis" if redis_client else "memory",
+        "retention_seconds": QUOTE_RECEIPT_RETENTION_SECONDS,
+        "retention_days": quote_receipt_retention_days(),
+        "max_retained": QUOTE_RECEIPTS_MEMORY_MAX,
+        "count": 0,
+        "latest": None,
+    }
+    latest: Optional[dict[str, Any]] = None
+    if redis_client:
+        snapshot["redis_index_key"] = QUOTE_RECEIPT_INDEX_REDIS_KEY
+        try:
+            quote_ids = await redis_client.lrange(QUOTE_RECEIPT_INDEX_REDIS_KEY, 0, 0)
+            snapshot["count"] = int(await redis_client.llen(QUOTE_RECEIPT_INDEX_REDIS_KEY))
+            if quote_ids:
+                latest = await read_quote_receipt(str(quote_ids[0]))
+        except Exception as exc:
+            print(f"[QUOTE_RECEIPTS] Redis quote snapshot failed: {exc}")
+
+    if latest is None:
+        async with quote_receipts_lock:
+            prune_memory_quote_receipts()
+            snapshot["count"] = max(snapshot["count"], len(quote_receipt_order))
+            if quote_receipt_order:
+                latest = quote_receipts.get(quote_receipt_order[0])
+
+    if latest:
+        snapshot["latest"] = quote_receipt_public_summary(latest)
     return snapshot
 
 
@@ -12562,10 +12952,13 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     amount_units = html.escape(str(quote["amount_units"]))
     cached_state = "available" if quote["cached_source_available"] else "not available"
     api_url = html.escape(
-        f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
-        f"target_url={url_quote(str(quote['target_url']), safe='')}"
-        f"&question={url_quote(str(quote['question']), safe='')}"
-        f"&pack={url_quote(pack, safe='')}&source=proof-pack-quote"
+        str(
+            quote.get("next_steps", {}).get("quote_api")
+            or f"{PUBLIC_BASE_URL}/v1/proof-pack/quote?"
+            f"target_url={url_quote(str(quote['target_url']), safe='')}"
+            f"&question={url_quote(str(quote['question']), safe='')}"
+            f"&pack={url_quote(pack, safe='')}&source=proof-pack-quote"
+        )
     )
     pack_options = "\n".join(
         f'<option value="{html.escape(pack_name)}"{" selected" if pack_name == pack else ""}>{html.escape(pack_name)}</option>'
@@ -12589,7 +12982,17 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
     selector_hint = html.escape(f"pack={pack}, source={quote['source']}")
     request_url = html.escape(proof_pack_request_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
     preview_url = html.escape(proof_pack_preview_page_url(str(quote["target_url"]), str(quote["question"]), pack, str(quote["source"])))
-    confidence_url = str(quote["next_steps"]["checkout_confidence_page"])
+    confidence_url = str(quote["next_steps"].get("checkout_confidence_for_quote") or quote["next_steps"]["checkout_confidence_page"])
+    quote_receipt = quote.get("quote_receipt") if isinstance(quote.get("quote_receipt"), dict) else {}
+    quote_receipt_html = ""
+    if quote_receipt:
+        quote_receipt_html = (
+            '<div class="box">'
+            f'<strong>Quote ID</strong><br><code>{html.escape(str(quote_receipt.get("quote_id") or quote.get("quote_id") or ""))}</code><br>'
+            f'<span>Resume this exact quote: <a href="{html.escape(str(quote_receipt.get("resume_checkout_url") or ""), quote=True)}">'
+            f'{html.escape(str(quote_receipt.get("resume_checkout_url") or ""))}</a></span>'
+            "</div>"
+        )
     nav = site_nav_html("Proof Packs")
     actions = action_bar_html(
         [
@@ -12699,6 +13102,7 @@ def build_proof_pack_quote_html(quote: dict[str, Any]) -> str:
       Agents can inspect the deliverable, sample verification receipt, x402 fixes, and recovery promise before paying:
       <a href="{html.escape(confidence_url, quote=True)}">open confidence guide</a>.
     </div>
+    {quote_receipt_html}
 
     <div class="grid">
       <div class="box"><strong>Selected Pack</strong><br><code>{html.escape(pack)}</code></div>
@@ -13283,7 +13687,12 @@ def build_proof_bundle_checkout_html(
     checkout_steps = checkout_steps_html(preview)
     trust_notes = checkout_trust_notes_html(preview)
     source_rows = checkout_source_rows_html(source_profiles)
-    payment_path = proof_bundle_payment_path(target_urls, normalized_question, normalized_bundle, normalized_source)
+    quote_id = normalize_quote_id(quote.get("quote_id")) if isinstance(quote, dict) else ""
+    payment_path = (
+        f"/proof-pack/bundle/pay?quote_id={url_quote(quote_id, safe='')}"
+        if quote_id
+        else proof_bundle_payment_path(target_urls, normalized_question, normalized_bundle, normalized_source)
+    )
     confidence_url = checkout_confidence_url(
         product="proof_bundle",
         target_urls=target_urls,
@@ -13291,6 +13700,8 @@ def build_proof_bundle_checkout_html(
         bundle=normalized_bundle,
         source=normalized_source,
     )
+    if quote_id:
+        confidence_url = quote_receipt_confidence_url(quote_id)
     checkout_state = "Stripe Payment Link is configured" if proof_bundle_payment_url(normalized_bundle) else "Stripe link is not configured; this continues to request capture"
     source_label = f"{target_count} of {source_limit} sources" if target_count else f"Stripe will collect up to {source_limit} source URLs"
     target_text = "\n".join(target_urls) if target_urls else "Collected in Stripe checkout custom fields"
@@ -13313,6 +13724,15 @@ def build_proof_bundle_checkout_html(
             ("Docs", public_url("/docs")),
         ],
     )
+    quote_receipt_html = ""
+    if quote_id:
+        quote_receipt_html = (
+            '<section class="panel">'
+            "<h2>Quote ID</h2>"
+            f"<p><code>{html.escape(quote_id)}</code></p>"
+            f'<p>Resume URL: <a href="{html.escape(quote_receipt_url(quote_id), quote=True)}">{html.escape(quote_receipt_url(quote_id))}</a></p>'
+            "</section>"
+        )
     continue_label = "Continue to Stripe" if proof_bundle_payment_url(normalized_bundle) else "Continue to request form"
     return f"""<!doctype html>
 <html lang="en">
@@ -13395,6 +13815,7 @@ def build_proof_bundle_checkout_html(
       <p>Review the exact deliverable, sample verification receipt, delivery recovery path, and payment-failure fixes before continuing.</p>
       <p><a href="{html.escape(confidence_url, quote=True)}">Open confidence guide</a></p>
     </section>
+    {quote_receipt_html}
     {parser_comparison_html()}
     {delivery_promise_html()}
     <section class="panel">
@@ -13457,10 +13878,24 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
     request_page = html.escape(str(quote["next_steps"]["request_page"]))
     quote_api = html.escape(str(quote["next_steps"]["quote_api"]))
     payment_url = html.escape(str(quote["next_steps"]["payment_url"]))
-    confidence_url = str(quote["next_steps"]["checkout_confidence_page"])
-    stripe_checkout_href = proof_bundle_checkout_path(list(quote["target_urls"]), question, bundle, source)
+    confidence_url = str(quote["next_steps"].get("checkout_confidence_for_quote") or quote["next_steps"]["checkout_confidence_page"])
+    stripe_checkout_href = str(
+        quote["next_steps"].get("checkout_review_url")
+        or proof_bundle_checkout_path(list(quote["target_urls"]), question, bundle, source)
+    )
     checkout_state = "Stripe Payment Link configured" if quote["next_steps"].get("payment_link_configured") else "request capture fallback"
     single_source_endpoint = html.escape(str(quote["next_steps"]["single_source_proof_pack_endpoint"]))
+    quote_receipt = quote.get("quote_receipt") if isinstance(quote.get("quote_receipt"), dict) else {}
+    quote_receipt_html = ""
+    if quote_receipt:
+        quote_receipt_html = (
+            '<section class="panel">'
+            "<h2>Quote ID</h2>"
+            f'<p><code>{html.escape(str(quote_receipt.get("quote_id") or quote.get("quote_id") or ""))}</code></p>'
+            f'<p>Resume this exact quote and checkout review: <a href="{html.escape(str(quote_receipt.get("resume_checkout_url") or ""), quote=True)}">'
+            f'{html.escape(str(quote_receipt.get("resume_checkout_url") or ""))}</a></p>'
+            "</section>"
+        )
     nav = site_nav_html("Bundles")
     actions = action_bar_html(
         [
@@ -13601,6 +14036,7 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       <p>Agents can inspect the exact deliverable, sample verification receipt, Stripe recovery path, and lower-friction alternatives before opening checkout.</p>
       <p><a href="{html.escape(confidence_url, quote=True)}">Open the confidence guide</a></p>
     </section>
+    {quote_receipt_html}
     {parser_comparison_html()}
     <section class="panel">
       <h2>What This Payment Buys</h2>
@@ -13640,6 +14076,118 @@ def build_proof_bundle_quote_html(quote: dict[str, Any]) -> str:
       <tbody>{bundle_rows}</tbody>
     </table>
     </div>
+    {site_footer_html()}
+  </main>
+</body>
+</html>"""
+
+
+def build_quote_receipt_html(receipt: dict[str, Any]) -> str:
+    """Render a resumable quote receipt for agents and buyers."""
+    quote_id = normalize_quote_id(receipt.get("quote_id"))
+    product = normalize_checkout_product(str(receipt.get("product") or "proof_bundle"))
+    product_label = "Proof Pack" if product == "proof_pack" else "Proof Bundle"
+    selected = receipt.get("selected") if isinstance(receipt.get("selected"), dict) else {}
+    next_steps = receipt.get("next_steps") if isinstance(receipt.get("next_steps"), dict) else {}
+    summary = quote_receipt_public_summary(receipt)
+    price = html.escape(str(receipt.get("price_usdc") or selected.get("price_usdc") or ""))
+    amount_units = html.escape(str(receipt.get("amount_units") or selected.get("amount_units") or ""))
+    selected_code = html.escape(str(selected.get("pack") or selected.get("bundle") or product))
+    target_text = "\n".join(str(target) for target in receipt.get("target_urls", []) if str(target).strip()) or str(receipt.get("target_url") or "")
+    question = html.escape(str(receipt.get("question") or selected.get("question") or ""))
+    primary_url = str(
+        next_steps.get("checkout_review_url")
+        or next_steps.get("quote_page")
+        or next_steps.get("probe_payment_terms")
+        or summary["checkout_confidence_page"]
+    )
+    primary_label = "Review checkout" if product == "proof_bundle" else "Open quote"
+    receipt_json = html.escape(json.dumps(summary, indent=2, sort_keys=True, default=str))
+    quote_json = html.escape(json.dumps(quote_from_receipt(receipt), indent=2, sort_keys=True, default=str))
+    nav = site_nav_html("Trust")
+    actions = action_bar_html(
+        [
+            (primary_label, primary_url),
+            ("Payment Confidence", summary["checkout_confidence_page"]),
+            ("Receipt JSON", summary["quote_receipt_api"]),
+        ],
+        [
+            ("Agent Trust", agent_trust_url()),
+            ("Diagnostics", agent_diagnostic_url()),
+            ("Docs", public_url("/docs")),
+        ],
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {seo_meta_html("AxonGate Quote Receipt", "Resume an AxonGate quote, checkout review, or no-spend payment confidence page by quote ID.", f"/checkout/{quote_id}")}
+  <style>
+    :root {{
+      color-scheme: light dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --text: #f2f4f8;
+      --muted: #b7c0cf;
+      --line: #303542;
+      --accent: #73daca;
+      --code: #0a0d13;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{ margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.55; background: var(--bg); color: var(--text); }}
+    main {{ max-width: 1080px; margin: 0 auto; padding: 44px 22px 72px; }}
+    h1 {{ font-size: clamp(2.05rem, 4vw, 3.25rem); line-height: 1.05; margin: 0 0 12px; }}
+    h2 {{ margin: 0 0 12px; font-size: 1.3rem; }}
+    p, li, small {{ color: var(--muted); }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
+    .panel {{ background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: clamp(16px, 3vw, 26px); margin: 0 0 16px; }}
+    .hero {{ border-left: 5px solid var(--accent); }}
+    .eyebrow {{ margin: 0 0 8px; color: var(--accent); font-size: .78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0; }}
+    .grid {{ display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 18px; }}
+    .box {{ border: 1px solid var(--line); border-radius: 8px; background: #131722; padding: 14px; min-width: 0; }}
+    .box span {{ display: block; color: var(--accent); font-size: .75rem; font-weight: 800; text-transform: uppercase; }}
+    .box strong {{ display: block; margin-top: 5px; overflow-wrap: anywhere; }}
+    code, pre {{ font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); }}
+    code {{ display: inline-block; max-width: 100%; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }}
+    pre {{ max-width: 100%; overflow-x: auto; white-space: pre-wrap; padding: 16px; border: 1px solid var(--line); border-radius: 8px; }}
+    @media (max-width: 760px) {{
+      main {{ padding: 24px 14px 52px; }}
+      .grid {{ grid-template-columns: 1fr; }}
+    }}
+    {shared_ui_css()}
+  </style>
+</head>
+<body>
+  <main>
+    {nav}
+    <section class="panel hero">
+      <p class="eyebrow">Resumable quote</p>
+      <h1>Quote ID <code>{html.escape(quote_id)}</code></h1>
+      <p>This receipt preserves the selected AxonGate quote for {html.escape(str(summary.get("retention_days") or quote_receipt_retention_days()))} days, so an agent can resume without rebuilding long URL parameters.</p>
+      <div class="grid">
+        <div class="box"><span>Product</span><strong>{html.escape(product_label)}</strong><small><code>{selected_code}</code></small></div>
+        <div class="box"><span>Price</span><strong>{price} USDC</strong><small><code>{amount_units}</code> units</small></div>
+        <div class="box"><span>Source</span><strong>{html.escape(str(receipt.get("source") or selected.get("source") or ""))}</strong></div>
+        <div class="box"><span>Expires</span><strong>{html.escape(str(receipt.get("expires_at") or ""))}</strong></div>
+      </div>
+    </section>
+    {actions}
+    <section class="panel">
+      <h2>Target And Question</h2>
+      <pre>{html.escape(target_text)}</pre>
+      <p>{question}</p>
+    </section>
+    <section class="panel">
+      <h2>Receipt Links</h2>
+      <pre>{receipt_json}</pre>
+    </section>
+    <section class="panel">
+      <h2>Stored Quote</h2>
+      <pre>{quote_json}</pre>
+    </section>
     {site_footer_html()}
   </main>
 </body>
@@ -14396,6 +14944,9 @@ Agent diagnostic API: {public_url("/v1/agent/diagnose")}
 Agent trust API: {public_url("/v1/agent/trust")}
 Checkout confidence page: {public_url("/checkout/confidence")}
 Checkout confidence API: {public_url("/v1/checkout/confidence")}
+Checkout resume pattern: {public_url("/checkout/{quote_id}")}
+Quote receipt API pattern: {public_url("/v1/quotes/{quote_id}")}
+Quote receipt retention: {quote_receipt_retention_days()} days
 Quote API: {public_url("/v1/x402/quote")}
 Quote page: {public_url("/quote")}
 Proof Pack page: {public_url("/proof-pack")}
@@ -14510,6 +15061,7 @@ GET {public_url("/v1/proof-pack/benchmarks")}
 GET {public_url("/proof-pack/preview")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/v1/proof-pack/preview")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
+Returned quote objects include quote_id, quote_receipt.resume_checkout_url, and quote_receipt.quote_receipt_api so agents can resume the same no-spend quote without replaying long query strings.
 GET {public_url("/v1/proof-pack/quote")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 GET {public_url("/proof-pack/request")}?target_url=<url>&question=<question>&pack=quick|standard|deep
 POST {public_url("/v1/proof-pack/leads")}
@@ -14820,6 +15372,7 @@ def build_docs_html() -> str:
     <pre>curl "{public}/v1/proof-pack/preview?target_url=https%3A%2F%2Fwww.iana.org%2Fdomains%2Freserved&amp;pack=quick&amp;source=docs"</pre>
     <p>Quote page: <a href="{public}/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/proof-pack/quote</a></p>
     <pre>curl "{public}/v1/proof-pack/quote?target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
+    <p>Quote responses include a retained <code>quote_id</code>, a resume page at <code>{public}/checkout/{{quote_id}}</code>, and a receipt API at <code>{public}/v1/quotes/{{quote_id}}</code>. Quote receipts are retained for {html.escape(str(quote_receipt_retention_days()))} days.</p>
     <p>Payment confidence page: <a href="{public}/checkout/confidence?product=proof_pack&amp;target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs">{public}/checkout/confidence</a></p>
     <pre>curl "{public}/v1/checkout/confidence?product=proof_pack&amp;target_url=https%3A%2F%2Fexample.com&amp;pack=standard&amp;source=docs"</pre>
     <p>Post-payment reuse APIs:</p>
@@ -14943,6 +15496,7 @@ def build_operator_dashboard_html(
             card("Delivered", count(metric("delivery_success_total")), percent(delivered_rate)),
             card("Proof Previews", count(metric("proof_pack_previews_total")), f'{count(metric("proof_pack_preview_cache_hits_total"))} cache hits'),
             card("Proof Quotes", count(metric("proof_pack_quotes_total")), "No-spend report quotes"),
+            card("Quote IDs", count(metric("quote_receipts_total")), percent(rates.get("quote_resume_per_receipt", 0))),
             card("Payment Confidence", count(metric("checkout_confidence_views_total")), percent(rates.get("checkout_confidence_per_quote", 0))),
             card("Proof Leads", count(metric("proof_pack_leads_total")), "Request capture submits"),
             card("Contact Inquiries", count(metric("contact_form_submits_total")), "General buyer/support messages"),
@@ -14970,6 +15524,8 @@ def build_operator_dashboard_html(
     bundle_funnel_steps = [
         ("Bundle visits", metric("discovery_proof_bundle_hits_total"), None, "Human-facing bundle and checkout traffic"),
         ("Quotes", metric("proof_bundle_quotes_total"), metric("discovery_proof_bundle_hits_total"), "Buyer submitted URLs for a no-spend quote"),
+        ("Quote IDs", metric("quote_receipts_total"), metric("proof_bundle_quotes_total") + metric("proof_pack_quotes_total"), "Resumable quote receipts created for agents"),
+        ("Quote resumes", metric("quote_resume_checkout_hits_total"), metric("quote_receipts_total"), "Agent or buyer reopened a quote by ID"),
         ("Confidence views", metric("checkout_confidence_views_total"), metric("proof_bundle_quotes_total") + metric("proof_pack_quotes_total"), "Buyer or agent opened the no-spend payment confidence guide"),
         ("Checkout reviews", metric("proof_bundle_checkout_reviews_total"), metric("proof_bundle_quotes_total"), "Buyer opened the review step before Stripe"),
         ("Payment clicks", metric("proof_bundle_payment_clicks_total"), metric("proof_bundle_checkout_reviews_total"), "Buyer clicked the tracked pay route"),
@@ -17045,6 +17601,7 @@ async def checkout_confidence_page(
     question: Optional[str] = None,
     pack: str = DEFAULT_PROOF_PACK,
     bundle: str = "scout",
+    quote_id: str = "",
 ):
     """Serve a no-spend confidence guide before agents or buyers pay."""
     source = attribution_source_from_request(request)
@@ -17053,7 +17610,16 @@ async def checkout_confidence_page(
     inc_discovery_hit("discovery_checkout_confidence_hits_total", source)
     try:
         await enforce_rate_limit("checkout_confidence_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
-        payload = await build_checkout_confidence(product, target_url, target_urls, question, pack, bundle, source)
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            inc_metric("quote_receipt_reads_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            payload = await build_checkout_confidence_from_receipt(receipt, source)
+        else:
+            payload = await build_checkout_confidence(product, target_url, target_urls, question, pack, bundle, source)
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -17070,6 +17636,7 @@ async def checkout_confidence_api(
     question: Optional[str] = None,
     pack: str = DEFAULT_PROOF_PACK,
     bundle: str = "scout",
+    quote_id: str = "",
 ):
     """Return a no-spend payment confidence contract for agents before checkout."""
     source = attribution_source_from_request(request)
@@ -17079,11 +17646,54 @@ async def checkout_confidence_api(
     inc_discovery_hit("discovery_checkout_confidence_hits_total", source)
     try:
         await enforce_rate_limit("checkout_confidence_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            inc_metric("quote_receipt_reads_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            return await build_checkout_confidence_from_receipt(receipt, source)
         return await build_checkout_confidence(product, target_url, target_urls, question, pack, bundle, source)
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
+@app.get("/checkout/{quote_id}", response_class=HTMLResponse, tags=["discovery"], summary="Resume quote checkout by ID")
+async def quote_receipt_page(request: Request, quote_id: str):
+    """Serve a resumable quote receipt without replaying long URL query strings."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+    try:
+        await enforce_rate_limit("quote_receipt_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    receipt = await read_quote_receipt(quote_id)
+    if not receipt:
+        inc_metric("quote_receipt_misses_total")
+        raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+    inc_metric("quote_receipt_reads_total")
+    inc_metric("quote_resume_checkout_hits_total")
+    return build_quote_receipt_html(receipt)
+
+
+@app.get("/v1/quotes/{quote_id}", tags=["discovery"], summary="Read retained quote receipt")
+async def quote_receipt_api(request: Request, quote_id: str):
+    """Return a retained quote receipt and its resumable next steps."""
+    source = attribution_source_from_request(request)
+    inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+    try:
+        await enforce_rate_limit("quote_receipt_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    receipt = await read_quote_receipt(quote_id)
+    if not receipt:
+        inc_metric("quote_receipt_misses_total")
+        raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+    inc_metric("quote_receipt_reads_total")
+    return receipt
 
 
 @app.get("/proof-pack/bundle", response_class=HTMLResponse, tags=["discovery"], summary="AxonGate Proof Bundle product page")
@@ -17121,6 +17731,7 @@ async def proof_bundle_quote_page(
     target_urls: str = "https://www.iana.org/domains/reserved\nhttps://example.com\nhttps://example.org",
     question: Optional[str] = None,
     bundle: str = DEFAULT_PROOF_BUNDLE,
+    quote_id: str = "",
 ):
     """Serve a no-spend multi-source bundle quote page for buyers."""
     source = attribution_source_from_request(request)
@@ -17129,7 +17740,21 @@ async def proof_bundle_quote_page(
     inc_discovery_hit("discovery_proof_bundle_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
-        quote = await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source)
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            if normalize_checkout_product(str(receipt.get("product") or "")) != "proof_bundle":
+                raise HTTPException(status_code=400, detail="Quote receipt is not for a Proof Bundle.")
+            inc_metric("quote_receipt_reads_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            quote = quote_from_receipt(receipt)
+        else:
+            quote = await attach_quote_receipt(
+                "proof_bundle",
+                await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source),
+            )
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -17170,6 +17795,7 @@ async def proof_bundle_quote_api(
     target_urls: str = "https://www.iana.org/domains/reserved\nhttps://example.com\nhttps://example.org",
     question: Optional[str] = None,
     bundle: str = DEFAULT_PROOF_BUNDLE,
+    quote_id: str = "",
 ):
     """Return no-spend Proof Bundle pricing and buyer next steps for public targets."""
     source = attribution_source_from_request(request)
@@ -17178,7 +17804,20 @@ async def proof_bundle_quote_api(
     inc_discovery_hit("discovery_proof_bundle_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
-        return await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source)
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            if normalize_checkout_product(str(receipt.get("product") or "")) != "proof_bundle":
+                raise HTTPException(status_code=400, detail="Quote receipt is not for a Proof Bundle.")
+            inc_metric("quote_receipt_reads_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            return quote_from_receipt(receipt)
+        return await attach_quote_receipt(
+            "proof_bundle",
+            await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source),
+        )
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -17191,6 +17830,7 @@ async def proof_bundle_checkout_review(
     target_urls: str = "",
     question: Optional[str] = None,
     bundle: str = DEFAULT_PROOF_BUNDLE,
+    quote_id: str = "",
 ):
     """Show a customer-facing review step before the tracked Stripe redirect."""
     source = attribution_source_from_request(request)
@@ -17199,14 +17839,33 @@ async def proof_bundle_checkout_review(
     inc_attribution("proof_bundle_checkout_reviews", source)
     raw_targets = split_bundle_target_urls(target_urls)
     try:
-        normalized_bundle = normalize_proof_bundle(bundle)
-        normalized_question = proof_bundle_question(question)
-        quote = None
-        normalized_targets = raw_targets
-        if raw_targets:
-            await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
-            quote = await build_proof_bundle_quote(raw_targets, normalized_question, normalized_bundle, source)
-            normalized_targets = list(quote["target_urls"])
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            if normalize_checkout_product(str(receipt.get("product") or "")) != "proof_bundle":
+                raise HTTPException(status_code=400, detail="Quote receipt is not for a Proof Bundle.")
+            inc_metric("quote_receipt_reads_total")
+            inc_metric("quote_resume_checkout_hits_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            quote = quote_from_receipt(receipt)
+            selected = receipt.get("selected") if isinstance(receipt.get("selected"), dict) else {}
+            normalized_bundle = normalize_proof_bundle(str(selected.get("bundle") or quote.get("bundle") or bundle))
+            normalized_question = proof_bundle_question(str(selected.get("question") or receipt.get("question") or question or ""))
+            normalized_targets = split_bundle_target_urls(selected.get("target_urls") or receipt.get("target_urls") or quote.get("target_urls") or [])
+        else:
+            normalized_bundle = normalize_proof_bundle(bundle)
+            normalized_question = proof_bundle_question(question)
+            quote = None
+            normalized_targets = raw_targets
+            if raw_targets:
+                await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+                quote = await attach_quote_receipt(
+                    "proof_bundle",
+                    await build_proof_bundle_quote(raw_targets, normalized_question, normalized_bundle, source),
+                )
+                normalized_targets = list(quote["target_urls"])
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -17220,15 +17879,33 @@ async def proof_bundle_checkout(
     target_urls: str = "",
     question: Optional[str] = None,
     bundle: str = DEFAULT_PROOF_BUNDLE,
+    quote_id: str = "",
 ):
     """Track checkout intent and redirect to configured payment link or request capture."""
     source = attribution_source_from_request(request)
     try:
-        normalized_bundle = normalize_proof_bundle(bundle)
+        receipt = None
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            if normalize_checkout_product(str(receipt.get("product") or "")) != "proof_bundle":
+                raise HTTPException(status_code=400, detail="Quote receipt is not for a Proof Bundle.")
+            inc_metric("quote_receipt_reads_total")
+            inc_metric("quote_resume_checkout_hits_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            selected = receipt.get("selected") if isinstance(receipt.get("selected"), dict) else {}
+            normalized_bundle = normalize_proof_bundle(str(selected.get("bundle") or bundle))
+            raw_targets = split_bundle_target_urls(selected.get("target_urls") or receipt.get("target_urls") or [])
+            normalized_question = proof_bundle_question(str(selected.get("question") or receipt.get("question") or question or ""))
+            source = normalize_attribution_source(str(receipt.get("source") or source))
+        else:
+            normalized_bundle = normalize_proof_bundle(bundle)
+            raw_targets = split_bundle_target_urls(target_urls)
+            normalized_question = proof_bundle_question(question)
     except PaymentValidationError as exc:
         raise HTTPException(status_code=400, detail=exc.detail) from exc
-    raw_targets = split_bundle_target_urls(target_urls)
-    normalized_question = proof_bundle_question(question)
     inc_metric("proof_bundle_payment_clicks_total")
     inc_attribution("proof_bundle_payment_clicks", source)
     external_payment_url = proof_bundle_payment_url(normalized_bundle)
@@ -17600,6 +18277,7 @@ async def proof_pack_quote_page(
     target_url: str = PROOF_PACK_SAMPLE_TARGET_URL,
     question: Optional[str] = None,
     pack: str = PROOF_PACK_SAMPLE_PACK,
+    quote_id: str = "",
 ):
     """Serve a no-spend Proof Pack quote page for buyers."""
     source = attribution_source_from_request(request)
@@ -17608,7 +18286,21 @@ async def proof_pack_quote_page(
     inc_discovery_hit("discovery_proof_pack_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_pack_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
-        quote = await build_proof_pack_quote(target_url, question, pack, source)
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            if normalize_checkout_product(str(receipt.get("product") or "")) != "proof_pack":
+                raise HTTPException(status_code=400, detail="Quote receipt is not for a Proof Pack.")
+            inc_metric("quote_receipt_reads_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            quote = quote_from_receipt(receipt)
+        else:
+            quote = await attach_quote_receipt(
+                "proof_pack",
+                await build_proof_pack_quote(target_url, question, pack, source),
+            )
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -17636,6 +18328,7 @@ async def proof_pack_quote_api(
     target_url: str = "https://example.com",
     question: Optional[str] = None,
     pack: str = DEFAULT_PROOF_PACK,
+    quote_id: str = "",
 ):
     """Return no-spend Proof Pack pricing and buyer commands for a public target."""
     source = attribution_source_from_request(request)
@@ -17644,7 +18337,20 @@ async def proof_pack_quote_api(
     inc_discovery_hit("discovery_proof_pack_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_pack_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
-        return await build_proof_pack_quote(target_url, question, pack, source)
+        if quote_id:
+            receipt = await read_quote_receipt(quote_id)
+            if not receipt:
+                inc_metric("quote_receipt_misses_total")
+                raise HTTPException(status_code=404, detail="Quote receipt not found or expired.")
+            if normalize_checkout_product(str(receipt.get("product") or "")) != "proof_pack":
+                raise HTTPException(status_code=400, detail="Quote receipt is not for a Proof Pack.")
+            inc_metric("quote_receipt_reads_total")
+            inc_discovery_hit("discovery_quote_receipt_hits_total", source)
+            return quote_from_receipt(receipt)
+        return await attach_quote_receipt(
+            "proof_pack",
+            await build_proof_pack_quote(target_url, question, pack, source),
+        )
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -17716,6 +18422,9 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "agent_trust": f"{PUBLIC_BASE_URL}/v1/agent/trust",
         "checkout_confidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
         "checkout_confidence_api": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
+        "checkout_resume_pattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+        "quote_receipt_api_pattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
+        "quote_receipt_retention_days": quote_receipt_retention_days(),
         "quote": f"{PUBLIC_BASE_URL}/quote",
         "quote_api": f"{PUBLIC_BASE_URL}/v1/x402/quote",
         "proof_pack": f"{PUBLIC_BASE_URL}/proof-pack",
@@ -17927,6 +18636,7 @@ async def metrics_snapshot():
     proof_pack_lead_storage = await proof_pack_leads_public_snapshot()
     paid_request_event_storage = await paid_request_events_public_snapshot()
     proof_pack_report_storage = await proof_pack_reports_public_snapshot()
+    quote_receipt_storage = await quote_receipts_public_snapshot()
     triggered_alerts = await evaluate_alerts(metric_values)
     return {
         "status": "ok",
@@ -17990,6 +18700,7 @@ async def metrics_snapshot():
         "proof_pack_leads": proof_pack_lead_storage,
         "paid_request_events": paid_request_event_storage,
         "proof_pack_reports": proof_pack_report_storage,
+        "quote_receipts": quote_receipt_storage,
         "preflight": {
             "enabled": PREFLIGHT_ENABLED,
             "timeout_seconds": PREFLIGHT_TIMEOUT_SECONDS,

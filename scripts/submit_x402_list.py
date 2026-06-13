@@ -33,7 +33,7 @@ def build_payload(email: str) -> dict:
             "It converts public web pages into clean Markdown and citation-backed evidence reports "
             "for RAG, autonomous research, and LLM context preparation. Paid Proof Packs now return "
             "retained report IDs, no-spend verification receipts, follow-up APIs, refresh quotes, agent-action guidance, "
-            "source quality scores, a no-spend payment diagnostic, a no-spend trust contract, checkout confidence, benchmark cases, and a concrete no-spend sample retained report. The starter tier gives agents a 0.012 USDC first paid "
+            "source quality scores, resumable quote IDs, a no-spend payment diagnostic, a no-spend trust contract, checkout confidence, benchmark cases, and a concrete no-spend sample retained report. The starter tier gives agents a 0.012 USDC first paid "
             "conversion path before live fresh extraction."
         ),
         "endpoint_paths": [X402_LIST_SOURCE_PATH, X402_LIST_PROOF_PACK_PATH],
@@ -51,6 +51,7 @@ def build_payload(email: str) -> dict:
             "a no-spend checkout confidence guide at /checkout/confidence and /v1/checkout/confidence, "
             "Proof Pack benchmark cases at /v1/proof-pack/benchmarks, "
             "a supplier-free Proof Pack quote API, retained Proof Pack reports, report_id retrieval, "
+            "7-day quote_id resume via /checkout/{quote_id} and /v1/quotes/{quote_id}, "
             "no-spend verification receipts, no-spend follow-up, refresh quotes, starter sample pricing, and cache-only pricing. "
             "Reviewers can test the retained-report loop without payment at "
             "/v1/proof-pack/reports/ppr_sample_source_trust, "
@@ -60,7 +61,8 @@ def build_payload(email: str) -> dict:
             "Discovery metadata is available at /.well-known/x402, /.well-known/agent.json, "
             "/v1/agent/trust, /v1/agent/diagnose, /v1/proof-pack/benchmarks, "
             "/checkout/confidence, /v1/checkout/confidence, "
-            "/v1/x402/quote, /v1/proof-pack/quote, /v1/proof-pack/reports/{report_id}, "
+            "/v1/x402/quote, /v1/proof-pack/quote, /v1/quotes/{quote_id}, "
+            "/checkout/{quote_id}, /v1/proof-pack/reports/{report_id}, "
             "/v1/proof-pack/reports/{report_id}/verify, "
             "and /discovery/resources."
         ),
