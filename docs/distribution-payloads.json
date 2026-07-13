@@ -5,6 +5,7 @@
   "checkout_confidence": "https://api.axongate.one/checkout/confidence",
   "checkout_confidence_api": "https://api.axongate.one/v1/checkout/confidence",
   "checkout_resume_pattern": "https://api.axongate.one/checkout/{quote_id}",
+  "quote_receipt_create_api": "https://api.axongate.one/v1/quotes",
   "quote_receipt_api_pattern": "https://api.axongate.one/v1/quotes/{quote_id}",
   "quote_receipt_retention_days": 7,
   "proof_pack_benchmarks": "https://api.axongate.one/v1/proof-pack/benchmarks",

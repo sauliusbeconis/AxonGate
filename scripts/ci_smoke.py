@@ -74,6 +74,9 @@ async def main() -> None:
     assert manifest_json["endpoints"]["quote_receipt_api_pattern"].endswith("/v1/quotes/{quote_id}"), (
         "manifest missing quote receipt pattern"
     )
+    assert manifest_json["endpoints"]["quote_receipt_create_api"].endswith("/v1/quotes"), (
+        "manifest missing intentional quote receipt create endpoint"
+    )
     assert manifest_json["endpoints"]["checkout_resume_pattern"].endswith("/checkout/{quote_id}"), (
         "manifest missing checkout resume pattern"
     )
@@ -87,6 +90,9 @@ async def main() -> None:
     )
     assert distribution_json["quote_receipt_api_pattern"].endswith("/v1/quotes/{quote_id}"), (
         "distribution payload missing quote receipt pattern"
+    )
+    assert distribution_json["quote_receipt_create_api"].endswith("/v1/quotes"), (
+        "distribution payload missing intentional quote receipt create endpoint"
     )
     resend_request = httpx.Request("POST", "https://api.resend.com/emails")
     resend_response = httpx.Response(
@@ -121,7 +127,6 @@ async def main() -> None:
             "/about",
             "/faq",
             "/contact",
-            "/operator",
             "/quickstart",
             "/paid-test",
             "/checkout/confidence",
@@ -149,15 +154,26 @@ async def main() -> None:
             "/robots.txt",
             "/sitemap.xml",
             "/openapi.json",
-            "/metrics",
         ]
         for path in expected_ok:
             response = await client.get(path)
             assert response.status_code == 200, f"{path} returned {response.status_code}"
 
+        assert (await client.get("/operator")).status_code == 401, "operator dashboard should be private"
+        assert (await client.get("/metrics")).status_code == 401, "operational metrics should be private"
+        operator_dashboard = await client.get("/operator?operator_token=ci-operator-token")
+        assert operator_dashboard.status_code == 200, "operator dashboard should accept an operator token"
+        assert "Qualified Traffic" in operator_dashboard.text, "operator dashboard should separate qualified traffic"
+        assert "Automation" in operator_dashboard.text, "operator dashboard should expose bot traffic separately"
+        private_metrics = await client.get(
+            "/metrics",
+            headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+        )
+        assert private_metrics.status_code == 200, "operational metrics should accept an operator token"
+
         root_page = await client.get("/")
-        assert "Can these sources prove your claim?" in root_page.text, "Homepage missing evidence-check headline"
-        assert "Start Builder - $7" in root_page.text, "Homepage missing primary Stripe CTA"
+        assert "Know what your AI can safely cite before it ships." in root_page.text, "Homepage missing focused source-quality headline"
+        assert "Audit My Sources" in root_page.text, "Homepage missing primary source-audit CTA"
         assert "Parser returns text. AxonGate returns a decision." in root_page.text, (
             "Homepage should explain why AxonGate is more than parsing"
         )
@@ -327,16 +343,14 @@ async def main() -> None:
         assert "Contact AxonGate" in contact_page.text, "Contact page missing heading"
         assert "name=\"email\"" in contact_page.text, "Contact page missing email field"
         sitemap_page = await client.get("/sitemap.xml")
-        assert "/proof-pack/library" in sitemap_page.text, "Sitemap missing Evidence Library"
-        assert "/proof-pack/share/source-trust-for-agent-builders" in sitemap_page.text, (
-            "Sitemap missing share example"
-        )
-        assert "/from/x402-list" in sitemap_page.text, "Sitemap missing source landing page"
-        assert "/v1/agent/trust" in sitemap_page.text, "Sitemap missing agent trust"
-        assert "/v1/proof-pack/benchmarks" in sitemap_page.text, "Sitemap missing Proof Pack benchmarks"
-        assert "/v1/proof-pack/reports/ppr_sample_source_trust/verify" in sitemap_page.text, (
-            "Sitemap missing sample verify receipt"
-        )
+        assert sitemap_page.text.count("<loc>") == 6, "Sitemap should contain six canonical customer pages"
+        for canonical_path in ("/proof-pack/bundle", "/proof-pack/sample", "/docs", "/about", "/contact"):
+            assert canonical_path in sitemap_page.text, f"Sitemap missing canonical page {canonical_path}"
+        assert "/v1/" not in sitemap_page.text, "Sitemap must not advertise API routes as SEO pages"
+        assert "/operator" not in sitemap_page.text, "Sitemap must not advertise private operations"
+        robots_page = await client.get("/robots.txt")
+        assert "Disallow: /operator" in robots_page.text, "Robots policy should hide private operations"
+        assert "Disallow: /v1/" in robots_page.text, "Robots policy should keep API routes out of search"
 
         secure_sample = await client.get(
             "/proof-pack/sample",
@@ -453,12 +467,25 @@ async def main() -> None:
         assert "/v1/checkout/confidence" in proof_quote["next_steps"]["checkout_confidence_api"], (
             "Proof Pack quote should point to checkout confidence API"
         )
-        proof_quote_id = proof_quote.get("quote_id", "")
+        assert "quote_id" not in proof_quote, "GET quote previews must not create retained receipts"
+        retained_proof_quote = (
+            await client.post(
+                "/v1/quotes",
+                json={
+                    "product": "proof_pack",
+                    "target_url": "https://www.iana.org/domains/reserved",
+                    "question": "Which claims are safe to cite?",
+                    "pack": "quick",
+                    "source": "ci",
+                },
+            )
+        ).json()
+        proof_quote_id = retained_proof_quote.get("quote_id", "")
         assert proof_quote_id.startswith("qr_"), "Proof Pack quote should include a stable quote_id"
-        assert proof_quote["quote_receipt"]["resume_checkout_url"].endswith(f"/checkout/{proof_quote_id}"), (
+        assert retained_proof_quote["quote_receipt"]["resume_checkout_url"].endswith(f"/checkout/{proof_quote_id}"), (
             "Proof Pack quote should include a resume URL"
         )
-        assert proof_quote["next_steps"]["quote_receipt_api"].endswith(f"/v1/quotes/{proof_quote_id}"), (
+        assert retained_proof_quote["next_steps"]["quote_receipt_api"].endswith(f"/v1/quotes/{proof_quote_id}"), (
             "Proof Pack quote should include quote receipt API"
         )
         proof_quote_receipt = await client.get(f"/v1/quotes/{proof_quote_id}")
@@ -523,7 +550,7 @@ async def main() -> None:
         assert "Request This Report" in proof_quote_page.text, "Proof Pack quote page missing request CTA"
         assert "Try Mini Preview" in proof_quote_page.text, "Proof Pack quote page missing preview CTA"
         assert "Payment Confidence" in proof_quote_page.text, "Proof Pack quote page missing confidence CTA"
-        assert "Quote ID" in proof_quote_page.text, "Proof Pack quote page missing quote ID"
+        assert "Quote ID" not in proof_quote_page.text, "GET quote page must not create a retained quote ID"
         assert "POST /v1/x402/proof-pack" in proof_quote_page.text, "Proof Pack quote page missing short endpoint"
         assert "Full Paid Endpoint" in proof_quote_page.text, "Proof Pack quote page should keep full URL in a scroll-safe block"
 
@@ -612,12 +639,25 @@ async def main() -> None:
         assert "checkout_confidence_page" in proof_bundle_quote["bundles"]["scout"], (
             "Proof Bundle variants missing confidence links"
         )
-        proof_bundle_quote_id = proof_bundle_quote.get("quote_id", "")
+        assert "quote_id" not in proof_bundle_quote, "GET bundle quote previews must not create retained receipts"
+        retained_bundle_quote = (
+            await client.post(
+                "/v1/quotes",
+                json={
+                    "product": "proof_bundle",
+                    "target_urls": ["https://www.iana.org/domains/reserved", "https://example.com"],
+                    "question": "Can these sources support the claim?",
+                    "bundle": "scout",
+                    "source": "ci",
+                },
+            )
+        ).json()
+        proof_bundle_quote_id = retained_bundle_quote.get("quote_id", "")
         assert proof_bundle_quote_id.startswith("qr_"), "Proof Bundle quote should include a stable quote_id"
-        assert proof_bundle_quote["quote_receipt"]["resume_checkout_url"].endswith(f"/checkout/{proof_bundle_quote_id}"), (
+        assert retained_bundle_quote["quote_receipt"]["resume_checkout_url"].endswith(f"/checkout/{proof_bundle_quote_id}"), (
             "Proof Bundle quote should include a resume URL"
         )
-        assert proof_bundle_quote["next_steps"]["checkout_url"].endswith(f"/proof-pack/bundle/pay?quote_id={proof_bundle_quote_id}"), (
+        assert retained_bundle_quote["next_steps"]["checkout_url"].endswith(f"/proof-pack/bundle/pay?quote_id={proof_bundle_quote_id}"), (
             "Proof Bundle quote should shorten tracked checkout with quote_id"
         )
         proof_bundle_receipt = await client.get(f"/v1/quotes/{proof_bundle_quote_id}")
@@ -649,7 +689,7 @@ async def main() -> None:
         assert "Request Bundle" in proof_bundle_page.text, "Proof Bundle quote page missing request CTA"
         assert "Review checkout" in proof_bundle_page.text, "Proof Bundle quote page missing checkout review CTA"
         assert "Payment Confidence" in proof_bundle_page.text, "Proof Bundle quote page missing confidence CTA"
-        assert "Quote ID" in proof_bundle_page.text, "Proof Bundle quote page missing quote ID"
+        assert "Quote ID" not in proof_bundle_page.text, "GET bundle quote page must not create a retained quote ID"
         assert "Before you pay" in proof_bundle_page.text, "Proof Bundle quote page should explain value before payment"
         assert "What This Payment Buys" in proof_bundle_page.text, "Proof Bundle quote page missing deliverables"
         assert "After Checkout" in proof_bundle_page.text, "Proof Bundle quote page missing post-payment flow"
@@ -1611,10 +1651,20 @@ async def main() -> None:
         ), "Proof Pack sample follow-up missing from public discovery"
         assert "proofBundleQuote" in x402_discovery["metadata"], "Proof Bundle quote missing from public discovery"
         assert "proofBundles" in x402_discovery["metadata"], "Proof Bundle pricing missing from public discovery"
+        assert "quoteReceiptCreateApi" in x402_discovery["metadata"], "Quote receipt create API missing from discovery"
+        assert "operatorDashboard" not in x402_discovery["metadata"], "Private operator dashboard should stay out of discovery"
         assert "operatorOrders" not in x402_discovery["metadata"], "Operator orders should stay out of public discovery"
         assert "stripeWebhook" not in x402_discovery["metadata"], "Stripe webhook should stay out of public discovery"
 
-        openapi = (await client.get("/openapi.json")).json()
+        openapi_response = await client.get("/openapi.json")
+        assert openapi_response.headers.get("cache-control") == gateway.OPENAPI_CACHE_CONTROL, (
+            "OpenAPI should be cacheable by discovery clients"
+        )
+        assert openapi_response.headers.get("etag") == gateway.OPENAPI_ETAG, "OpenAPI should publish an ETag"
+        assert openapi_response.headers.get("content-encoding") == "gzip", "OpenAPI should use gzip"
+        conditional_openapi = await client.get("/openapi.json", headers={"If-None-Match": gateway.OPENAPI_ETAG})
+        assert conditional_openapi.status_code == 304, "Matching OpenAPI ETag should return 304"
+        openapi = openapi_response.json()
         schemas = openapi.get("components", {}).get("schemas", {})
         assert schemas.get("AccessRequest", {}).get("examples"), "AccessRequest examples missing"
         assert schemas.get("ProofPackRequest", {}).get("examples"), "ProofPackRequest examples missing"
@@ -1705,7 +1755,12 @@ async def main() -> None:
         assert contact_api_json["status"] == "received", "Contact API should acknowledge submit"
         assert "message" not in contact_api_json, "Contact API response must not echo private message"
 
-        metrics = (await client.get("/metrics")).json()
+        metrics = (
+            await client.get(
+                "/metrics",
+                headers={"X-AxonGate-Operator-Token": "ci-operator-token"},
+            )
+        ).json()
         assert "conversion_funnel" in metrics, "conversion_funnel missing from metrics"
         assert "payment_replay_rejections" in metrics["conversion_funnel"], "replay rejection funnel metric missing"
         assert "attribution" in metrics, "attribution missing from metrics"
@@ -1714,7 +1769,10 @@ async def main() -> None:
         for label in ("1h", "24h", "7d"):
             assert label in rolling_windows, f"{label} rolling attribution window missing"
         assert rolling_windows["24h"]["stages"]["discovery_hits"] > 0, "rolling discovery hits should be tracked"
-        assert "direct" in rolling_windows["24h"]["sources"], "rolling source attribution should include direct hits"
+        assert any(source.endswith(":direct") for source in rolling_windows["24h"]["sources"]), (
+            "rolling source attribution should classify direct hits"
+        )
+        assert metrics["metrics"].get("traffic_test_requests_total", 0) > 0, "test traffic should be isolated"
         assert "metrics_backend" in metrics, "metrics_backend missing from metrics"
         assert "attribution_redis_key" in metrics["metrics_backend"], "attribution Redis key missing from metrics"
         assert "attribution_events_redis_key" in metrics["metrics_backend"], "attribution event Redis key missing from metrics"

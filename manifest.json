@@ -10,7 +10,7 @@
     "name": "AxonGate",
     "basename": "axongate.base.eth",
     "vault_address": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
-    "version": "1.4.5",
+    "version": "1.5.0",
     "status": "active"
   },
   "service": {
@@ -178,7 +178,6 @@
     "legacy_access": "https://api.axongate.one/v1/access",
     "health": "https://api.axongate.one/health",
     "docs": "https://api.axongate.one/docs",
-    "operator": "https://api.axongate.one/operator",
     "quickstart": "https://api.axongate.one/quickstart",
     "paid_test": "https://api.axongate.one/paid-test",
     "agent_diagnostic": "https://api.axongate.one/v1/agent/diagnose",
@@ -186,6 +185,7 @@
     "checkout_confidence": "https://api.axongate.one/checkout/confidence",
     "checkout_confidence_api": "https://api.axongate.one/v1/checkout/confidence",
     "checkout_resume_pattern": "https://api.axongate.one/checkout/{quote_id}",
+    "quote_receipt_create_api": "https://api.axongate.one/v1/quotes",
     "quote_receipt_api_pattern": "https://api.axongate.one/v1/quotes/{quote_id}",
     "quote_receipt_retention_days": 7,
     "quote": "https://api.axongate.one/quote",
@@ -235,8 +235,7 @@
     "x402": "https://api.axongate.one/.well-known/x402",
     "x402_json": "https://api.axongate.one/.well-known/x402.json",
     "discovery": "https://api.axongate.one/discovery/resources",
-    "source_landing_example": "https://api.axongate.one/from/x402-list",
-    "metrics": "https://api.axongate.one/metrics"
+    "source_landing_example": "https://api.axongate.one/from/x402-list"
   },
   "examples": {
     "python_client": "https://github.com/sauliusbeconis/AxonGate/blob/main/examples/python_client.py",
@@ -482,7 +481,6 @@
         "payment-identifier"
       ],
       "docs": "https://api.axongate.one/docs",
-      "operator": "https://api.axongate.one/operator",
       "quickstart": "https://api.axongate.one/quickstart",
       "paid_test": "https://api.axongate.one/paid-test",
       "agent_diagnostic": "https://api.axongate.one/v1/agent/diagnose",
@@ -490,6 +488,7 @@
       "checkout_confidence": "https://api.axongate.one/checkout/confidence",
       "checkout_confidence_api": "https://api.axongate.one/v1/checkout/confidence",
       "checkout_resume_pattern": "https://api.axongate.one/checkout/{quote_id}",
+      "quote_receipt_create_api": "https://api.axongate.one/v1/quotes",
       "quote_receipt_api_pattern": "https://api.axongate.one/v1/quotes/{quote_id}",
       "quote_receipt_retention_days": 7,
       "proof_pack_benchmarks": "https://api.axongate.one/v1/proof-pack/benchmarks",
@@ -557,7 +556,7 @@
       "agent builders that need multi-source proof bundles before launch"
     ],
     "telemetry": {
-      "conversion_funnel": "https://api.axongate.one/metrics",
+      "access": "operator-token-required",
       "tracked_stages": [
         "discovery_hits",
         "payment_challenges",

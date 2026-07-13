@@ -12,6 +12,7 @@ import secrets
 import socket
 import textwrap
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -27,6 +28,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse,
 from jsonschema import ValidationError as JsonSchemaValidationError
 from jsonschema import validate as validate_json_schema
 from pydantic import BaseModel, Field
+from starlette.middleware.gzip import GZipMiddleware
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
 
@@ -81,10 +83,13 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.4.5",
+    version="1.5.0",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+OPENAPI_ETAG = f'W/"axongate-openapi-{app.version}"'
+OPENAPI_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=86400"
 
 DEFAULT_PUBLIC_BASE_URL = "https://api.axongate.one"
 PUBLIC_BASE_URL = os.getenv("AXONGATE_PUBLIC_BASE_URL", DEFAULT_PUBLIC_BASE_URL).rstrip("/")
@@ -119,9 +124,9 @@ METRICS_PERSISTENCE_ENABLED = os.getenv("AXONGATE_METRICS_PERSISTENCE_ENABLED", 
     "false",
     "no",
 }
-METRICS_REDIS_KEY = os.getenv("AXONGATE_METRICS_REDIS_KEY", "axongate:metrics")
-ATTRIBUTION_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_REDIS_KEY", "axongate:attribution")
-ATTRIBUTION_EVENTS_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_EVENTS_REDIS_KEY", "axongate:attribution:events")
+METRICS_REDIS_KEY = os.getenv("AXONGATE_METRICS_REDIS_KEY", "axongate:metrics:v2")
+ATTRIBUTION_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_REDIS_KEY", "axongate:attribution:v2")
+ATTRIBUTION_EVENTS_REDIS_KEY = os.getenv("AXONGATE_ATTRIBUTION_EVENTS_REDIS_KEY", "axongate:attribution:events:v2")
 PROOF_PACK_LEADS_REDIS_KEY = os.getenv("AXONGATE_PROOF_PACK_LEADS_REDIS_KEY", "axongate:proof_pack_leads")
 PROOF_PACK_LEADS_MEMORY_MAX = int(os.getenv("AXONGATE_PROOF_PACK_LEADS_MEMORY_MAX", "200"))
 PAID_REQUEST_EVENTS_REDIS_KEY = os.getenv("AXONGATE_PAID_REQUEST_EVENTS_REDIS_KEY", "axongate:paid_request_events")
@@ -138,6 +143,7 @@ ATTRIBUTION_EVENT_RETENTION_SECONDS = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_
 ATTRIBUTION_EVENT_MEMORY_MAX = int(os.getenv("AXONGATE_ATTRIBUTION_EVENT_MEMORY_MAX", "10000"))
 ALERT_WEBHOOK_URL = os.getenv("AXONGATE_ALERT_WEBHOOK_URL")
 ALERT_WEBHOOK_TOKEN = os.getenv("AXONGATE_ALERT_WEBHOOK_TOKEN")
+ALERT_LOG_ENABLED = os.getenv("AXONGATE_ALERT_LOG_ENABLED", "true").lower() not in {"0", "false", "no"}
 ALERT_MIN_INTERVAL_SECONDS = int(os.getenv("AXONGATE_ALERT_MIN_INTERVAL_SECONDS", "300"))
 ALERT_WEBHOOK_TIMEOUT_SECONDS = float(os.getenv("AXONGATE_ALERT_WEBHOOK_TIMEOUT_SECONDS", "5"))
 OPERATOR_TOKEN = (os.getenv("AXONGATE_OPERATOR_TOKEN") or os.getenv("AXONGATE_ALERT_WEBHOOK_TOKEN") or "").strip()
@@ -443,6 +449,7 @@ alert_windows: dict[str, float] = {}
 alert_lock = asyncio.Lock()
 attribution_counts: dict[str, int] = {}
 attribution_events: dict[str, tuple[int, str, str]] = {}
+request_traffic_class: ContextVar[str] = ContextVar("axongate_request_traffic_class", default="system")
 proof_pack_leads: list[dict[str, Any]] = []
 proof_pack_leads_lock = asyncio.Lock()
 paid_request_events: list[dict[str, Any]] = []
@@ -457,6 +464,12 @@ processed_stripe_events: set[str] = set()
 processed_stripe_events_lock = asyncio.Lock()
 metrics: dict[str, int] = {
     "requests_total": 0,
+    "http_requests_total": 0,
+    "traffic_human_requests_total": 0,
+    "traffic_developer_requests_total": 0,
+    "traffic_automation_requests_total": 0,
+    "traffic_test_requests_total": 0,
+    "traffic_system_requests_total": 0,
     "legacy_access_requests_total": 0,
     "x402_access_requests_total": 0,
     "delivery_credit_retries_total": 0,
@@ -549,6 +562,7 @@ metrics: dict[str, int] = {
     "delivery_credit_success_total": 0,
     "delivery_credit_exhausted_total": 0,
     "alert_checks_total": 0,
+    "alerts_logged_total": 0,
     "alerts_sent_total": 0,
     "alert_errors_total": 0,
     "proof_pack_previews_total": 0,
@@ -780,6 +794,16 @@ class ProofBundleLeadRequest(BaseModel):
     }
 
 
+class QuoteReceiptRequest(BaseModel):
+    product: str = Field(..., description="Quote product: proof_pack or proof_bundle")
+    target_url: Optional[str] = Field(None, description="Public URL for a single-source Proof Pack")
+    target_urls: list[str] = Field(default_factory=list, description="Public URLs for a multi-source Proof Bundle")
+    question: Optional[str] = Field(None, description="Claim or evidence question")
+    pack: str = Field(DEFAULT_PROOF_PACK, description="Proof Pack level")
+    bundle: str = Field(DEFAULT_PROOF_BUNDLE, description="Proof Bundle level")
+    source: Optional[str] = Field(None, description="Attribution source")
+
+
 class ContactRequest(BaseModel):
     name: Optional[str] = Field(None, description="Sender name")
     email: str = Field(..., description="Reply email address")
@@ -1005,6 +1029,52 @@ def normalize_attribution_source(value: Optional[str]) -> str:
     return normalized or "direct"
 
 
+def traffic_class_from_request(request: Request) -> str:
+    """Separate qualified traffic from crawlers, monitors, and internal tests."""
+    source_hints = [
+        request.query_params.get("source"),
+        request.query_params.get("utm_source"),
+        request.query_params.get("ref"),
+        request.headers.get("X-AxonGate-Source"),
+        request.headers.get("X-Source"),
+        request.headers.get("X-Client-Name"),
+    ]
+    normalized_hints = " ".join(normalize_attribution_source(value) for value in source_hints if value)
+    if re.search(r"(?:^|[\s:_.-])(ci|codex|smoke|test|deploy-check|live-llm)(?:$|[\s:_.-])", normalized_hints):
+        return "test"
+
+    path = request.url.path.lower()
+    user_agent = (request.headers.get("user-agent") or "").strip().lower()
+    if user_agent == "testclient" or user_agent.startswith("python-httpx/test"):
+        return "test"
+    if path == "/health" or user_agent.startswith("railway-healthcheck"):
+        return "system"
+
+    automation_markers = (
+        "agent402",
+        "semrush",
+        "crawler",
+        "spider",
+        "bot/",
+        " bot",
+        "uptime",
+        "healthcheck",
+        "openserv",
+        "agent-tools.cloud",
+        "402explorer",
+        "payai",
+        "gort",
+        "headless",
+    )
+    if not user_agent or any(marker in user_agent for marker in automation_markers):
+        return "automation"
+
+    accept = (request.headers.get("accept") or "").lower()
+    if "mozilla/" in user_agent and ("text/html" in accept or request.method.upper() == "GET"):
+        return "human"
+    return "developer"
+
+
 def attribution_source_from_request(request: Request) -> str:
     """Infer where a buyer or crawler came from without storing raw user data."""
     for query_name in ("source", "utm_source", "ref"):
@@ -1088,10 +1158,11 @@ def record_attribution_event(stage: str, source: str) -> None:
 
 def inc_attribution(stage: str, source: str, amount: int = 1) -> None:
     normalized_source = normalize_attribution_source(source)
-    key = f"{stage}:{normalized_source}"
+    classified_source = normalize_attribution_source(f"{request_traffic_class.get()}:{normalized_source}")
+    key = f"{stage}:{classified_source}"
     attribution_counts[key] = attribution_counts.get(key, 0) + amount
     for _ in range(max(0, amount)):
-        record_attribution_event(stage, normalized_source)
+        record_attribution_event(stage, classified_source)
     if redis_client and METRICS_PERSISTENCE_ENABLED:
         schedule_background(persist_attribution_increment(key, amount))
 
@@ -1374,8 +1445,8 @@ async def should_send_alert(alert_key: str) -> bool:
 
 
 async def send_alert(alert_key: str, severity: str, message: str, metric_values: dict[str, int]) -> None:
-    """Send an operations alert to the configured webhook, if enabled."""
-    if not ALERT_WEBHOOK_URL:
+    """Write a throttled structured alert and optionally send it to a webhook."""
+    if not ALERT_LOG_ENABLED and not ALERT_WEBHOOK_URL:
         return
     if not await should_send_alert(alert_key):
         return
@@ -1398,6 +1469,12 @@ async def send_alert(alert_key: str, severity: str, message: str, metric_values:
             "payments_accepted_total": metric_values.get("payments_accepted_total", 0),
         },
     }
+    if ALERT_LOG_ENABLED:
+        print(f"[ALERT] {json.dumps(payload, separators=(',', ':'), sort_keys=True)}")
+        inc_metric("alerts_logged_total")
+    if not ALERT_WEBHOOK_URL:
+        return
+
     headers = {"Content-Type": "application/json"}
     if ALERT_WEBHOOK_TOKEN:
         headers["Authorization"] = f"Bearer {ALERT_WEBHOOK_TOKEN}"
@@ -2020,6 +2097,7 @@ def build_x402_resource() -> dict[str, Any]:
             "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
             "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
             "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+            "quoteReceiptCreateApi": f"{PUBLIC_BASE_URL}/v1/quotes",
             "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
             "quoteReceiptRetentionDays": quote_receipt_retention_days(),
             "docs": f"{PUBLIC_BASE_URL}/docs",
@@ -2027,7 +2105,6 @@ def build_x402_resource() -> dict[str, Any]:
             "faq": f"{PUBLIC_BASE_URL}/faq",
             "contact": f"{PUBLIC_BASE_URL}/contact",
             "contactApi": f"{PUBLIC_BASE_URL}/v1/contact",
-            "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
             "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
             "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
             "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -2330,11 +2407,11 @@ def build_x402_public_discovery() -> dict[str, Any]:
         "checkoutConfidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
         "checkoutConfidenceApi": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
         "checkoutResumePattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+        "quoteReceiptCreateApi": f"{PUBLIC_BASE_URL}/v1/quotes",
         "quoteReceiptApiPattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
         "quoteReceiptRetentionDays": quote_receipt_retention_days(),
         "discovery": f"{PUBLIC_BASE_URL}/discovery/resources",
         "docs": f"{PUBLIC_BASE_URL}/docs",
-        "operatorDashboard": f"{PUBLIC_BASE_URL}/operator",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paidTestGuide": f"{PUBLIC_BASE_URL}/paid-test",
         "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -3796,20 +3873,33 @@ def should_guard_blank_user_agent(request: Request) -> bool:
 
 @app.middleware("http")
 async def enforce_security_and_enrich_402_guidance(request: Request, call_next):
-    if should_redirect_to_https(request):
-        response = RedirectResponse(https_redirect_url(request), status_code=308)
-    elif should_guard_blank_user_agent(request):
-        inc_metric("crawler_guard_no_user_agent_total")
-        response = Response(status_code=204, headers={"X-AxonGate-Crawler-Guard": "no-user-agent"})
-    else:
-        response = await call_next(request)
-    add_security_headers(response, request)
-    has_payment_terms = response.headers.get("PAYMENT-REQUIRED") or response.headers.get("X-Payment-Required")
-    if response.status_code == 402 and has_payment_terms:
-        for name, value in buyer_guidance_headers().items():
-            if name not in response.headers:
-                response.headers[name] = value
-    return response
+    traffic_class = traffic_class_from_request(request)
+    traffic_token = request_traffic_class.set(traffic_class)
+    inc_metric("http_requests_total")
+    inc_metric(f"traffic_{traffic_class}_requests_total")
+    try:
+        if request.url.path == "/openapi.json" and request.headers.get("if-none-match") == OPENAPI_ETAG:
+            response = Response(status_code=304)
+        elif should_redirect_to_https(request):
+            response = RedirectResponse(https_redirect_url(request), status_code=308)
+        elif should_guard_blank_user_agent(request):
+            inc_metric("crawler_guard_no_user_agent_total")
+            response = Response(status_code=204, headers={"X-AxonGate-Crawler-Guard": "no-user-agent"})
+        else:
+            response = await call_next(request)
+        add_security_headers(response, request)
+        if request.url.path == "/openapi.json" and response.status_code in {200, 304}:
+            response.headers["Cache-Control"] = OPENAPI_CACHE_CONTROL
+            response.headers["ETag"] = OPENAPI_ETAG
+            response.headers["Vary"] = "Accept-Encoding"
+        has_payment_terms = response.headers.get("PAYMENT-REQUIRED") or response.headers.get("X-Payment-Required")
+        if response.status_code == 402 and has_payment_terms:
+            for name, value in buyer_guidance_headers().items():
+                if name not in response.headers:
+                    response.headers[name] = value
+        return response
+    finally:
+        request_traffic_class.reset(traffic_token)
 
 
 async def verify_x402_payment(tx_hash: str, expected_fee_usdc: Decimal = REQUIRED_USDC_FEE) -> PaymentVerification:
@@ -11199,9 +11289,9 @@ def site_nav_html(active: str = "") -> str:
     """Render the compact shared top navigation."""
     nav_items = [
         ("Home", public_url("/"), "Home"),
-        ("Evidence Bundles", public_url("/proof-pack/bundle"), "Bundles"),
-        ("Library", public_url("/proof-pack/library"), "Library"),
+        ("Audits", public_url("/proof-pack/bundle"), "Bundles"),
         ("Sample", public_url("/proof-pack/sample"), "Sample"),
+        ("About", public_url("/about"), "About"),
         ("Contact", public_url("/contact"), "Contact"),
         ("Developers", public_url("/docs"), "Docs"),
     ]
@@ -11942,7 +12032,7 @@ def build_home_html() -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {seo_meta_html("AxonGate Evidence Bundles", "Buy cited evidence checks that show whether public sources support an AI product claim before your agent cites, ingests, or acts on them.", "/")}
+  {seo_meta_html("AxonGate Source Quality Gate for AI", "Know what your AI can safely cite before it ships. Audit public sources before an agent cites them or a RAG system ingests them.", "/")}
   <style>
     :root {{
       color-scheme: light dark;
@@ -12178,15 +12268,14 @@ def build_home_html() -> str:
     {nav}
     <section class="hero">
       <div>
-        <p class="eyebrow">Evidence checks for AI products</p>
-        <h1>Can these sources prove your claim?</h1>
-        <p class="summary">AxonGate turns a list of public URLs into a cited evidence report. Use it before your agent cites a page, adds sources to RAG, or repeats a claim to customers.</p>
+        <p class="eyebrow">The source quality gate for AI</p>
+        <h1>Know what your AI can safely cite before it ships.</h1>
+        <p class="summary">AxonGate audits public URLs against a claim, flags weak evidence and noisy sources, and returns a cited decision before an agent answers or a RAG system ingests them.</p>
         <div class="hero-actions">
-          {stripe_button_html(builder_stripe, "Start Builder - $7")}
-          <a class="button secondary" href="{bundle_url}">Quote With URLs</a>
+          <a class="button" href="#audit-form">Audit My Sources</a>
           <a class="button secondary" href="{sample_url}">View Sample Report</a>
         </div>
-        <form class="bundle-form" method="get" action="/proof-pack/bundle/quote" accept-charset="utf-8">
+        <form id="audit-form" class="bundle-form" method="get" action="/proof-pack/bundle/quote" accept-charset="utf-8">
           <label class="wide">Source URLs
             <textarea name="target_urls" placeholder="https://example.com/source&#10;https://example.org/context" required></textarea>
           </label>
@@ -12197,7 +12286,7 @@ def build_home_html() -> str:
             <select name="bundle" aria-label="Evidence Bundle">{bundle_options}</select>
           </label>
           <input type="hidden" name="source" value="homepage">
-          <button type="submit">Get Evidence Quote</button>
+          <button type="submit">Audit My Sources</button>
         </form>
       </div>
       <aside class="report-visual" aria-label="Sample evidence report preview">
@@ -12243,13 +12332,13 @@ def build_home_html() -> str:
     </section>
 
     <section>
-      <h2>Stripe pricing</h2>
+      <h2>Evidence audit pricing</h2>
       <div class="price-grid">
         <div class="price-card">
           <strong>Scout</strong>
           <div class="price"><span class="currency">$</span>{scout_price} <small>USD</small></div>
           <p>Up to {scout_limit} public URLs. Quick claim-support and source-quality check.</p>
-          {stripe_button_html(scout_stripe, "Pay $2 with Stripe")}
+          {stripe_button_html(scout_stripe, f"Pay ${scout_price} with Stripe")}
           <a href="{bundle_url}?bundle=scout&source=homepage">Quote first</a>
         </div>
         <div class="price-card featured">
@@ -12257,14 +12346,14 @@ def build_home_html() -> str:
           <strong>Builder</strong>
           <div class="price"><span class="currency">$</span>{builder_price} <small>USD</small></div>
           <p>Up to {builder_limit} public URLs. Cited evidence bundle for product and agent teams.</p>
-          {stripe_button_html(builder_stripe, "Pay $7 with Stripe")}
+          {stripe_button_html(builder_stripe, f"Pay ${builder_price} with Stripe")}
           <a href="{bundle_url}?bundle={html.escape(DEFAULT_PROOF_BUNDLE)}&source=homepage">Quote first</a>
         </div>
         <div class="price-card">
           <strong>Audit</strong>
           <div class="price"><span class="currency">$</span>{audit_price} <small>USD</small></div>
           <p>Up to {audit_limit} public URLs. Deeper review for launches, vendors, and sensitive claims.</p>
-          {stripe_button_html(audit_stripe, "Pay $20 with Stripe")}
+          {stripe_button_html(audit_stripe, f"Pay ${audit_price} with Stripe")}
           <a href="{bundle_url}?bundle=audit&source=homepage">Quote first</a>
         </div>
       </div>
@@ -15485,10 +15574,23 @@ def build_operator_dashboard_html(
     accepted_rate = rates.get("accepted_per_paid_attempt", 0)
     delivered_rate = rates.get("delivered_per_accepted", 0)
     supplier_rate = rates.get("supplier_success_per_request", 0)
+    http_requests = metric("http_requests_total")
+    qualified_requests = metric("traffic_human_requests_total") + metric("traffic_developer_requests_total")
+    qualified_rate = conversion_rate(qualified_requests, http_requests)
 
     cards = "\n".join(
         [
-            card("Requests", count(metric("requests_total")), "All public app requests"),
+            card("HTTP Requests", count(http_requests), "Every request received by the app"),
+            card("Qualified Traffic", count(qualified_requests), percent(qualified_rate)),
+            card("Human", count(metric("traffic_human_requests_total")), "Browser-like customer traffic"),
+            card("Developer", count(metric("traffic_developer_requests_total")), "API clients not classified as bots"),
+            card("Automation", count(metric("traffic_automation_requests_total")), "Known crawlers, monitors, and discovery bots"),
+            card(
+                "Test / System",
+                count(metric("traffic_test_requests_total") + metric("traffic_system_requests_total")),
+                "Excluded from customer demand",
+            ),
+            card("Paid Endpoint Requests", count(metric("requests_total")), "x402 and legacy paid-route requests"),
             card("Discovery Hits", count(metric("discovery_hits_total")), "Root, x402, docs, cards, sitemap"),
             card("Payment Challenges", count(metric("payment_challenges_total")), "402 requirements served"),
             card("Paid Attempts", count(metric("paid_attempts_total")), percent(challenge_rate)),
@@ -17073,65 +17175,30 @@ def build_demo_html() -> str:
 
 
 def build_robots_txt() -> str:
-    """Return permissive crawler hints for public discovery surfaces."""
+    """Keep search crawlers on customer pages while leaving agent discovery reachable."""
     return f"""User-agent: *
 Allow: /
+Allow: /.well-known/
+Disallow: /operator
+Disallow: /metrics
+Disallow: /v1/
+Disallow: /checkout/
 
 Sitemap: {public_url("/sitemap.xml")}
 """
 
 
 def build_sitemap_xml() -> str:
-    """Return a small XML sitemap for public and agent discovery URLs."""
+    """Return a focused sitemap containing only canonical customer pages."""
     now = time.strftime("%Y-%m-%d", time.gmtime())
     entries = [
         ("/", "1.0"),
-        ("/docs", "0.9"),
-        ("/about", "0.85"),
-        ("/faq", "0.85"),
-        ("/contact", "0.85"),
-        ("/operator", "0.9"),
-        ("/quickstart", "0.95"),
-        ("/paid-test", "0.9"),
-        ("/v1/agent/diagnose", "0.9"),
-        ("/v1/agent/trust", "0.9"),
-        ("/checkout/confidence", "0.9"),
-        ("/v1/checkout/confidence", "0.85"),
-        ("/quote", "0.9"),
-        ("/v1/x402/quote", "0.8"),
-        ("/proof-pack", "0.95"),
-        ("/proof-pack/library", "0.95"),
+        ("/proof-pack/bundle", "0.95"),
         ("/proof-pack/sample", "0.9"),
-        ("/proof-pack/preview", "0.9"),
-        ("/proof-pack/quote", "0.9"),
-        ("/proof-pack/request", "0.9"),
-        ("/v1/proof-pack/benchmarks", "0.85"),
-        ("/proof-pack/bundle", "0.9"),
-        ("/proof-pack/bundle/quote", "0.9"),
-        ("/proof-pack/bundle/checkout", "0.85"),
-        ("/proof-pack/bundle/pay", "0.8"),
-        ("/proof-pack/bundle/recover", "0.8"),
-        ("/v1/proof-pack/sample", "0.85"),
-        (f"/v1/proof-pack/reports/{PROOF_PACK_SAMPLE_REPORT_ID}/verify", "0.8"),
-        ("/v1/proof-pack/preview", "0.85"),
-        ("/v1/proof-pack/quote", "0.85"),
-        ("/v1/proof-pack/bundle/quote", "0.85"),
-        ("/v1/proof-pack/bundle/leads", "0.75"),
-        ("/v1/x402/proof-pack", "0.85"),
-        ("/demo", "0.9"),
-        ("/llms.txt", "0.8"),
-        ("/manifest.json", "0.8"),
-        ("/.well-known/agent.json", "0.8"),
-        ("/.well-known/agent-card.json", "0.8"),
-        ("/.well-known/x402", "0.8"),
-        ("/.well-known/x402.json", "0.8"),
-        ("/discovery/resources", "0.8"),
-        ("/openapi.json", "0.7"),
-        ("/swagger", "0.7"),
+        ("/docs", "0.85"),
+        ("/about", "0.8"),
+        ("/contact", "0.8"),
     ]
-    entries.extend((f"/proof-pack/library/{entry['slug']}", "0.9") for entry in EVIDENCE_LIBRARY_ENTRIES)
-    entries.extend((f"/proof-pack/share/{entry['slug']}", "0.85") for entry in EVIDENCE_LIBRARY_ENTRIES)
-    entries.extend((f"/from/{source}", "0.85") for source in SOURCE_ALIAS_PATHS[:6])
     url_entries = "\n".join(
         "  <url>"
         f"<loc>{html.escape(public_url(path), quote=True)}</loc>"
@@ -17213,9 +17280,16 @@ async def contact_api(request: Request, contact_request: ContactRequest):
     return contact_public_response(lead)
 
 
-@app.get("/operator", response_class=HTMLResponse, tags=["operations"], summary="Operator conversion dashboard")
+@app.get(
+    "/operator",
+    response_class=HTMLResponse,
+    tags=["operations"],
+    summary="Private operator conversion dashboard",
+    include_in_schema=False,
+)
 async def operator_dashboard(request: Request):
-    """Serve a public operator view backed by the metrics endpoint data."""
+    """Serve the token-protected operator view backed by durable metrics."""
+    require_operator_access(request)
     inc_discovery_hit("discovery_operator_hits_total", attribution_source_from_request(request))
     metric_values = await durable_metrics_snapshot()
     attribution = await durable_attribution_snapshot()
@@ -17679,6 +17753,40 @@ async def quote_receipt_page(request: Request, quote_id: str):
     return build_quote_receipt_html(receipt)
 
 
+@app.post("/v1/quotes", tags=["discovery"], summary="Create an intentional resumable quote")
+async def create_quote_receipt_api(request: Request, quote_request: QuoteReceiptRequest):
+    """Create a retained quote only after an explicit write request."""
+    source = normalize_attribution_source(quote_request.source or attribution_source_from_request(request))
+    product = normalize_checkout_product(quote_request.product)
+    try:
+        await enforce_rate_limit("quote_receipt_create_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
+        if product == "proof_pack":
+            if not quote_request.target_url:
+                raise PaymentValidationError("target_url is required for a Proof Pack quote receipt.")
+            quote = await build_proof_pack_quote(
+                quote_request.target_url,
+                quote_request.question,
+                quote_request.pack,
+                source,
+            )
+            inc_metric("proof_pack_quotes_total")
+            inc_attribution("proof_pack_quotes", source)
+        else:
+            quote = await build_proof_bundle_quote(
+                quote_request.target_urls,
+                quote_request.question,
+                quote_request.bundle,
+                source,
+            )
+            inc_metric("proof_bundle_quotes_total")
+            inc_attribution("proof_bundle_quotes", source)
+        return await attach_quote_receipt(product, quote)
+    except RateLimitExceeded as exc:
+        raise rate_limit_429(exc) from exc
+    except PaymentValidationError as exc:
+        raise HTTPException(status_code=400, detail=exc.detail) from exc
+
+
 @app.get("/v1/quotes/{quote_id}", tags=["discovery"], summary="Read retained quote receipt")
 async def quote_receipt_api(request: Request, quote_id: str):
     """Return a retained quote receipt and its resumable next steps."""
@@ -17735,8 +17843,6 @@ async def proof_bundle_quote_page(
 ):
     """Serve a no-spend multi-source bundle quote page for buyers."""
     source = attribution_source_from_request(request)
-    inc_metric("proof_bundle_quotes_total")
-    inc_attribution("proof_bundle_quotes", source)
     inc_discovery_hit("discovery_proof_bundle_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
@@ -17751,10 +17857,9 @@ async def proof_bundle_quote_page(
             inc_discovery_hit("discovery_quote_receipt_hits_total", source)
             quote = quote_from_receipt(receipt)
         else:
-            quote = await attach_quote_receipt(
-                "proof_bundle",
-                await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source),
-            )
+            quote = await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source)
+            inc_metric("proof_bundle_quotes_total")
+            inc_attribution("proof_bundle_quotes", source)
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -17799,8 +17904,6 @@ async def proof_bundle_quote_api(
 ):
     """Return no-spend Proof Bundle pricing and buyer next steps for public targets."""
     source = attribution_source_from_request(request)
-    inc_metric("proof_bundle_quotes_total")
-    inc_attribution("proof_bundle_quotes", source)
     inc_discovery_hit("discovery_proof_bundle_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_bundle_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
@@ -17814,10 +17917,10 @@ async def proof_bundle_quote_api(
             inc_metric("quote_receipt_reads_total")
             inc_discovery_hit("discovery_quote_receipt_hits_total", source)
             return quote_from_receipt(receipt)
-        return await attach_quote_receipt(
-            "proof_bundle",
-            await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source),
-        )
+        quote = await build_proof_bundle_quote(split_bundle_target_urls(target_urls), question, bundle, source)
+        inc_metric("proof_bundle_quotes_total")
+        inc_attribution("proof_bundle_quotes", source)
+        return quote
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -18281,8 +18384,6 @@ async def proof_pack_quote_page(
 ):
     """Serve a no-spend Proof Pack quote page for buyers."""
     source = attribution_source_from_request(request)
-    inc_metric("proof_pack_quotes_total")
-    inc_attribution("proof_pack_quotes", source)
     inc_discovery_hit("discovery_proof_pack_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_pack_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
@@ -18297,10 +18398,9 @@ async def proof_pack_quote_page(
             inc_discovery_hit("discovery_quote_receipt_hits_total", source)
             quote = quote_from_receipt(receipt)
         else:
-            quote = await attach_quote_receipt(
-                "proof_pack",
-                await build_proof_pack_quote(target_url, question, pack, source),
-            )
+            quote = await build_proof_pack_quote(target_url, question, pack, source)
+            inc_metric("proof_pack_quotes_total")
+            inc_attribution("proof_pack_quotes", source)
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -18332,8 +18432,6 @@ async def proof_pack_quote_api(
 ):
     """Return no-spend Proof Pack pricing and buyer commands for a public target."""
     source = attribution_source_from_request(request)
-    inc_metric("proof_pack_quotes_total")
-    inc_attribution("proof_pack_quotes", source)
     inc_discovery_hit("discovery_proof_pack_quote_hits_total", source)
     try:
         await enforce_rate_limit("proof_pack_quote_ip", client_rate_identifier(request), RATE_LIMIT_UNPAID_PER_IP)
@@ -18347,10 +18445,10 @@ async def proof_pack_quote_api(
             inc_metric("quote_receipt_reads_total")
             inc_discovery_hit("discovery_quote_receipt_hits_total", source)
             return quote_from_receipt(receipt)
-        return await attach_quote_receipt(
-            "proof_pack",
-            await build_proof_pack_quote(target_url, question, pack, source),
-        )
+        quote = await build_proof_pack_quote(target_url, question, pack, source)
+        inc_metric("proof_pack_quotes_total")
+        inc_attribution("proof_pack_quotes", source)
+        return quote
     except RateLimitExceeded as exc:
         raise rate_limit_429(exc) from exc
     except PaymentValidationError as exc:
@@ -18415,7 +18513,6 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "contact": f"{PUBLIC_BASE_URL}/contact",
         "contact_api": f"{PUBLIC_BASE_URL}/v1/contact",
         "contact_email": PUBLIC_CONTACT_EMAIL,
-        "operator_dashboard": f"{PUBLIC_BASE_URL}/operator",
         "quickstart": f"{PUBLIC_BASE_URL}/quickstart",
         "paid_test_guide": f"{PUBLIC_BASE_URL}/paid-test",
         "agent_diagnostic": f"{PUBLIC_BASE_URL}/v1/agent/diagnose",
@@ -18423,6 +18520,7 @@ def build_discovery_index_payload() -> dict[str, Any]:
         "checkout_confidence": f"{PUBLIC_BASE_URL}/checkout/confidence",
         "checkout_confidence_api": f"{PUBLIC_BASE_URL}/v1/checkout/confidence",
         "checkout_resume_pattern": f"{PUBLIC_BASE_URL}/checkout/{{quote_id}}",
+        "quote_receipt_create_api": f"{PUBLIC_BASE_URL}/v1/quotes",
         "quote_receipt_api_pattern": f"{PUBLIC_BASE_URL}/v1/quotes/{{quote_id}}",
         "quote_receipt_retention_days": quote_receipt_retention_days(),
         "quote": f"{PUBLIC_BASE_URL}/quote",
@@ -18500,9 +18598,11 @@ async def root(request: Request):
     return HTMLResponse(build_home_html())
 
 
-@app.get("/health", tags=["operations"], summary="Railway health check")
+@app.get("/health", tags=["operations"], summary="Railway health check", include_in_schema=False)
 async def health():
-    return {"status": "alive", "vault_address": load_vault_address()}
+    metric_values = await durable_metrics_snapshot()
+    schedule_background(evaluate_alerts(metric_values))
+    return {"status": "alive", "service": "axongate", "version": app.version}
 
 
 @app.get("/v1/agent/diagnose", tags=["discovery"], summary="Agent payment compatibility diagnostic")
@@ -18627,9 +18727,10 @@ async def discovery_resources_alias(request: Request, type: Optional[str] = None
     return await discovery_resources(request, type=type, limit=limit, offset=offset)
 
 
-@app.get("/metrics", tags=["operations"], summary="Operational metrics")
-async def metrics_snapshot():
-    """Expose lightweight operational counters for conversion and margin tuning."""
+@app.get("/metrics", tags=["operations"], summary="Private operational metrics", include_in_schema=False)
+async def metrics_snapshot(request: Request):
+    """Expose token-protected operational counters for conversion and margin tuning."""
+    require_operator_access(request)
     metric_values = await durable_metrics_snapshot()
     attribution = await durable_attribution_snapshot()
     rolling_attribution = await durable_rolling_attribution_snapshot()
@@ -18653,7 +18754,9 @@ async def metrics_snapshot():
             ),
         },
         "alerts": {
-            "enabled": bool(ALERT_WEBHOOK_URL),
+            "enabled": bool(ALERT_LOG_ENABLED or ALERT_WEBHOOK_URL),
+            "logging_enabled": ALERT_LOG_ENABLED,
+            "webhook_enabled": bool(ALERT_WEBHOOK_URL),
             "triggered": triggered_alerts,
             "min_interval_seconds": ALERT_MIN_INTERVAL_SECONDS,
             "min_sample_size": ALERT_MIN_SAMPLE_SIZE,
