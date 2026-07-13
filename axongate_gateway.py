@@ -83,7 +83,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.5.0",
+    version="1.5.1",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -12005,9 +12005,15 @@ def delivery_promise_html() -> str:
     """
 
 
-def build_home_html() -> str:
+def build_home_html(source: str = "homepage") -> str:
     """Render the customer-facing homepage at the root URL."""
     nav = site_nav_html("Home")
+    campaign_source = normalize_attribution_source(source)
+    if campaign_source == "direct":
+        campaign_source = "homepage"
+    source_param = html.escape(url_quote(campaign_source, safe=""), quote=True)
+    source_value = html.escape(campaign_source, quote=True)
+    checkout_source = normalize_attribution_source(f"{campaign_source}-stripe")
     scout_price = html.escape(str(price_for_proof_bundle("scout")))
     builder_price = html.escape(str(price_for_proof_bundle(DEFAULT_PROOF_BUNDLE)))
     audit_price = html.escape(str(price_for_proof_bundle("audit")))
@@ -12015,13 +12021,13 @@ def build_home_html() -> str:
     builder_limit = html.escape(str(proof_bundle_source_limit(DEFAULT_PROOF_BUNDLE)))
     audit_limit = html.escape(str(proof_bundle_source_limit("audit")))
     bundle_url = html.escape(public_url("/proof-pack/bundle"), quote=True)
-    contact_url = html.escape(public_url("/contact"), quote=True)
-    sample_url = html.escape(public_url("/proof-pack/sample"), quote=True)
+    contact_url = html.escape(public_url(f"/contact?source={url_quote(campaign_source, safe='')}"), quote=True)
+    sample_url = html.escape(public_url(f"/proof-pack/sample?source={url_quote(campaign_source, safe='')}"), quote=True)
     docs_url = html.escape(public_url("/docs"), quote=True)
     agent_api_url = html.escape(public_url("/proof-pack"), quote=True)
-    scout_stripe = proof_bundle_checkout_path([], "", "scout", "home-stripe")
-    builder_stripe = proof_bundle_checkout_path([], "", DEFAULT_PROOF_BUNDLE, "home-stripe")
-    audit_stripe = proof_bundle_checkout_path([], "", "audit", "home-stripe")
+    scout_stripe = proof_bundle_checkout_path([], "", "scout", checkout_source)
+    builder_stripe = proof_bundle_checkout_path([], "", DEFAULT_PROOF_BUNDLE, checkout_source)
+    audit_stripe = proof_bundle_checkout_path([], "", "audit", checkout_source)
     bundle_options = "\n".join(
         f'<option value="{html.escape(bundle_name)}"{" selected" if bundle_name == DEFAULT_PROOF_BUNDLE else ""}>'
         f'{html.escape(bundle_name.title())} - ${html.escape(str(price_for_proof_bundle(bundle_name)))}</option>'
@@ -12285,7 +12291,7 @@ def build_home_html() -> str:
           <label>Bundle
             <select name="bundle" aria-label="Evidence Bundle">{bundle_options}</select>
           </label>
-          <input type="hidden" name="source" value="homepage">
+          <input type="hidden" name="source" value="{source_value}">
           <button type="submit">Audit My Sources</button>
         </form>
       </div>
@@ -12316,12 +12322,12 @@ def build_home_html() -> str:
         <div class="path-card">
           <strong>Scout</strong>
           <p>Quickly screen a few URLs and see whether the source material is usable.</p>
-          <a href="{bundle_url}?bundle=scout&source=homepage">Add URLs</a>
+          <a href="{bundle_url}?bundle=scout&source={source_param}">Add URLs</a>
         </div>
         <div class="path-card">
           <strong>Builder</strong>
           <p>Best first purchase for teams preparing source-backed agent workflows.</p>
-          <a href="{bundle_url}?bundle={html.escape(DEFAULT_PROOF_BUNDLE)}&source=homepage">Start Builder</a>
+          <a href="{bundle_url}?bundle={html.escape(DEFAULT_PROOF_BUNDLE)}&source={source_param}">Start Builder</a>
         </div>
         <div class="path-card">
           <strong>Audit</strong>
@@ -12339,7 +12345,7 @@ def build_home_html() -> str:
           <div class="price"><span class="currency">$</span>{scout_price} <small>USD</small></div>
           <p>Up to {scout_limit} public URLs. Quick claim-support and source-quality check.</p>
           {stripe_button_html(scout_stripe, f"Pay ${scout_price} with Stripe")}
-          <a href="{bundle_url}?bundle=scout&source=homepage">Quote first</a>
+          <a href="{bundle_url}?bundle=scout&source={source_param}">Quote first</a>
         </div>
         <div class="price-card featured">
           <span class="badge">Best first buy</span>
@@ -12347,14 +12353,14 @@ def build_home_html() -> str:
           <div class="price"><span class="currency">$</span>{builder_price} <small>USD</small></div>
           <p>Up to {builder_limit} public URLs. Cited evidence bundle for product and agent teams.</p>
           {stripe_button_html(builder_stripe, f"Pay ${builder_price} with Stripe")}
-          <a href="{bundle_url}?bundle={html.escape(DEFAULT_PROOF_BUNDLE)}&source=homepage">Quote first</a>
+          <a href="{bundle_url}?bundle={html.escape(DEFAULT_PROOF_BUNDLE)}&source={source_param}">Quote first</a>
         </div>
         <div class="price-card">
           <strong>Audit</strong>
           <div class="price"><span class="currency">$</span>{audit_price} <small>USD</small></div>
           <p>Up to {audit_limit} public URLs. Deeper review for launches, vendors, and sensitive claims.</p>
           {stripe_button_html(audit_stripe, f"Pay ${audit_price} with Stripe")}
-          <a href="{bundle_url}?bundle=audit&source=homepage">Quote first</a>
+          <a href="{bundle_url}?bundle=audit&source={source_param}">Quote first</a>
         </div>
       </div>
       <p>Checkout opens Stripe. If you want to add URLs first, use the quote path and the selected bundle stays attached to your request.</p>
@@ -18595,7 +18601,7 @@ async def root(request: Request):
     inc_discovery_hit("discovery_root_hits_total", attribution_source_from_request(request))
     if request_prefers_json(request):
         return build_discovery_index_payload()
-    return HTMLResponse(build_home_html())
+    return HTMLResponse(build_home_html(attribution_source_from_request(request)))
 
 
 @app.get("/health", tags=["operations"], summary="Railway health check", include_in_schema=False)

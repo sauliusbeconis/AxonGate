@@ -184,6 +184,14 @@ async def main() -> None:
         legacy_package_copy = "Choose the " + "h" + "uman package"
         assert legacy_checkout_copy not in root_page.text, "Homepage should not expose internal funnel wording"
         assert legacy_package_copy not in root_page.text, "Homepage should not expose awkward package wording"
+        assert 'name="source" value="homepage"' in root_page.text, "Direct homepage should retain homepage attribution"
+        campaign_page = await client.get("/?source=design-partner")
+        assert 'name="source" value="design-partner"' in campaign_page.text, (
+            "Campaign homepage should preserve attribution through the audit form"
+        )
+        assert "source=design-partner" in campaign_page.text, (
+            "Campaign homepage should preserve attribution in downstream links"
+        )
         root_discovery = await client.get("/?format=json")
         assert root_discovery.status_code == 200, "Root discovery JSON should still render"
         root_discovery_json = root_discovery.json()
