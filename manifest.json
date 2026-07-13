@@ -10,7 +10,7 @@
     "name": "AxonGate",
     "basename": "axongate.base.eth",
     "vault_address": "0xcD11393c8505C5A44F8b998E0c96BcC5698d76A7",
-    "version": "1.5.1",
+    "version": "1.6.0",
     "status": "active"
   },
   "service": {

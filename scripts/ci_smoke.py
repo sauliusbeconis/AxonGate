@@ -172,8 +172,9 @@ async def main() -> None:
         assert private_metrics.status_code == 200, "operational metrics should accept an operator token"
 
         root_page = await client.get("/")
-        assert "Know what your AI can safely cite before it ships." in root_page.text, "Homepage missing focused source-quality headline"
+        assert "AI agents can fetch anything." in root_page.text, "Homepage missing focused source-quality headline"
         assert "Audit My Sources" in root_page.text, "Homepage missing primary source-audit CTA"
+        assert "402 payment_required" in root_page.text, "Homepage missing animated x402 agent trust sequence"
         assert "Parser returns text. AxonGate returns a decision." in root_page.text, (
             "Homepage should explain why AxonGate is more than parsing"
         )

@@ -83,7 +83,7 @@ load_dotenv()
 app = FastAPI(
     title="AxonGate Sovereign Gateway",
     description="x402-paid evidence trust layer for AI agents that need source support, citation quality, and clean context on Base.",
-    version="1.5.1",
+    version="1.6.0",
     docs_url="/swagger",
     redoc_url="/redoc",
 )
@@ -12005,6 +12005,632 @@ def delivery_promise_html() -> str:
     """
 
 
+def agent_protocol_visual_html() -> str:
+    """Render the animated agent-to-agent x402 trust flow used on the homepage."""
+    return """
+    <aside class="protocol-visual" aria-label="Animated x402 communication between autonomous agents">
+      <div class="protocol-toolbar">
+        <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <span class="protocol-title">agent trust exchange</span>
+        <span class="live-state"><i></i> live</span>
+      </div>
+      <div class="protocol-canvas">
+        <div class="mesh-grid" aria-hidden="true"></div>
+        <div class="orbit orbit-one" aria-hidden="true"></div>
+        <div class="orbit orbit-two" aria-hidden="true"></div>
+        <div class="data-rail" aria-hidden="true">
+          <span class="packet packet-one"></span>
+          <span class="packet packet-two"></span>
+          <span class="packet packet-three"></span>
+        </div>
+
+        <div class="agent-node agent-requester">
+          <div class="bot-avatar" aria-hidden="true">
+            <span class="bot-antenna"></span>
+            <span class="bot-eye eye-left"></span>
+            <span class="bot-eye eye-right"></span>
+          </div>
+          <strong>Research agent</strong>
+          <small>verify_claim()</small>
+        </div>
+
+        <div class="gate-node">
+          <div class="gate-halo" aria-hidden="true"></div>
+          <div class="gate-core"><span>x</span>402</div>
+          <strong>AxonGate</strong>
+          <small>evidence + payment gate</small>
+        </div>
+
+        <div class="agent-node agent-receiver">
+          <div class="bot-avatar" aria-hidden="true">
+            <span class="bot-antenna"></span>
+            <span class="bot-eye eye-left"></span>
+            <span class="bot-eye eye-right"></span>
+          </div>
+          <strong>Decision agent</strong>
+          <small>cited_verdict.json</small>
+        </div>
+
+        <span class="rail-label request-label">request</span>
+        <span class="rail-label verdict-label">verdict</span>
+      </div>
+      <div class="protocol-log" aria-label="x402 protocol sequence">
+        <div class="protocol-event event-one"><span>01</span><code>POST /v1/x402/proof-pack</code><b>request</b></div>
+        <div class="protocol-event event-two"><span>02</span><code>402 payment_required</code><b>gate</b></div>
+        <div class="protocol-event event-three"><span>03</span><code>USDC · Base · settled</code><b>paid</b></div>
+        <div class="protocol-event event-four"><span>04</span><code>200 evidence.delivered</code><b>trusted</b></div>
+      </div>
+    </aside>
+    """
+
+
+def home_page_css() -> str:
+    """Return the focused futuristic visual system for the customer homepage."""
+    return shared_ui_css() + """
+    :root {
+      color-scheme: dark;
+      --bg: #05070c;
+      --bg-soft: #090d15;
+      --panel: #0c111b;
+      --panel-strong: #111925;
+      --panel-glass: rgba(12, 17, 27, 0.76);
+      --text: #f4f8fb;
+      --muted: #93a1b3;
+      --muted-strong: #bac5d2;
+      --line: rgba(150, 171, 197, 0.18);
+      --line-strong: rgba(124, 247, 212, 0.34);
+      --accent: #7cf7d4;
+      --accent-deep: #23cda3;
+      --blue: #7aa7ff;
+      --purple: #a78bfa;
+      --price: #f8fafc;
+      --price-muted: #8ef5d9;
+      --stripe: #635bff;
+      --code: #050810;
+      --good: #8ef5c6;
+      --bad: #ff8f9d;
+      --warn: #f8c978;
+      --page-max: 1240px;
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      background:
+        radial-gradient(circle at 78% 6%, rgba(70, 126, 255, 0.12), transparent 30rem),
+        radial-gradient(circle at 18% 18%, rgba(35, 205, 163, 0.09), transparent 27rem),
+        linear-gradient(180deg, #070a11 0, var(--bg) 42rem);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+    body::before {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      content: "";
+      pointer-events: none;
+      opacity: .24;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: linear-gradient(to bottom, #000, transparent 76%);
+    }
+    main { max-width: var(--page-max); margin: 0 auto; padding: 24px 28px 80px; }
+    h1 {
+      max-width: 12ch;
+      margin: 0;
+      font-size: clamp(3.15rem, 6.5vw, 6.45rem);
+      font-weight: 720;
+      letter-spacing: -.065em;
+      line-height: .94;
+      text-wrap: balance;
+    }
+    h1 span {
+      color: transparent;
+      background: linear-gradient(105deg, #f7fbff 8%, var(--accent) 48%, #8fb5ff 92%);
+      background-clip: text;
+      -webkit-background-clip: text;
+    }
+    h2 {
+      margin: 54px 0 16px;
+      font-size: clamp(1.75rem, 3.4vw, 3rem);
+      font-weight: 650;
+      letter-spacing: -.04em;
+      line-height: 1.05;
+      text-wrap: balance;
+    }
+    h3 { margin: 0 0 8px; font-size: 1.05rem; }
+    p, li, label, small { color: var(--muted); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: none; }
+    .site-nav {
+      margin-bottom: clamp(54px, 8vw, 94px);
+      padding: 10px 0 18px;
+      border-bottom-color: rgba(150, 171, 197, .12);
+    }
+    .brand {
+      position: relative;
+      min-height: 40px;
+      padding-left: 50px;
+      justify-content: center;
+      font-size: 1.04rem;
+      letter-spacing: -.02em;
+    }
+    .brand::before {
+      position: absolute;
+      left: 0;
+      top: 1px;
+      width: 38px;
+      height: 38px;
+      border: 1px solid var(--line-strong);
+      border-radius: 12px;
+      content: "A";
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-size: .92rem;
+      font-weight: 900;
+      background:
+        radial-gradient(circle at 35% 30%, rgba(124,247,212,.22), transparent 50%),
+        var(--panel);
+      box-shadow: inset 0 0 18px rgba(124,247,212,.08), 0 0 28px rgba(124,247,212,.08);
+    }
+    .brand small { color: #718096; letter-spacing: .02em; }
+    .nav-core { gap: 4px; }
+    .nav-core > a {
+      min-height: 36px;
+      border-color: transparent;
+      border-radius: 999px;
+      padding: 8px 11px;
+      background: transparent;
+      color: #aab6c5;
+      font-size: .86rem;
+      font-weight: 590;
+    }
+    .nav-core > a:hover,
+    .nav-core > a[aria-current="page"] {
+      border-color: var(--line);
+      background: rgba(255,255,255,.035);
+      color: var(--text);
+    }
+    .nav-core .ui-menu { min-width: auto; }
+    .nav-core .ui-menu summary {
+      min-height: 36px;
+      border-radius: 999px;
+      background: transparent;
+      color: #aab6c5;
+      font-size: .86rem;
+    }
+    .hero {
+      position: relative;
+      display: grid;
+      gap: clamp(34px, 5vw, 76px);
+      grid-template-columns: minmax(0, 1.04fr) minmax(440px, .96fr);
+      align-items: center;
+      min-height: 610px;
+      margin-bottom: 48px;
+    }
+    .hero-copy { position: relative; z-index: 2; }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      margin: 0 0 22px;
+      color: var(--accent);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: .72rem;
+      font-weight: 750;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      content: "";
+      background: var(--accent);
+      box-shadow: 0 0 0 5px rgba(124,247,212,.08), 0 0 18px var(--accent);
+    }
+    .summary {
+      max-width: 650px;
+      margin: 24px 0 0;
+      color: var(--muted-strong);
+      font-size: clamp(1.05rem, 1.6vw, 1.25rem);
+      line-height: 1.65;
+    }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 11px; margin: 30px 0 24px; }
+    .hero-actions .button {
+      min-height: 50px;
+      border-radius: 12px;
+      padding: 13px 18px;
+      font-weight: 720;
+    }
+    .hero-actions .button:first-child {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #06100d;
+      box-shadow: 0 12px 36px rgba(35,205,163,.18);
+    }
+    .hero-actions .button:first-child:hover { background: #a5ffe7; }
+    .hero-actions .button.secondary {
+      border-color: var(--line);
+      background: rgba(255,255,255,.035);
+    }
+    .proof-points { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 20px; }
+    .proof-points span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #91a0b2;
+      font-size: .82rem;
+      font-weight: 600;
+    }
+    .proof-points span::before { content: "✓"; color: var(--accent); font-weight: 900; }
+    .protocol-visual {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid rgba(148, 171, 199, .2);
+      border-radius: 22px;
+      background:
+        linear-gradient(145deg, rgba(17,25,37,.96), rgba(7,10,17,.96)),
+        var(--panel);
+      box-shadow: 0 32px 90px rgba(0,0,0,.44), inset 0 1px rgba(255,255,255,.035);
+      isolation: isolate;
+    }
+    .protocol-visual::before {
+      position: absolute;
+      inset: -30% -15% auto auto;
+      z-index: -1;
+      width: 390px;
+      height: 390px;
+      border-radius: 50%;
+      content: "";
+      background: radial-gradient(circle, rgba(74,122,255,.16), transparent 68%);
+    }
+    .protocol-toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      min-height: 52px;
+      border-bottom: 1px solid var(--line);
+      padding: 0 16px;
+      background: rgba(255,255,255,.018);
+    }
+    .window-dots { display: flex; gap: 6px; }
+    .window-dots span { width: 6px; height: 6px; border-radius: 50%; background: #394454; }
+    .window-dots span:nth-child(2) { background: #496376; }
+    .window-dots span:nth-child(3) { background: var(--accent-deep); }
+    .protocol-title { color: #7f8c9e; font: 600 .66rem/1 "SFMono-Regular", Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; }
+    .live-state { justify-self: end; display: inline-flex; align-items: center; gap: 6px; color: #92a2b4; font: 700 .66rem/1 monospace; text-transform: uppercase; }
+    .live-state i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); animation: livePulse 2s ease-in-out infinite; }
+    .protocol-canvas { position: relative; min-height: 330px; overflow: hidden; }
+    .mesh-grid {
+      position: absolute;
+      inset: 0;
+      opacity: .45;
+      background-image:
+        linear-gradient(rgba(121,151,184,.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(121,151,184,.055) 1px, transparent 1px);
+      background-size: 34px 34px;
+      mask-image: radial-gradient(ellipse at center, #000 12%, transparent 78%);
+    }
+    .data-rail {
+      position: absolute;
+      top: 46%;
+      left: 20%;
+      right: 20%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(124,247,212,.48) 22%, rgba(122,167,255,.5) 78%, transparent);
+      box-shadow: 0 0 14px rgba(124,247,212,.14);
+    }
+    .data-rail::before,
+    .data-rail::after {
+      position: absolute;
+      top: -3px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      content: "";
+      background: var(--accent);
+      box-shadow: 0 0 14px var(--accent);
+    }
+    .data-rail::before { left: 0; }
+    .data-rail::after { right: 0; background: var(--blue); box-shadow: 0 0 14px var(--blue); }
+    .packet {
+      position: absolute;
+      top: -4px;
+      left: 0;
+      width: 9px;
+      height: 9px;
+      border: 2px solid #d9fff5;
+      border-radius: 50%;
+      background: var(--accent-deep);
+      box-shadow: 0 0 0 4px rgba(124,247,212,.08), 0 0 18px var(--accent);
+      animation: packetFlow 4.8s cubic-bezier(.45,0,.55,1) infinite;
+    }
+    .packet-two { animation-delay: -1.6s; }
+    .packet-three { animation-delay: -3.2s; }
+    .agent-node, .gate-node {
+      position: absolute;
+      top: 50%;
+      z-index: 3;
+      display: grid;
+      justify-items: center;
+      gap: 6px;
+      transform: translateY(-50%);
+      text-align: center;
+    }
+    .agent-node { width: 116px; }
+    .agent-requester { left: 3%; }
+    .agent-receiver { right: 3%; }
+    .agent-node strong, .gate-node strong { color: #e9f1f7; font-size: .76rem; font-weight: 720; }
+    .agent-node small, .gate-node small { color: #6f8094; font: 500 .59rem/1.25 "SFMono-Regular", Consolas, monospace; }
+    .bot-avatar {
+      position: relative;
+      width: 64px;
+      height: 55px;
+      border: 1px solid rgba(145,169,195,.32);
+      border-radius: 18px;
+      background: linear-gradient(145deg, #162131, #0b1019);
+      box-shadow: inset 0 1px rgba(255,255,255,.05), 0 12px 24px rgba(0,0,0,.28);
+    }
+    .agent-receiver .bot-avatar { border-color: rgba(122,167,255,.38); }
+    .bot-avatar::before {
+      position: absolute;
+      inset: 13px 10px 11px;
+      border: 1px solid rgba(124,247,212,.24);
+      border-radius: 10px;
+      content: "";
+      background: rgba(2,7,12,.7);
+    }
+    .agent-receiver .bot-avatar::before { border-color: rgba(122,167,255,.28); }
+    .bot-antenna { position: absolute; left: 50%; top: -8px; width: 1px; height: 8px; background: #607187; }
+    .bot-antenna::after { position: absolute; left: -2px; top: -3px; width: 5px; height: 5px; border-radius: 50%; content: ""; background: var(--accent); box-shadow: 0 0 9px var(--accent); }
+    .agent-receiver .bot-antenna::after { background: var(--blue); box-shadow: 0 0 9px var(--blue); }
+    .bot-eye { position: absolute; z-index: 2; top: 25px; width: 6px; height: 3px; border-radius: 4px; background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: eyeBlink 5.5s ease-in-out infinite; }
+    .agent-receiver .bot-eye { background: var(--blue); box-shadow: 0 0 8px var(--blue); animation-delay: -2.1s; }
+    .eye-left { left: 21px; }
+    .eye-right { right: 21px; }
+    .gate-node { left: 50%; width: 150px; transform: translate(-50%, -50%); }
+    .gate-core {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      place-items: center;
+      width: 92px;
+      height: 92px;
+      border: 1px solid rgba(124,247,212,.48);
+      border-radius: 50%;
+      color: #dffef5;
+      font: 780 1.04rem/1 "SFMono-Regular", Consolas, monospace;
+      letter-spacing: -.08em;
+      background: radial-gradient(circle at 35% 30%, rgba(124,247,212,.18), transparent 48%), #0b121a;
+      box-shadow: inset 0 0 26px rgba(124,247,212,.08), 0 0 42px rgba(35,205,163,.13);
+    }
+    .gate-core span { color: var(--accent); }
+    .gate-halo,
+    .orbit {
+      position: absolute;
+      top: 46px;
+      left: 50%;
+      border: 1px solid rgba(124,247,212,.16);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      animation: haloSpin 12s linear infinite;
+    }
+    .gate-halo { width: 124px; height: 124px; border-style: dashed; }
+    .gate-halo::before,
+    .gate-halo::after { position: absolute; width: 7px; height: 7px; border-radius: 50%; content: ""; background: var(--accent); box-shadow: 0 0 14px var(--accent); }
+    .gate-halo::before { top: 8px; left: 23px; }
+    .gate-halo::after { right: 11px; bottom: 18px; background: var(--blue); box-shadow: 0 0 14px var(--blue); }
+    .orbit-one { top: 50%; width: 250px; height: 250px; opacity: .4; }
+    .orbit-two { top: 50%; width: 310px; height: 150px; border-color: rgba(122,167,255,.12); opacity: .55; animation-direction: reverse; animation-duration: 17s; }
+    .rail-label { position: absolute; top: calc(46% - 28px); z-index: 4; color: #68788b; font: 600 .57rem/1 monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .request-label { left: 23%; }
+    .verdict-label { right: 23%; }
+    .protocol-log { display: grid; gap: 1px; border-top: 1px solid var(--line); background: rgba(255,255,255,.025); padding: 10px; }
+    .protocol-event {
+      display: grid;
+      grid-template-columns: 26px minmax(0,1fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 35px;
+      border-radius: 8px;
+      padding: 5px 8px;
+      color: #7f8d9e;
+      opacity: .48;
+      animation: eventScan 8s ease-in-out infinite;
+    }
+    .protocol-event span { color: #526174; font: 600 .62rem/1 monospace; }
+    .protocol-event code { padding: 0; background: transparent; color: #91a2b4; font-size: .68rem; }
+    .protocol-event b { color: #718096; font: 700 .58rem/1 monospace; letter-spacing: .08em; text-transform: uppercase; }
+    .event-two { animation-delay: 2s; }
+    .event-three { animation-delay: 4s; }
+    .event-four { animation-delay: 6s; }
+    .audit-launch {
+      display: grid;
+      gap: 26px;
+      grid-template-columns: minmax(260px, .62fr) minmax(0, 1.38fr);
+      align-items: center;
+      margin: 68px 0 52px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: clamp(20px, 3.5vw, 36px);
+      background: linear-gradient(135deg, rgba(17,25,37,.78), rgba(8,12,20,.9));
+      box-shadow: inset 0 1px rgba(255,255,255,.03);
+    }
+    .audit-intro h2 { margin: 0 0 14px; font-size: clamp(1.65rem, 3vw, 2.45rem); }
+    .audit-intro p { margin: 0; }
+    .audit-kicker { display: inline-flex; margin-bottom: 13px; color: var(--accent); font: 700 .67rem/1 monospace; letter-spacing: .11em; text-transform: uppercase; }
+    .audit-route { display: flex; align-items: center; gap: 7px; margin-top: 20px; color: #708095; font: 600 .68rem/1 monospace; }
+    .audit-route i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 9px var(--accent); }
+    .audit-route span { color: #506074; }
+    .bundle-form { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(200px, .66fr); margin: 0; }
+    .bundle-form label { display: grid; gap: 7px; color: #a9b6c6; font-size: .78rem; font-weight: 650; }
+    .bundle-form input, .bundle-form select, .bundle-form textarea {
+      width: 100%;
+      min-height: 48px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      padding: 11px 13px;
+      background: rgba(3,6,11,.62);
+      color: var(--text);
+      font: inherit;
+      outline: none;
+      transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
+    }
+    .bundle-form input:focus, .bundle-form select:focus, .bundle-form textarea:focus {
+      border-color: rgba(124,247,212,.55);
+      background: rgba(4,9,14,.86);
+      box-shadow: 0 0 0 4px rgba(124,247,212,.07);
+    }
+    .bundle-form textarea { min-height: 96px; resize: vertical; }
+    .bundle-form .wide { grid-column: 1 / -1; }
+    .bundle-form button {
+      grid-column: 1 / -1;
+      min-height: 50px;
+      border-color: var(--accent);
+      border-radius: 11px;
+      background: var(--accent);
+      color: #06100d;
+      font-weight: 800;
+    }
+    .bundle-form button:hover { background: #a5ffe7; }
+    .signal-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      margin: 28px 0 72px;
+      border-block: 1px solid rgba(150,171,197,.12);
+    }
+    .signal-strip > div { position: relative; padding: 19px 18px; }
+    .signal-strip > div + div { border-left: 1px solid rgba(150,171,197,.12); }
+    .signal-strip span { display: block; color: #657488; font: 650 .62rem/1 monospace; letter-spacing: .1em; text-transform: uppercase; }
+    .signal-strip strong { display: block; margin-top: 8px; color: #d9e2ea; font-size: .9rem; }
+    .signal-strip strong i { margin-right: 7px; color: var(--accent); font-style: normal; }
+    .package-grid, .price-grid, .proof-steps { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 20px 0; }
+    .path-card, .price-card, .step,
+    .ag-mini-report, .ag-sample-card, .ag-compare-card, .ag-promise-card, .ag-metric {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(17,25,37,.72), rgba(9,13,21,.86));
+      box-shadow: inset 0 1px rgba(255,255,255,.025);
+    }
+    .path-card, .price-card, .step { padding: 20px; }
+    .path-card, .price-card { transition: transform .22s ease, border-color .22s ease, background .22s ease; }
+    .path-card:hover, .price-card:hover { transform: translateY(-3px); border-color: rgba(124,247,212,.32); background: linear-gradient(145deg, rgba(18,30,41,.9), rgba(9,14,22,.94)); }
+    .path-card strong, .price-card strong, .step strong { display: block; margin-bottom: 7px; color: var(--text); font-size: 1rem; }
+    .path-card p, .price-card p, .step p { margin: 0 0 12px; }
+    .path-card a, .price-card a {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 39px;
+      margin: 8px 6px 0 0;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 11px;
+      color: var(--text);
+      font-size: .84rem;
+      font-weight: 720;
+    }
+    .path-card:first-child a { border-color: var(--line-strong); background: rgba(124,247,212,.06); }
+    .price { color: var(--price); font-size: 2.5rem; font-weight: 760; letter-spacing: -.06em; line-height: 1; }
+    .price .currency { color: var(--price-muted); font-size: 1rem; vertical-align: .55rem; }
+    .price small { color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .06em; }
+    .price-card.featured { border-color: rgba(124,247,212,.4); background: radial-gradient(circle at 80% 0, rgba(124,247,212,.11), transparent 45%), linear-gradient(145deg, #111b26, #090e16); }
+    .badge { display: inline-flex; min-height: 27px; margin-bottom: 12px; align-items: center; border: 1px solid var(--line-strong); border-radius: 999px; padding: 4px 9px; color: var(--accent); font: 800 .65rem/1 monospace; letter-spacing: .07em; text-transform: uppercase; }
+    .agent-strip { display: grid; gap: 14px; grid-template-columns: minmax(0, 1fr) repeat(3, auto); align-items: center; margin-top: 46px; border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 20px; background: radial-gradient(circle at 90% 0, rgba(122,167,255,.09), transparent 35%), var(--panel); }
+    .agent-strip p { margin-bottom: 0; }
+    .agent-strip .button { border-radius: 10px; }
+    .ag-proof-section { margin: 72px 0; }
+    .ag-decision-section { gap: 24px; }
+    .ag-section-head { max-width: 760px; }
+    .ag-section-head .eyebrow { margin-bottom: 4px; }
+    .ag-section-head h2, .ag-decision-section h2 { margin-top: 0; }
+    .ag-comparison-grid, .ag-sample-gallery, .ag-promise-grid { gap: 14px; }
+    .ag-compare-card, .ag-sample-card, .ag-promise-card, .ag-mini-report { padding: 20px; }
+    .ag-compare-card { border-left-width: 1px; }
+    .ag-compare-card.ag-strong { border-color: rgba(124,247,212,.35); }
+    .ag-status, .ag-sample-card span, .ag-compare-card span, .ag-promise-card span { color: var(--accent); }
+    .ag-score { border-color: rgba(124,247,212,.42); border-right-color: var(--line); }
+    .ag-mini-list li { border-radius: 11px; background: rgba(2,5,10,.42); }
+    .site-footer { margin-top: 82px; border-top-color: rgba(150,171,197,.12); }
+    code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; background: var(--code); color: var(--text); border-radius: 5px; padding: 2px 5px; }
+    @keyframes packetFlow {
+      0% { left: 0; opacity: 0; transform: scale(.65); }
+      10% { opacity: 1; }
+      48% { left: 49%; opacity: 1; transform: scale(1); }
+      52% { left: 51%; opacity: .3; transform: scale(.55); }
+      58% { opacity: 1; transform: scale(1); }
+      92% { opacity: 1; }
+      100% { left: calc(100% - 8px); opacity: 0; transform: scale(.7); }
+    }
+    @keyframes haloSpin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+    @keyframes eyeBlink { 0%, 42%, 46%, 100% { transform: scaleY(1); } 44% { transform: scaleY(.12); } }
+    @keyframes livePulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+    @keyframes eventScan { 0%, 17%, 100% { opacity: .42; background: transparent; } 5%, 12% { opacity: 1; background: rgba(124,247,212,.045); } }
+    @media (max-width: 980px) {
+      .hero { grid-template-columns: 1fr; min-height: 0; }
+      .hero-copy { max-width: 820px; }
+      h1 { max-width: 13ch; }
+      .protocol-visual { width: min(100%, 680px); margin: 0 auto; }
+      .audit-launch { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      main { padding: 16px 16px 62px; }
+      .site-nav { margin-bottom: 48px; }
+      .nav-core > a:nth-of-type(n+4) { display: none; }
+      h1 { max-width: 11ch; font-size: clamp(2.75rem, 14vw, 4.5rem); }
+      .summary { font-size: 1rem; }
+      .protocol-canvas { min-height: 290px; }
+      .agent-node { width: 88px; }
+      .agent-requester { left: 1%; }
+      .agent-receiver { right: 1%; }
+      .bot-avatar { width: 54px; height: 49px; }
+      .bot-avatar::before { inset: 12px 8px 9px; }
+      .bot-eye { top: 23px; }
+      .eye-left { left: 18px; }
+      .eye-right { right: 18px; }
+      .agent-node small { display: none; }
+      .gate-node { width: 118px; }
+      .gate-core { width: 76px; height: 76px; font-size: .88rem; }
+      .gate-halo { top: 38px; width: 104px; height: 104px; }
+      .orbit-one { width: 200px; height: 200px; }
+      .orbit-two { width: 260px; height: 130px; }
+      .protocol-event { grid-template-columns: 22px minmax(0,1fr); }
+      .protocol-event b { display: none; }
+      .protocol-event code { font-size: .61rem; }
+      .rail-label { display: none; }
+      .audit-launch { margin-top: 52px; padding: 20px; }
+      .bundle-form, .package-grid, .price-grid, .proof-steps { grid-template-columns: 1fr; }
+      .signal-strip { grid-template-columns: repeat(2, 1fr); }
+      .signal-strip > div:nth-child(3) { border-left: 0; border-top: 1px solid rgba(150,171,197,.12); }
+      .signal-strip > div:nth-child(4) { border-top: 1px solid rgba(150,171,197,.12); }
+      .agent-strip { grid-template-columns: 1fr; }
+      .ag-proof-section { margin: 56px 0; }
+    }
+    @media (max-width: 460px) {
+      .protocol-title { display: none; }
+      .protocol-toolbar { grid-template-columns: 1fr 1fr; }
+      .signal-strip { grid-template-columns: 1fr; }
+      .signal-strip > div + div { border-left: 0; border-top: 1px solid rgba(150,171,197,.12); }
+      .hero-actions .button { flex: 1 1 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+      .packet-one { left: 22%; opacity: 1; }
+      .packet-two { left: 50%; opacity: 1; }
+      .packet-three { left: 78%; opacity: 1; }
+    }
+    """
+
+
 def build_home_html(source: str = "homepage") -> str:
     """Render the customer-facing homepage at the root URL."""
     nav = site_nav_html("Home")
@@ -12038,7 +12664,7 @@ def build_home_html(source: str = "homepage") -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  {seo_meta_html("AxonGate Source Quality Gate for AI", "Know what your AI can safely cite before it ships. Audit public sources before an agent cites them or a RAG system ingests them.", "/")}
+  {seo_meta_html("AxonGate | Trust Layer for Autonomous AI", "Verify public evidence before AI agents cite, ingest, or act. Claim-level verdicts, cited PDF and JSON, Stripe checkout, and x402 settlement on Base.", "/")}
   <style>
     :root {{
       color-scheme: light dark;
@@ -12267,50 +12893,57 @@ def build_home_html(source: str = "homepage") -> str:
       h1 {{ max-width: 14ch; }}
     }}
     {shared_ui_css()}
+    {home_page_css()}
   </style>
 </head>
 <body>
   <main>
     {nav}
     <section class="hero">
-      <div>
-        <p class="eyebrow">The source quality gate for AI</p>
-        <h1>Know what your AI can safely cite before it ships.</h1>
-        <p class="summary">AxonGate audits public URLs against a claim, flags weak evidence and noisy sources, and returns a cited decision before an agent answers or a RAG system ingests them.</p>
+      <div class="hero-copy">
+        <p class="eyebrow">Evidence protocol for autonomous AI</p>
+        <h1>AI agents can fetch anything. <span>AxonGate decides what they can trust.</span></h1>
+        <p class="summary">A claim-level trust layer between public web sources and automated decisions. Audit evidence, settle through Stripe or x402, and return cited, machine-readable verdicts.</p>
         <div class="hero-actions">
           <a class="button" href="#audit-form">Audit My Sources</a>
-          <a class="button secondary" href="{sample_url}">View Sample Report</a>
+          <a class="button secondary" href="{sample_url}">Inspect a Real Report</a>
         </div>
-        <form id="audit-form" class="bundle-form" method="get" action="/proof-pack/bundle/quote" accept-charset="utf-8">
-          <label class="wide">Source URLs
-            <textarea name="target_urls" placeholder="https://example.com/source&#10;https://example.org/context" required></textarea>
-          </label>
-          <label>Claim or question to support
-            <input name="question" placeholder="Can these sources support our launch claim?">
-          </label>
-          <label>Bundle
-            <select name="bundle" aria-label="Evidence Bundle">{bundle_options}</select>
-          </label>
-          <input type="hidden" name="source" value="{source_value}">
-          <button type="submit">Audit My Sources</button>
-        </form>
+        <div class="proof-points" aria-label="AxonGate product guarantees">
+          <span>Claim-level verdicts</span>
+          <span>Cited PDF + JSON</span>
+          <span>x402 native on Base</span>
+        </div>
       </div>
-      <aside class="report-visual" aria-label="Sample evidence report preview">
-        <div class="report-top">
-          <div>
-            <p class="eyebrow">Bundle output</p>
-            <strong>Claim supported across sources</strong>
-          </div>
-          <div class="score-ring">82</div>
-        </div>
-        <div class="report-lines">
-          <div class="evidence-row"><strong>Evidence</strong><div class="bar"><span style="width:82%"></span></div></div>
-          <div class="evidence-row"><strong>Citations</strong><div class="bar"><span style="width:74%"></span></div></div>
-          <div class="evidence-row"><strong>Noise</strong><div class="bar"><span style="width:31%; background:var(--bad)"></span></div></div>
-        </div>
-        <p><span class="status-pill">Citation-ready</span></p>
-        <p>Reports include source quality, risk notes, evidence IDs, JSON, PDF, and recovery links.</p>
-      </aside>
+      {agent_protocol_visual_html()}
+    </section>
+
+    <section class="audit-launch" aria-labelledby="audit-title">
+      <div class="audit-intro">
+        <span class="audit-kicker">Run an evidence check</span>
+        <h2 id="audit-title">Paste the sources. Ask the claim.</h2>
+        <p>Start with a supplier-free quote, then choose how deep the evidence review should go.</p>
+        <div class="audit-route" aria-label="Audit sequence"><i></i> URLS <span>→</span> CLAIM <span>→</span> VERDICT</div>
+      </div>
+      <form id="audit-form" class="bundle-form" method="get" action="/proof-pack/bundle/quote" accept-charset="utf-8">
+        <label class="wide">Public source URLs
+          <textarea name="target_urls" placeholder="https://example.com/source&#10;https://example.org/context" required></textarea>
+        </label>
+        <label>Claim or question
+          <input name="question" placeholder="Can these sources support our launch claim?">
+        </label>
+        <label>Evidence depth
+          <select name="bundle" aria-label="Evidence Bundle">{bundle_options}</select>
+        </label>
+        <input type="hidden" name="source" value="{source_value}">
+        <button type="submit">Build My Evidence Quote →</button>
+      </form>
+    </section>
+
+    <section class="signal-strip" aria-label="AxonGate system capabilities">
+      <div><span>Protocol</span><strong><i>●</i>x402 / HTTP 402</strong></div>
+      <div><span>Settlement</span><strong><i>●</i>USDC on Base</strong></div>
+      <div><span>Decision</span><strong><i>●</i>Supported · Weak · No</strong></div>
+      <div><span>Output</span><strong><i>●</i>PDF · JSON · Citations</strong></div>
     </section>
 
     {premium_decision_section_html()}
