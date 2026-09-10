@@ -27,26 +27,39 @@ That is the **x402** flow, and it works like this:
    exact USDC amount, the receiving address, the chain (`eip155:8453` — Base
    mainnet), and an expiry.
 3. The agent signs a USDC transfer authorisation and retries with it in the
-   `X-PAYMENT` header.
+   `X-PAYMENT` header (`PAYMENT-SIGNATURE` and `X-402-PAYMENT` are also
+   accepted).
 4. A facilitator settles on Base; the response carries the work product.
 
 Details worth noting if you are reading the code:
 
-- **Pricing is dynamic, not a fixed price tag.** `x402_dynamic_price` computes
-  the quote per request from the requested depth and freshness tier, a supplier
-  cost model, and a live ETH/USD quote used to price the settlement gas. Prices
-  range from ~$0.012 to ~$1.00 per call.
+- **The quote is selected per request, not fixed per route.**
+  `x402_dynamic_price` reads a `tier` or `pack` value from the request's query
+  string or headers and resolves it against a price table configured by
+  environment variables — roughly $0.012 to $0.05 for extraction tiers and $0.10
+  to $1.00 for Proof Packs.
+- **The service refuses work it would lose money on.** Before doing paid work it
+  computes projected profit as revenue minus live Base gas — the current base fee
+  times a gas-unit estimate, converted through a live ETH/USD quote with a
+  configured floor and cache — minus bounded supplier cost per attempt. If the
+  projected margin falls to or below `AXONGATE_PROFIT_MARGIN_USDC` (default
+  `0.01`), the paid request is rejected with a payment validation error and
+  `ueg_rejections_total` is incremented. A per-request unit-economics check
+  matters more at this price point than at normal API prices: a few cents of
+  revenue does not survive an unexamined gas spike.
 - **Two rails, one product.** Agents pay per call over x402. Humans buying
-  multi-source Proof Bundles pay through Stripe checkout, with webhook signature
-  verification and replay protection. Both rails converge on the same evidence
-  generation path.
+  multi-source Proof Bundles pay through Stripe checkout. Webhook handling
+  verifies an HMAC-SHA256 signature over the timestamped raw body with a
+  constant-time compare, rejects timestamps outside a tolerance window, and
+  de-duplicates by Stripe event ID in Redis so a replayed event cannot deliver
+  twice. Both rails converge on the same evidence generation path.
 - **Attribution is built into the payment route.** Paid routes are also mounted
   under `POST /from/{source}/v1/x402/access`, so the marketplace that sent a
   paying agent is recorded at settlement time rather than guessed from a
   referrer header.
-- **Free routes are genuinely free.** Preview, sample, and quote endpoints do no
-  supplier work and spend nothing, so an agent can evaluate the service before
-  committing funds.
+- **Free routes are genuinely free.** Preview, sample, and quote endpoints make
+  no paid supplier call and return `supplier_spend: false`, so an agent can
+  evaluate the service before committing funds.
 
 ## Endpoints at a glance
 
