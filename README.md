@@ -182,7 +182,8 @@ unless a production change is intentional.
 - `scripts/secret_scan.py` — tracked-file secret check
 - `examples/` — Python, MCP, curl, and paid-buyer examples
 - `manifest.json` and `agent_manifest.json` — public agent and payment discovery contracts
-- `docs/` — custom-domain and marketplace distribution notes
+- `scripts/submit_x402_list.py` — marketplace listing submission helper
+- `docs/` — custom-domain setup, marketplace distribution notes, and the listing submission kit
 
 The application is currently a large monolith: `axongate_gateway.py` is ~20,500
 lines, of which roughly a fifth is embedded HTML for the human-facing pages. New
