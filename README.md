@@ -1,195 +1,116 @@
 # AxonGate
 
-AxonGate answers one question for an autonomous caller: **do the public sources
-actually support this claim, well enough to rely on?** It fetches the live
-sources behind a claim, extracts clean context, and returns a citation-backed
-verdict — so an AI agent or RAG pipeline can decide whether to trust a statement
-before repeating it to a user.
-
-It is a running commercial service, not a demo.
+**Safe web access for AI agents.** Read any public page as clean Markdown,
+search the live web, get grounded answers and fact-check claims. Every page is
+screened for prompt injection, and every quote in an answer or verdict is
+checked verbatim against the fetched source. Agents pay per call in USDC on
+Base over [x402](https://x402.org): no account, no API key, charged only on
+success.
 
 **Live:** [api.axongate.one](https://api.axongate.one) ·
-[interactive docs](https://api.axongate.one/docs) ·
-[OpenAPI contract](https://api.axongate.one/openapi.json) ·
-[agent brief](https://api.axongate.one/llms.txt)
+[docs](https://api.axongate.one/docs) ·
+[x402 catalog](https://api.axongate.one/.well-known/x402) ·
+[llms.txt](https://api.axongate.one/llms.txt) ·
+[OpenAPI](https://api.axongate.one/openapi.json)
 
-## Why the payment layer is the interesting part
-
-Most APIs assume a human signed up, got a key, and attached a card. AxonGate
-assumes nobody did. An agent that has never seen this service before can
-discover it, learn the price, pay, and get an answer — in one request cycle,
-with no account, no key, and no human.
-
-That is the **x402** flow, and it works like this:
-
-1. The agent `POST`s to a paid route with no payment attached.
-2. AxonGate replies `402 Payment Required` with a machine-readable quote: the
-   exact USDC amount, the receiving address, the chain (`eip155:8453` — Base
-   mainnet), and an expiry.
-3. The agent signs a USDC transfer authorisation and retries with it in the
-   `X-PAYMENT` header (`PAYMENT-SIGNATURE` and `X-402-PAYMENT` are also
-   accepted).
-4. A facilitator settles on Base; the response carries the work product.
-
-Details worth noting if you are reading the code:
-
-- **The quote is selected per request, not fixed per route.**
-  `x402_dynamic_price` reads a `tier` or `pack` value from the request's query
-  string or headers and resolves it against a price table configured by
-  environment variables — roughly $0.012 to $0.05 for extraction tiers and $0.10
-  to $1.00 for Proof Packs.
-- **The service refuses work it would lose money on.** Before doing paid work it
-  computes projected profit as revenue minus live Base gas — the current base fee
-  times a gas-unit estimate, converted through a live ETH/USD quote with a
-  configured floor and cache — minus bounded supplier cost per attempt. If the
-  projected margin falls to or below `AXONGATE_PROFIT_MARGIN_USDC` (default
-  `0.01`), the paid request is rejected with a payment validation error and
-  `ueg_rejections_total` is incremented. A per-request unit-economics check
-  matters more at this price point than at normal API prices: a few cents of
-  revenue does not survive an unexamined gas spike.
-- **Two rails, one product.** Agents pay per call over x402. Humans buying
-  multi-source Proof Bundles pay through Stripe checkout. Webhook handling
-  verifies an HMAC-SHA256 signature over the timestamped raw body with a
-  constant-time compare, rejects timestamps outside a tolerance window, and
-  de-duplicates by Stripe event ID in Redis so a replayed event cannot deliver
-  twice. Both rails converge on the same evidence generation path.
-- **Attribution is built into the payment route.** Paid routes are also mounted
-  under `POST /from/{source}/v1/x402/access`, so the marketplace that sent a
-  paying agent is recorded at settlement time rather than guessed from a
-  referrer header.
-- **Free routes are genuinely free.** Preview, sample, and quote endpoints make
-  no paid supplier call and return `supplier_spend: false`, so an agent can
-  evaluate the service before committing funds.
-
-## Endpoints at a glance
-
-| Route | Cost | Purpose |
+| Product | Route | Price |
 | --- | --- | --- |
-| `POST /v1/x402/access` | paid (x402) | Paid web-to-markdown clean context extraction |
-| `POST /v1/x402/proof-pack` | paid (x402) | Citation-backed evidence report |
-| `GET /v1/proof-pack/preview` | free | No-spend mini preview |
-| `GET /v1/proof-pack/quote` | free | Supplier-free price quote |
-| `GET /v1/proof-pack/reports/{id}/verify` | free | Verify a retained report receipt |
-| `GET /manifest.json`, `/agent_manifest.json` | free | Agent and payment discovery contracts |
-| `GET /health`, `/metrics` | operator | Readiness and operational metrics |
+| Safe Read | `GET/POST /v1/read` | $0.002 |
+| Web Search | `GET/POST /v1/search` | $0.004 |
+| Injection Scan | `POST /v1/scan` | $0.002 |
+| Grounded Answer | `POST /v1/answer` | $0.015 |
+| Claim Verify | `POST /v1/verify` | $0.02 |
 
-`GET` quote endpoints are preview-only and retain nothing. Create a resumable
-quote deliberately with `POST /v1/quotes`. The `/operator` and `/metrics` routes
-require `AXONGATE_OPERATOR_TOKEN`, sent as `X-AxonGate-Operator-Token`, a bearer
-token, or the browser-only `operator_token` query parameter.
+## Why v2
 
-## Local setup
+v1 (Proof Packs, Stripe bundles, tiered extraction at $0.012–$1.00) logged
+~40k payment challenges and zero outside paid calls in six months. Most of that
+traffic was x402 directories crawling each other. The October 2026 relaunch is
+built from what agents actually pay for in the Coinbase Bazaar (30-day paid
+calls by category):
 
-Prerequisites:
+- **Price to market.** Web reads sell at $0.001–0.002 and searches at
+  $0.007–0.025, so AxonGate's prices match or undercut them. Margins hold
+  because reads are extracted locally (no supplier cost) and search costs about
+  $0.0005.
+- **Get indexed where buyers look.** Bazaar only lists endpoints that settle
+  through the CDP facilitator. v1 used PayAI and was never listed. v2 settles
+  through CDP and declares full Bazaar metadata on every product.
+- **Differentiate on safety.** Prompt-injection screening is built into every
+  read, a standalone scan endpoint is offered, and verbatim quote checks stop a
+  model from inventing evidence.
+- **Keep the existing listings.** The `/v1/x402/access` and
+  `/v1/x402/proof-pack` URLs that directories already list now serve Safe Read
+  and Claim Verify.
 
-- Python 3.11+
-- Node.js 20+ for the MCP and paid-buyer examples
-- Railway CLI only when inspecting or deploying the production service
+## How a call works
 
-Create the Python environment:
+1. The agent calls an endpoint and gets `402` with `PAYMENT-REQUIRED`
+   (exact scheme, `eip155:8453`, USDC, payTo `0xcD11…76A7`).
+2. Its x402 client signs an EIP-3009 authorization and retries with
+   `PAYMENT-SIGNATURE`.
+3. AxonGate does the work. The x402 middleware settles only if the response is
+   2xx, so errors are never charged.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
+`/v1/answer` and `/v1/verify` run search, then concurrent reads (cached in
+Redis), then passage selection, then one structured `gpt-5-mini` call. Quotes
+the model returns are matched against the fetched text. Unmatched quotes are
+dropped, and a supported or refuted verdict without a matched quote is
+downgraded to `insufficient`.
+
+## Layout
+
+```text
+axongate/
+  app.py         FastAPI app, product handlers, operator metrics, retired-route handling
+  config.py      environment, product catalog and prices
+  payments.py    x402 routes, CDP/PayAI facilitator, Bazaar metadata
+  fetcher.py     SSRF-safe fetch, trafilatura extraction, Jina rendered fallback
+  search.py      Jina search with caching
+  research.py    answer/verify pipeline and quote verification
+  safety.py      rule-based prompt-injection scanner
+  llm.py         structured-output chat client
+  store.py       Redis cache/counters with in-memory fallback, rate limiter
+  telemetry.py   ASGI middleware: rate limits, challenges, settlements, revenue
+  discovery.py   /.well-known/x402, manifest, agent card, llms.txt, pricing
+  pages.py       home, docs and bot pages
+axongate_gateway.py   entry point kept for `uvicorn axongate_gateway:app`
+scripts/ci_smoke.py   offline test suite (x402 surface + mocked handlers)
+scripts/paid_smoke.py real paid calls from a CDP account (operator tool)
+examples/             MCP server, Python client, curl
 ```
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-```
-
-Install the JavaScript dependencies:
-
-```bash
-npm ci
-```
-
-Copy the environment template for local overrides. Never commit the resulting
-`.env` file.
-
-```bash
-cp .env.example .env
-```
-
-```powershell
-Copy-Item .env.example .env
-```
-
-The checked-in manifests contain the public AxonGate wallet address, so the app
-starts without private wallet credentials. Supplier, Redis, email, LLM, Stripe,
-and operator features stay disabled or use local fallbacks until their
-environment variables are configured.
 
 ## Run locally
 
 ```bash
-PORT=8000 uvicorn axongate_gateway:app --host 127.0.0.1 --port 8000 --reload
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # fill in what you need; everything degrades gracefully
+uvicorn axongate_gateway:app --reload --port 8000
 ```
 
-```powershell
-$env:PORT = "8000"
-uvicorn axongate_gateway:app --host 127.0.0.1 --port $env:PORT --reload
-```
+Set `AXONGATE_X402_ENABLED=false` to call the handlers without paying.
 
-Open `http://127.0.0.1:8000/` for the product page, `/docs` for the service
-documentation, and `/openapi.json` for the agent contract.
-
-## Verify changes
-
-The smoke suite uses an in-process ASGI client, fake Stripe signatures, and fake
-email delivery. It does not spend USDC or call paid suppliers. The x402
-middleware may make a no-spend capability request to the configured facilitator.
+## Test
 
 ```bash
-python -m py_compile axongate_gateway.py examples/python_client.py scripts/ci_smoke.py scripts/secret_scan.py
-python scripts/ci_smoke.py
+python scripts/ci_smoke.py      # no network suppliers, no USDC
 python scripts/secret_scan.py
 ```
 
-The same three steps run in CI on every push and pull request to `main`.
+## Operate
 
-## Production
+- `GET /metrics` with `X-AxonGate-Operator-Token` shows revenue, supplier cost,
+  settled calls, 402 challenges per product and per path, and top paying
+  clients.
+- `python scripts/paid_smoke.py --account <buyer> --max-spend 0.05` makes real
+  paid calls. It's needed once per endpoint for Bazaar indexing, and again
+  every 30 days to keep a listing alive when there is no buyer traffic.
+- Railway runs `uvicorn axongate_gateway:app --host 0.0.0.0 --port $PORT` with
+  `/health` as the health check. `web` and `Redis` services are in the
+  production environment.
 
-Railway runs:
-
-```text
-uvicorn axongate_gateway:app --host 0.0.0.0 --port $PORT
-```
-
-`railway.toml` configures `/health` as the deployment health check. The endpoint
-returns only service readiness information and also schedules throttled
-operational alert evaluation. Alerts are written as structured Railway logs by
-default and can additionally be sent to `AXONGATE_ALERT_WEBHOOK_URL`.
-
-The production project contains the `web` and `Redis` services. Link a local
-checkout without changing production using the project ID from your Railway
-dashboard:
-
-```bash
-railway link --project <project-id> --environment production --service web
-railway status
-```
-
-Do not run `railway up`, `redeploy`, `restart`, or variable mutation commands
-unless a production change is intentional.
-
-## Current structure
-
-- `axongate_gateway.py` — FastAPI application, payments, evidence generation, delivery, analytics, and embedded UI
-- `scripts/ci_smoke.py` — end-to-end in-process smoke suite
-- `scripts/secret_scan.py` — tracked-file secret check
-- `examples/` — Python, MCP, curl, and paid-buyer examples
-- `manifest.json` and `agent_manifest.json` — public agent and payment discovery contracts
-- `scripts/submit_x402_list.py` — marketplace listing submission helper
-- `docs/` — custom-domain setup, marketplace distribution notes, and the listing submission kit
-
-The application is currently a large monolith: `axongate_gateway.py` is ~20,500
-lines, of which roughly a fifth is embedded HTML for the human-facing pages. New
-work should avoid adding more embedded UI or unrelated responsibilities to it;
-extracting billing, analytics, evidence generation, and page templates into
-modules is the current priority.
+See [docs/distribution.md](docs/distribution.md) for listings.
 
 ## Licence
 

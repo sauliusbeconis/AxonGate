@@ -1,11 +1,10 @@
 {
-  "name": "axongate-vault",
-  "version": "1.6.0",
+  "name": "axongate",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "mcp:server": "node examples/axongate_mcp.mjs",
-    "paid:buyer": "node examples/paid_buyer.mjs"
+    "mcp:server": "node examples/axongate_mcp.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

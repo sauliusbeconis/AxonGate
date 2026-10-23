@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.13"
 
       - name: Install dependencies
         run: |
@@ -24,10 +24,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Compile Python
-        run: python -m py_compile axongate_gateway.py examples/python_client.py scripts/ci_smoke.py scripts/secret_scan.py
-
-      - name: Validate manifest
-        run: python -m json.tool manifest.json > /dev/null
+        run: python -m compileall -q axongate axongate_gateway.py examples scripts
 
       - name: Run ASGI smoke tests
         run: python scripts/ci_smoke.py

@@ -1,127 +1,45 @@
-# AxonGate MCP Server
+# AxonGate MCP server
 
-This server exposes AxonGate as MCP tools for agent clients.
+`axongate_mcp.mjs` exposes AxonGate as five MCP tools and pays for each call
+with x402 from a local wallet:
 
-It has seven tools:
+| Tool | Price |
+| --- | --- |
+| `axongate_read` — URL → clean Markdown + injection scan | $0.002 |
+| `axongate_search` — live web search, optional top-result reads | $0.004 |
+| `axongate_scan` — prompt-injection scan of untrusted text | $0.002 |
+| `axongate_answer` — grounded answer with verbatim-checked citations | $0.015 |
+| `axongate_verify` — claim verdict with verbatim-checked evidence | $0.02 |
 
-- `quote_clean_context`: gets no-spend tier guidance and a ready buyer command.
-- `probe_payment_terms`: fetches the x402 challenge without spending USDC.
-- `fetch_clean_context`: pays AxonGate with x402 and returns clean Markdown.
-- `quote_proof_pack`: gets no-spend Proof Pack pricing and a ready buyer command.
-- `get_proof_pack_sample`: fetches a no-spend Proof Pack sample report.
-- `probe_proof_pack_terms`: fetches the Proof Pack x402 challenge without spending USDC.
-- `fetch_proof_pack`: pays AxonGate with x402 and returns a citation-backed evidence report.
+Failed calls are never charged. `AXONGATE_MAX_SPEND_USDC` caps total spend per
+process (default 0.50).
 
-## Install
+## Setup
 
 ```bash
 npm install
 ```
 
-## Configure
-
-Use a burner wallet JSON with `private_key` or `privateKey`.
+Use a dedicated wallet holding a few dollars of USDC on Base (no ETH needed).
 
 ```json
 {
   "mcpServers": {
     "axongate": {
       "command": "node",
-      "args": ["C:/path/to/AxonGate-Vault/examples/axongate_mcp.mjs"],
+      "args": ["/absolute/path/to/AxonGate/examples/axongate_mcp.mjs"],
       "env": {
-        "AXONGATE_BASE_URL": "https://api.axongate.one",
-        "AXONGATE_WALLET_FILE": "C:/path/to/burner_wallet.json",
-        "AXONGATE_CONFIRM_SPEND": "0.012",
-        "AXONGATE_PROOF_CONFIRM_SPEND": "0.10"
+        "AXONGATE_PRIVATE_KEY": "0x...",
+        "AXONGATE_MAX_SPEND_USDC": "1.00"
       }
     }
   }
 }
 ```
 
-## First Calls
+Claude Code:
 
-Quote first:
-
-```json
-{
-  "target_url": "https://www.iana.org/domains/reserved",
-  "source": "mcp"
-}
+```bash
+claude mcp add axongate -e AXONGATE_PRIVATE_KEY=0x... -e AXONGATE_MAX_SPEND_USDC=1.00 \
+  -- node /absolute/path/to/AxonGate/examples/axongate_mcp.mjs
 ```
-
-Probe first:
-
-```json
-{
-  "tier": "starter",
-  "source": "mcp"
-}
-```
-
-Paid fetch:
-
-```json
-{
-  "target_url": "https://www.iana.org/domains/reserved",
-  "tier": "starter",
-  "force_refresh": false,
-  "confirm_spend_usdc": "0.012",
-  "source": "mcp",
-  "max_markdown_chars": 12000
-}
-```
-
-Proof Pack quote:
-
-```json
-{
-  "target_url": "https://www.iana.org/domains/reserved",
-  "question": "What does this source establish about reserved domains?",
-  "pack": "quick",
-  "source": "mcp-proof"
-}
-```
-
-Proof Pack sample:
-
-```json
-{
-  "source": "mcp-proof"
-}
-```
-
-Proof Pack probe:
-
-```json
-{
-  "pack": "quick",
-  "source": "mcp-proof"
-}
-```
-
-Paid Proof Pack:
-
-```json
-{
-  "target_url": "https://www.iana.org/domains/reserved",
-  "question": "What does this source establish about reserved domains?",
-  "pack": "quick",
-  "force_refresh": false,
-  "confirm_spend_usdc": "0.10",
-  "source": "mcp-proof",
-  "max_answer_chars": 1800,
-  "max_citation_excerpt_chars": 360
-}
-```
-
-The `starter` tier is for first conversion on the sample target or existing
-cache. Use `fresh` with `confirm_spend_usdc: "0.03"` for live public web
-context.
-
-The paid tool refuses to spend unless `confirm_spend_usdc` or
-`AXONGATE_CONFIRM_SPEND` exactly matches the selected tier price.
-
-The Proof Pack paid tool refuses to spend unless `confirm_spend_usdc`,
-`AXONGATE_PROOF_CONFIRM_SPEND`, or `AXONGATE_CONFIRM_SPEND` exactly matches
-the selected pack price.
