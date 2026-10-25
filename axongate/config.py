@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 
 
 def _env(name: str, default: str = "") -> str:
@@ -159,6 +159,30 @@ PRODUCTS: dict[str, Product] = {
         ),
         tags=("prompt-injection", "security", "agent-safety", "guardrails", "scan"),
     ),
+    "token": Product(
+        key="token",
+        path="/v1/token-check",
+        price=Decimal(_env("AXONGATE_PRICE_TOKEN_USDC", "0.01")),
+        title="Token Check",
+        summary=(
+            "Safety verdict for a crypto token before an agent buys, swaps or accepts it: honeypot, sell and "
+            "buy taxes, owner powers (mint, blacklist, balance changes), holder concentration and DEX "
+            "liquidity, combined into avoid / caution / ok with reasons. EVM chains and Solana."
+        ),
+        tags=("crypto", "token-security", "honeypot", "rug-check", "agent-safety"),
+    ),
+    "batch": Product(
+        key="batch",
+        path="/v1/read/batch",
+        price=Decimal(_env("AXONGATE_PRICE_BATCH_USDC", "0.03")),
+        title="Batch Read",
+        summary=(
+            "Read up to 20 public URLs in one paid call. Each page comes back as clean Markdown with its own "
+            "prompt-injection scan; pages that fail are reported per URL without failing the batch. Use it "
+            "to load a reading list or search results in one round trip."
+        ),
+        tags=("web-read", "markdown", "batch", "scrape", "rag"),
+    ),
 }
 
 # Legacy x402 URLs that marketplaces still list; they now serve the v2 products.
@@ -205,5 +229,8 @@ CACHE_TTL_SECONDS = _env_int("AXONGATE_CACHE_TTL_SECONDS", 3600)
 RATE_LIMIT_PER_MINUTE = _env_int("AXONGATE_RATE_LIMIT_PER_MINUTE", 120)
 PAID_CONCURRENCY = _env_int("AXONGATE_PAID_CONCURRENCY", 24)
 OPERATOR_TOKEN = _env("AXONGATE_OPERATOR_TOKEN")
+# Optional GoPlus Security app key for /v1/token-check (keyless access is heavily rate-limited).
+GOPLUS_APP_KEY = _env("GOPLUS_APP_KEY")
+GOPLUS_APP_SECRET = _env("GOPLUS_APP_SECRET")
 # One-time domain-proof token for x402-list.com owner updates (served at /.well-known/x402list.txt).
 X402LIST_TOKEN = _env("AXONGATE_X402LIST_TOKEN")

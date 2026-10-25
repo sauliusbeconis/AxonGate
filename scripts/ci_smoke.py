@@ -36,7 +36,7 @@ async def client_for(app):
 
 
 async def part_a() -> None:
-    from axongate import app as app_module
+    from axongate import app as app_module, payments
     from axongate.config import PRODUCTS
 
     app = app_module.app
@@ -50,7 +50,7 @@ async def part_a() -> None:
         check(len(doc["resources"]) == len(PRODUCTS), "/.well-known/x402 lists every product")
 
         for product in PRODUCTS.values():
-            method = "GET" if product.key in {"read", "search"} else "POST"
+            method = "GET" if product.key in payments.GET_PRODUCTS else "POST"
             r = await c.request(method, product.path)
             check(r.status_code == 402, f"{method} {product.path} unpaid -> 402")
             header = r.headers.get("payment-required")
@@ -103,6 +103,13 @@ async def part_b() -> None:
         return {"answer": "It is reserved [1].", "confidence": 0.8, "insufficient": False, "citations": [
             {"source": 1, "quote": "nonstandard response status code reserved for future use"}]}, {"input_tokens": 1000, "output_tokens": 100}
 
+    async def fake_token(client, address, chain=None):
+        from axongate import tokens
+        chain = tokens.normalize_chain(chain)
+        tokens.validate_address(address, chain)
+        return {"address": address, "chain": chain, "verdict": "avoid", "risk_score": 100, "agent_action": "do_not_transact", "flags": [{"code": "honeypot", "severity": "critical", "detail": "x"}]}
+
+    app_module.check_token = fake_token
     fetcher.fetch_page = fake_fetch
     research.fetch_page = fake_fetch
     research.web_search = fake_search
@@ -140,6 +147,22 @@ async def part_b() -> None:
         r = await c.get("/v1/x402/proof-pack")
         check(r.status_code == 200 and "verdict" in r.json(), "legacy proof-pack with no input verifies the example claim")
         check((await c.get("/v1/read")).status_code == 400, "canonical read still requires url")
+
+        r = await c.get("/v1/token-check", params={"address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"})
+        check(r.status_code == 200 and r.json()["verdict"] == "avoid" and r.json()["chain"] == "base", "token-check returns verdict (default chain base)")
+        r = await c.post("/v1/token-check", json={"address": "not-an-address", "chain": "base"})
+        check(r.status_code == 400, "token-check rejects bad address")
+        r = await c.post("/v1/token-check", json={"address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed", "chain": "dogechain"})
+        check(r.status_code == 400, "token-check rejects unknown chain")
+
+        r = await c.post("/v1/read/batch", json={"urls": ["https://93.184.215.14/a", "http://127.0.0.1/x", "https://93.184.215.14/evil"]})
+        data = r.json()
+        check(r.status_code == 200 and data["ok"] == 2 and data["failed"] == 1, "batch reads good URLs and reports the blocked one")
+        check(data["results"][2]["injection_risk"]["risk"] != "low", "batch scans each page")
+        r = await c.post("/v1/read/batch", json={"urls": ["http://127.0.0.1/x"]})
+        check(r.status_code >= 400, "batch with no readable URL fails (not billed)")
+        r = await c.post("/v1/read/batch", json={"urls": [f"https://93.184.215.14/{i}" for i in range(21)]})
+        check(r.status_code == 400, "batch caps URLs at 20")
 
         r = await c.post("/v1/answer", json={"question": "What is 402?"})
         check(r.status_code == 200 and r.json()["citations"][0]["quote_verified"], "answer returns verified citation")

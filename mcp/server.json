@@ -1,0 +1,20 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sauliusbeconis/axongate",
+  "description": "Safe web read, search, cited answers, fact-checks and token checks for agents, paid via x402.",
+  "repository": { "url": "https://github.com/sauliusbeconis/AxonGate", "source": "github", "subfolder": "mcp" },
+  "version": "2.1.0",
+  "websiteUrl": "https://api.axongate.one",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "axongate-mcp",
+      "version": "2.1.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        { "name": "AXONGATE_PRIVATE_KEY", "description": "Private key of a dedicated wallet holding a few dollars of USDC on Base (no ETH needed).", "isRequired": true, "isSecret": true },
+        { "name": "AXONGATE_MAX_SPEND_USDC", "description": "Total spend cap for the server process, in USDC (default 0.50).", "isRequired": false, "isSecret": false }
+      ]
+    }
+  ]
+}

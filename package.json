@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "mcp:server": "node examples/axongate_mcp.mjs"
+    "mcp:server": "node mcp/index.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

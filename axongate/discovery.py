@@ -11,7 +11,7 @@ from .config import PRODUCTS
 TAGLINE = "Safe web access for AI agents"
 DESCRIPTION = (
     "AxonGate gives autonomous agents safe, pay-per-call web access: read any public page as clean Markdown, "
-    "search the live web, get grounded answers and fact-check claims. Every page is screened for prompt "
+    "search the live web, get grounded answers, fact-check claims and screen crypto tokens. Every page is screened for prompt "
     "injection, and every quote in an answer or verdict is checked verbatim against the fetched source. "
     f"No account or API key: pay per call in USDC on {config.NETWORK_LABELS} over x402."
 )
@@ -87,7 +87,7 @@ def manifest() -> dict[str, Any]:
             "name": TAGLINE,
             "category": "Data & Context",
             "description": DESCRIPTION,
-            "capabilities": ["web_read", "html_to_markdown", "web_search", "grounded_answers", "fact_checking", "prompt_injection_detection", "verbatim_quote_verification", "ssrf_protection"],
+            "capabilities": ["web_read", "html_to_markdown", "web_search", "grounded_answers", "fact_checking", "prompt_injection_detection", "verbatim_quote_verification", "ssrf_protection", "token_security", "batch_read"],
             "input_modes": ["url", "text", "json"],
             "output_modes": ["json", "markdown"],
         },

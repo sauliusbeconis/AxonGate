@@ -1,11 +1,12 @@
 # AxonGate
 
 **Safe web access for AI agents.** Read any public page as clean Markdown,
-search the live web, get grounded answers and fact-check claims. Every page is
-screened for prompt injection, and every quote in an answer or verdict is
-checked verbatim against the fetched source. Agents pay per call in USDC on
-Base over [x402](https://x402.org): no account, no API key, charged only on
-success.
+search the live web, get grounded answers, fact-check claims and check a crypto
+token before trading it. Every page is screened for prompt injection, and every
+quote in an answer or verdict is checked verbatim against the fetched source.
+Agents pay per call in USDC on Base, Polygon or Arbitrum (Solana when
+configured) over [x402](https://x402.org): no account, no API key, charged only
+on success.
 
 **Live:** [api.axongate.one](https://api.axongate.one) ·
 [docs](https://api.axongate.one/docs) ·
@@ -16,10 +17,14 @@ success.
 | Product | Route | Price |
 | --- | --- | --- |
 | Safe Read | `GET/POST /v1/read` | $0.002 |
+| Batch Read (up to 20 URLs) | `POST /v1/read/batch` | $0.03 |
 | Web Search | `GET/POST /v1/search` | $0.004 |
 | Injection Scan | `POST /v1/scan` | $0.002 |
 | Grounded Answer | `POST /v1/answer` | $0.015 |
 | Claim Verify | `POST /v1/verify` | $0.02 |
+| Token Check | `GET/POST /v1/token-check` | $0.01 |
+
+MCP server: [`mcp/`](mcp) (`npx axongate-mcp`).
 
 ## Why v2
 
@@ -45,8 +50,10 @@ calls by category):
 
 ## How a call works
 
-1. The agent calls an endpoint and gets `402` with `PAYMENT-REQUIRED`
-   (exact scheme, `eip155:8453`, USDC, payTo `0xcD11…76A7`).
+1. The agent calls an endpoint and gets `402` with `PAYMENT-REQUIRED`: one
+   exact-scheme USDC entry per network (Base `eip155:8453` first, then Polygon
+   and Arbitrum to payTo `0xcD11…76A7`, and Solana when
+   `AXONGATE_SOLANA_PAY_TO` is set).
 2. Its x402 client signs an EIP-3009 authorization and retries with
    `PAYMENT-SIGNATURE`.
 3. AxonGate does the work. The x402 middleware settles only if the response is
@@ -69,6 +76,7 @@ axongate/
   search.py      Jina search with caching
   research.py    answer/verify pipeline and quote verification
   safety.py      rule-based prompt-injection scanner
+  tokens.py      token-check verdicts (GoPlus Security + honeypot.is simulation)
   llm.py         structured-output chat client
   store.py       Redis cache/counters with in-memory fallback, rate limiter
   telemetry.py   ASGI middleware: rate limits, challenges, settlements, revenue
@@ -77,7 +85,8 @@ axongate/
 axongate_gateway.py   entry point kept for `uvicorn axongate_gateway:app`
 scripts/ci_smoke.py   offline test suite (x402 surface + mocked handlers)
 scripts/paid_smoke.py real paid calls from a CDP account (operator tool)
-examples/             MCP server, Python client, curl
+mcp/                  MCP server, published to npm as axongate-mcp
+examples/             Python client, curl
 ```
 
 ## Run locally

@@ -20,6 +20,7 @@ from .llm import LLMError
 from .search import SearchError, web_search
 from .store import store
 from .telemetry import TelemetryMiddleware
+from .tokens import TokenError, check_token
 
 _paid_slots = asyncio.Semaphore(config.PAID_CONCURRENCY)
 
@@ -94,6 +95,8 @@ async def _guarded(product: str, work):
         return error(exc.status, exc.code, str(exc))
     except SearchError as exc:
         return error(exc.status, "search_unavailable", str(exc))
+    except TokenError as exc:
+        return error(exc.status, exc.code, str(exc))
     except LLMError:
         return error(503, "reasoning_unavailable", "The reasoning model is temporarily unavailable. You were not charged.")
     except asyncio.TimeoutError:
@@ -192,7 +195,67 @@ async def do_scan(request: Request):
     return JSONResponse(safety.scan_text(text))
 
 
-HANDLERS = {"read": do_read, "search": do_search, "answer": do_answer, "verify": do_verify, "scan": do_scan}
+async def do_token(request: Request):
+    p = await read_params(request)
+    address = str(p.get("address") or p.get("token") or p.get("contract") or "").strip()
+    if not address:
+        return error(400, "invalid_request", "address is required")
+    chain = str(p.get("chain") or p.get("network") or "base")
+    return await _guarded("token", lambda: asyncio.wait_for(check_token(request.app.state.http, address, chain), 30))
+
+
+BATCH_MAX_URLS = 20
+
+
+async def do_batch(request: Request):
+    p = await read_params(request)
+    raw = p.get("urls")
+    if isinstance(raw, str):
+        raw = [u for u in raw.split(",") if u.strip()]
+    if not isinstance(raw, list) or not raw:
+        return error(400, "invalid_request", "urls must be a list of 1-20 URLs")
+    urls = list(dict.fromkeys(str(u).strip() for u in raw if str(u).strip()))
+    if len(urls) > BATCH_MAX_URLS:
+        return error(400, "invalid_request", f"urls is limited to {BATCH_MAX_URLS} per call")
+    max_chars = _int(p.get("max_chars"), 20000, 500, 60000)
+    render = _bool(p.get("render"), True)
+    client = request.app.state.http
+    slots = asyncio.Semaphore(8)
+
+    async def one(url: str) -> dict[str, Any]:
+        try:
+            async with slots:
+                page = await asyncio.wait_for(research.cached_page(client, url) if render else fetch_page(client, url, allow_render=False), 25)
+        except FetchError as exc:
+            return {"url": url, "ok": False, "error": exc.code, "message": str(exc)}
+        except asyncio.TimeoutError:
+            return {"url": url, "ok": False, "error": "timeout", "message": "The page took too long to load."}
+        return {
+            "url": page.url,
+            "ok": True,
+            "final_url": page.final_url,
+            "title": page.title,
+            "markdown": page.markdown[:max_chars],
+            "truncated": len(page.markdown) > max_chars,
+            "word_count": page.word_count,
+            "content_sha256": page.content_sha256,
+            "injection_risk": safety.summarize(safety.scan_text(page.markdown)),
+            "extractor": page.extractor,
+        }
+
+    async def work():
+        results = await asyncio.gather(*(one(u) for u in urls))
+        good = sum(1 for r in results if r["ok"])
+        if not good:
+            # Nothing usable: fail the whole call so the buyer is not charged.
+            raise FetchError("None of the URLs could be read. You were not charged.", 502, "all_failed")
+        rendered = sum(1 for r in results if r.get("extractor") == "rendered")
+        return {"count": len(results), "ok": good, "failed": len(results) - good, "results": results, "_cost_usd": 0.0003 * rendered}
+
+    return await _guarded("batch", work)
+
+
+HANDLERS = {"read": do_read, "search": do_search, "answer": do_answer, "verify": do_verify, "scan": do_scan, "token": do_token, "batch": do_batch}
 
 for _product in PRODUCTS.values():
     for _method in payments.product_methods(_product):

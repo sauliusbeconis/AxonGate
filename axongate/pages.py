@@ -74,8 +74,8 @@ def home() -> str:
     body = f"""
 <div class="hero"><span class="eyebrow">x402 · USDC on {config.NETWORK_LABELS} · no API keys</span>
 <h1>Safe web access for AI agents.</h1>
-<p class="lede">Read any page as clean Markdown, search the live web, get grounded answers and fact-check claims — with
-prompt-injection screening on every page and every quote checked verbatim against its source. Pay per call; you're only charged when it works.</p>
+<p class="lede">Read any page as clean Markdown, search the live web, get grounded answers, fact-check claims and check a token
+before you trade it — with prompt-injection screening on every page and every quote checked verbatim against its source. Pay per call; you're only charged when it works.</p>
 <div class="cta"><a class="btn primary" href="/docs">Read the docs</a><a class="btn" href="/.well-known/x402">x402 catalog</a><a class="btn" href="/llms.txt">llms.txt</a></div></div>
 
 <section><h2>Endpoints</h2><div class="grid">{cards}</div></section>
@@ -138,7 +138,7 @@ def docs() -> str:
 <pre><code>{_example_curl(p)}</code></pre><p class="muted">Response (abridged):</p><pre><code>{example_out}</code></pre></div>""")
     body = f"""
 <div class="hero" style="padding-bottom:8px"><span class="eyebrow">Docs</span><h1>AxonGate API</h1>
-<p class="lede">Five endpoints, one payment flow. GET endpoints take query parameters; POST endpoints take a JSON body.</p></div>
+<p class="lede">{len(PRODUCTS)} endpoints, one payment flow. GET endpoints take query parameters; POST endpoints take a JSON body.</p></div>
 <section><div class="table-wrap"><table><tr><th>Endpoint</th><th>Route</th><th>Price</th></tr>{rows}</table></div></section>
 <section><h2>Payment flow</h2><ol>
 <li>Call the endpoint. Without payment you receive <code>402</code> with base64 JSON requirements in <code>PAYMENT-REQUIRED</code> (scheme <code>exact</code>, one entry per network: {', '.join(f'{r.label} <code>{r.network}</code>' for r in payments.rails())}; on EVM networks payTo is <code>{config.PAY_TO}</code>).</li>
@@ -147,6 +147,7 @@ def docs() -> str:
 <p>Errors use <code>{{"error": code, "message": text}}</code>: <code>400 invalid_url / invalid_request</code>, <code>413 too_large</code>, <code>415 unsupported_content</code>, <code>424 target_error / no_sources</code>, <code>429 rate_limited</code>, <code>503 search_unavailable / reasoning_unavailable</code>, <code>504 timeout</code>.</p></section>
 {''.join(sections)}
 <section class="endpoint"><h2>Legacy URLs</h2><p><code>/v1/x402/access</code> and <code>/v1/x402/starter</code> now serve Safe Read (they accept <code>target_url</code>). <code>/v1/x402/proof-pack</code> now serves Claim Verify (<code>question</code> + <code>target_url</code>). Called with no input, a legacy URL runs the documented example (Safe Read of the example URL; Claim Verify of the example claim) instead of failing. The v1 Proof Pack, bundle and quote endpoints are retired.</p></section>
+<section class="endpoint"><h2>Data sources</h2><p>Token Check is powered by <a href="https://gopluslabs.io">GoPlus Security</a> token analysis, with a <a href="https://honeypot.is">honeypot.is</a> buy/sell simulation on Ethereum, BSC and Base. Its verdicts are automated risk signals, not financial advice.</p></section>
 <section><h2>Machine-readable</h2><p><a href="/openapi.json">OpenAPI</a> · <a href="/.well-known/x402">/.well-known/x402</a> · <a href="/llms.txt">llms.txt</a> · <a href="/.well-known/agent.json">agent card</a> · <a href="/v1/pricing">pricing JSON</a></p></section>
 """
     return _layout("AxonGate API docs", "Endpoints, parameters, prices and the x402 payment flow for AxonGate.", body)

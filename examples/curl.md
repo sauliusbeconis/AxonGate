@@ -3,7 +3,7 @@
 curl can't sign x402 payments, but it shows exactly what an agent sees before
 paying. Every call below returns `402 Payment Required` with the requirements in
 the `PAYMENT-REQUIRED` header (base64 JSON). To pay, use any x402 client — see
-`python_client.py` or `axongate_mcp.mjs`.
+`python_client.py` or the MCP server in `../mcp`.
 
 ```bash
 # Safe Read ($0.002)

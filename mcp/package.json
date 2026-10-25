@@ -1,0 +1,22 @@
+{
+  "name": "axongate-mcp",
+  "version": "2.1.0",
+  "description": "MCP server for AxonGate: safe web read, search, grounded answers, fact-checking, prompt-injection scan and crypto token checks for AI agents, paid per call in USDC over x402.",
+  "mcpName": "io.github.sauliusbeconis/axongate",
+  "type": "module",
+  "bin": { "axongate-mcp": "index.mjs" },
+  "files": ["index.mjs", "README.md", "LICENSE"],
+  "engines": { "node": ">=20" },
+  "keywords": ["mcp", "model-context-protocol", "x402", "web-search", "scraping", "prompt-injection", "fact-check", "token-security", "ai-agents"],
+  "homepage": "https://api.axongate.one",
+  "repository": { "type": "git", "url": "git+https://github.com/sauliusbeconis/AxonGate.git", "directory": "mcp" },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@x402/evm": "^2.11.0",
+    "@x402/fetch": "^2.11.0",
+    "dotenv": "^17.4.2",
+    "viem": "^2.48.4",
+    "zod": "^4.4.3"
+  }
+}
