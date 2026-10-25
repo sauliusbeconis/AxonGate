@@ -278,6 +278,13 @@ async def pricing():
     return JSONResponse(discovery.pricing(), headers={"Cache-Control": "public, max-age=300"})
 
 
+@app.get("/.well-known/x402list.txt", response_class=PlainTextResponse, include_in_schema=False)
+async def x402list_proof():
+    if not config.X402LIST_TOKEN:
+        return PlainTextResponse("", status_code=404)
+    return PlainTextResponse(config.X402LIST_TOKEN + "\n", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
 async def robots():
     return PlainTextResponse(f"User-agent: *\nAllow: /\nSitemap: {config.PUBLIC_BASE_URL}/sitemap.xml\n")
