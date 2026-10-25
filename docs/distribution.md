@@ -9,10 +9,12 @@ catalog at `https://api.axongate.one/.well-known/x402` is always authoritative.
 | Product | Endpoint | Price |
 | --- | --- | --- |
 | Safe Read | `GET/POST https://api.axongate.one/v1/read` | $0.002 |
+| Batch Read | `POST https://api.axongate.one/v1/read/batch` | $0.03 |
 | Web Search | `GET/POST https://api.axongate.one/v1/search` | $0.004 |
 | Injection Scan | `POST https://api.axongate.one/v1/scan` | $0.002 |
 | Grounded Answer | `POST https://api.axongate.one/v1/answer` | $0.015 |
 | Claim Verify | `POST https://api.axongate.one/v1/verify` | $0.02 |
+| Token Check | `GET/POST https://api.axongate.one/v1/token-check` | $0.01 |
 
 Legacy URLs that directories already list keep working and are counted per
 path in `/metrics` (`counters.challenge_paths`):
@@ -31,12 +33,12 @@ facilitator**, and drops it after 30 days without a settlement.
    `CDP_API_KEY_SECRET` are set (`/metrics` → `facilitator: coinbase-cdp`).
 2. Make one paid call per canonical endpoint from a wallet that is **not** the
    payTo address (CDP rejects self-payment). `railway run` supplies the CDP keys
-   from the Railway service; this creates the `axongate-smoke-buyer` CDP account, moves 0.05
-   USDC to it from the vault, and pays each endpoint once (0.043 USDC, which
+   from the Railway service; this creates the `axongate-smoke-buyer` CDP account, moves 0.10
+   USDC to it from the vault, and pays each endpoint once (0.083 USDC, which
    flows back to the vault):
 
    ```bash
-   railway run .venv/bin/python scripts/paid_smoke.py --fund 0.05 --max-spend 0.05
+   railway run .venv/bin/python scripts/paid_smoke.py --fund 0.10 --max-spend 0.10
    ```
 
    Later runs can skip `--fund` while the buyer still holds USDC. The script
@@ -66,3 +68,17 @@ x402scan, x402-list, 402explorer, x402lens, Agent402 and similar indexers crawl
 pick up v2 automatically. Directories with a manual listing (x402-list,
 PayAnAgent, Agora402, the402, agentic.market) should have their description and
 price updated to the v2 catalog above.
+
+## MCP registries
+
+The MCP server lives in `mcp/` and is published to npm as `axongate-mcp`.
+
+1. `cd mcp && npm login && npm publish` (bump `version` in both
+   `package.json` and `server.json` for each release).
+2. Official MCP registry: install `mcp-publisher`
+   (https://github.com/modelcontextprotocol/registry), then
+   `cd mcp && mcp-publisher login github && mcp-publisher publish`. The
+   `mcpName` in `package.json` must match `name` in `server.json`.
+3. Directories that index the official registry or npm (Smithery, Glama,
+   PulseMCP, mcp.so) pick it up from there; Smithery and Glama also accept a
+   GitHub URL submission.
