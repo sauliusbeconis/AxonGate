@@ -54,6 +54,9 @@ async def read_params(request: Request) -> dict[str, Any]:
             body = None
         if isinstance(body, dict):
             params.update(body)
+    fields, default = getattr(request.state, "legacy_default", ((), None))
+    if default and not any(params.get(f) for f in fields):
+        params.update(default)
     return params
 
 
@@ -203,9 +206,27 @@ for _product in PRODUCTS.values():
             description=_product.summary,
         )
 
+# Directory probes pay legacy URLs with no input at all. Rather than return a non-billable 400,
+# those calls run the documented example input (listed as the default in /docs).
+LEGACY_DEFAULTS = {
+    "read": (("url", "target_url"), payments.INPUTS["read"][2]),
+    "verify": (("claim", "question"), payments.INPUTS["verify"][2]),
+}
+
+
+def _legacy_handler(key: str):
+    handler = HANDLERS[key]
+
+    async def run(request: Request):
+        request.state.legacy_default = LEGACY_DEFAULTS.get(key, ((), None))
+        return await handler(request)
+
+    return run
+
+
 for _legacy, _key in config.LEGACY_ALIASES.items():
     for _path in [_legacy] + [f"/from/{s}{_legacy}" for s in config.SOURCE_ALIAS_PATHS]:
-        app.add_api_route(_path, HANDLERS[_key], methods=["GET", "POST"], include_in_schema=False)
+        app.add_api_route(_path, _legacy_handler(_key), methods=["GET", "POST"], include_in_schema=False)
 
 
 # ---------------------------------------------------------------- discovery

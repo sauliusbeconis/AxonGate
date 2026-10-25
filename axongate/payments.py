@@ -203,6 +203,12 @@ def _unpaid_body(product: Product):
     return build
 
 
+def _discoverable(product: Product, method: str, path: str) -> bool:
+    if path == product.path:
+        return method == discovery_method(product)
+    return path in config.LEGACY_ALIASES and method == "GET"
+
+
 def _route(product: Product, method: str, path: str) -> RouteConfig:
     resource = f"{config.PUBLIC_BASE_URL}{path}"
     return RouteConfig(
@@ -220,8 +226,9 @@ def _route(product: Product, method: str, path: str) -> RouteConfig:
         tags=list(product.tags),
         icon_url=f"{config.PUBLIC_BASE_URL}/icon.png",
         unpaid_response_body=_unpaid_body(product),
-        # Only canonical paths advertise discovery metadata, so Bazaar gets one entry per product.
-        extensions=bazaar_extension(product, method) if path == product.path and method == discovery_method(product) else None,
+        # Canonical and bare legacy paths advertise discovery metadata (one method each). Directories
+        # still send buyers to the legacy URLs, and Bazaar indexes whichever resource a payment settles on.
+        extensions=bazaar_extension(product, method) if _discoverable(product, method, path) else None,
     )
 
 

@@ -68,6 +68,9 @@ async def part_a() -> None:
         for path in ["/v1/x402/access", "/v1/x402/proof-pack", "/from/x402-list/v1/x402/access"]:
             r = await c.post(path, json={"target_url": "https://example.com"})
             check(r.status_code == 402, f"legacy POST {path} -> 402")
+        for path in ["/v1/x402/access", "/v1/x402/proof-pack"]:
+            required = json.loads(base64.b64decode((await c.get(path)).headers["payment-required"]))
+            check("bazaar" in (required.get("extensions") or {}), f"legacy GET {path} advertises Bazaar metadata")
 
         check((await c.post("/v1/broker/compute")).status_code == 410, "retired v1 endpoint -> 410")
         check((await c.get("/proof-pack/bundle", follow_redirects=False)).status_code == 301, "retired v1 page -> 301")
@@ -131,6 +134,12 @@ async def part_b() -> None:
 
         r = await c.post("/v1/x402/proof-pack", json={"question": "402 is reserved", "target_url": "https://93.184.215.14/x"})
         check(r.status_code == 200 and "verdict" in r.json(), "legacy proof-pack maps to verify")
+
+        r = await c.get("/v1/x402/access")
+        check(r.status_code == 200 and r.json()["url"], "legacy access with no input reads the example URL")
+        r = await c.get("/v1/x402/proof-pack")
+        check(r.status_code == 200 and "verdict" in r.json(), "legacy proof-pack with no input verifies the example claim")
+        check((await c.get("/v1/read")).status_code == 400, "canonical read still requires url")
 
         r = await c.post("/v1/answer", json={"question": "What is 402?"})
         check(r.status_code == 200 and r.json()["citations"][0]["quote_verified"], "answer returns verified citation")
