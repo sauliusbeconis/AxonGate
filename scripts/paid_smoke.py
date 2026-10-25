@@ -1,11 +1,12 @@
 """Pay for real AxonGate calls with a CDP server account (operator tool).
 
-By default the payer is the AxonGate vault itself, so the USDC goes back to the
-same address and the net cost is zero. A settled call through the CDP
-facilitator is also what gets an endpoint indexed in the x402 Bazaar.
+A settled call through the CDP facilitator is what gets an endpoint indexed in
+the x402 Bazaar. CDP rejects payments from the payTo address itself, so the
+payer is a separate CDP account (created on first use). --fund tops it up from
+the vault first; the USDC paid for the calls flows straight back to the vault.
 
     CDP_API_KEY_ID=... CDP_API_KEY_SECRET=... CDP_WALLET_SECRET=... \
-      python scripts/paid_smoke.py --base-url https://api.axongate.one --max-spend 0.05 read search
+      python scripts/paid_smoke.py --fund 0.05 --max-spend 0.05
 """
 
 from __future__ import annotations
@@ -17,7 +18,8 @@ import json
 import sys
 from decimal import Decimal
 
-from cdp import CdpClient, EvmLocalAccount
+import httpx
+from cdp import CdpClient, EvmLocalAccount, parse_units
 from x402 import x402Client
 from x402.http.clients.httpx import x402HttpxClient
 from x402.mechanisms.evm.exact.register import register_exact_evm_client
@@ -31,12 +33,37 @@ CALLS = {
     "verify": ("POST", "/v1/verify", {"claim": "HTTP status code 402 is reserved for future use."}, Decimal("0.02")),
 }
 
+USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+BASE_RPC = "https://base-rpc.publicnode.com"
+
+
+async def usdc_balance(address: str) -> Decimal:
+    data = "0x70a08231" + address[2:].lower().rjust(64, "0")
+    async with httpx.AsyncClient(timeout=20) as rpc:
+        r = await rpc.post(BASE_RPC, json={"jsonrpc": "2.0", "id": 1, "method": "eth_call", "params": [{"to": USDC, "data": data}, "latest"]})
+    return Decimal(int(r.json()["result"], 16)) / Decimal(10**6)
+
+
+async def fund(cdp, vault_name: str, buyer, amount: Decimal) -> bool:
+    vault = await cdp.evm.get_account(name=vault_name)
+    before = await usdc_balance(buyer.address)
+    print(f"funding {buyer.address} with {amount} USDC from {vault.address}")
+    await vault.transfer(to=buyer.address, amount=parse_units(str(amount), 6), token="usdc", network="base")
+    for _ in range(30):
+        if await usdc_balance(buyer.address) >= before + amount:
+            return True
+        await asyncio.sleep(2)
+    print("funding transfer not confirmed after 60s")
+    return False
+
 
 async def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("products", nargs="*", default=list(CALLS))
     parser.add_argument("--base-url", default="https://api.axongate.one")
-    parser.add_argument("--account", default="axongate-primary", help="CDP EVM account name used as payer")
+    parser.add_argument("--account", default="axongate-smoke-buyer", help="CDP EVM account name used as payer (created if missing)")
+    parser.add_argument("--vault", default="axongate-primary", help="CDP account that receives payments and funds --fund")
+    parser.add_argument("--fund", type=Decimal, default=Decimal("0"), help="USDC to move from --vault to the payer first")
     parser.add_argument("--max-spend", type=Decimal, default=Decimal("0.05"))
     args = parser.parse_args()
 
@@ -45,8 +72,21 @@ async def main() -> int:
         print(f"Planned spend {planned} exceeds --max-spend {args.max_spend}")
         return 2
 
+    if args.account == args.vault:
+        print("The payer must not be the vault: CDP rejects self-payment (self_send_not_allowed)")
+        return 2
+    if args.fund > Decimal("1"):
+        print("--fund is capped at 1 USDC")
+        return 2
+
     async with CdpClient() as cdp:
-        server_account = await cdp.evm.get_account(name=args.account)
+        server_account = await cdp.evm.get_or_create_account(name=args.account)
+        if args.fund and not await fund(cdp, args.vault, server_account, args.fund):
+            return 1
+        balance = await usdc_balance(server_account.address)
+        if balance < planned:
+            print(f"payer {server_account.address} holds {balance} USDC, needs {planned}; rerun with --fund {planned}")
+            return 2
         signer = EthAccountSigner(EvmLocalAccount(server_account))
         client = x402Client()
         register_exact_evm_client(client, signer)

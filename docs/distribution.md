@@ -30,13 +30,17 @@ facilitator**, and drops it after 30 days without a settlement.
 1. Production uses the CDP facilitator whenever `CDP_API_KEY_ID` and
    `CDP_API_KEY_SECRET` are set (`/metrics` → `facilitator: coinbase-cdp`).
 2. Make one paid call per canonical endpoint from a wallet that is **not** the
-   payTo address (CDP rejects self-payment):
+   payTo address (CDP rejects self-payment). `railway run` supplies the CDP keys
+   from the Railway service; this creates the `axongate-smoke-buyer` CDP account, moves 0.05
+   USDC to it from the vault, and pays each endpoint once (0.043 USDC, which
+   flows back to the vault):
 
    ```bash
-   python scripts/paid_smoke.py --account axongate-smoke-buyer --max-spend 0.05
+   railway run .venv/bin/python scripts/paid_smoke.py --fund 0.05 --max-spend 0.05
    ```
 
-   The script prints the `EXTENSION-RESPONSES` header; `bazaar.status` should be
+   Later runs can skip `--fund` while the buyer still holds USDC. The script
+   prints the `EXTENSION-RESPONSES` header; `bazaar.status` should be
    `success` or `processing`. Indexing can take 15 minutes.
 3. Check the listing:
 
