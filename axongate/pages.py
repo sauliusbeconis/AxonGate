@@ -55,7 +55,7 @@ def _layout(title: str, description: str, body: str) -> str:
 <header class="top"><a class="brand" href="/">{ICON_SVG}<span>AxonGate</span></a>
 <nav><a href="/docs">Docs</a><a href="/v1/pricing">Pricing</a><a href="/.well-known/x402">Catalog</a><a href="{html.escape(config.GITHUB_REPO_URL)}">GitHub</a></nav></header>
 <main>{body}</main>
-<footer>AxonGate v{config.VERSION} · Payments in USDC on Base via x402 · payTo <code>{config.PAY_TO}</code> · <a href="mailto:{config.CONTACT_EMAIL}">{config.CONTACT_EMAIL}</a></footer>
+<footer>AxonGate v{config.VERSION} · Payments in USDC on {config.NETWORK_LABELS} via x402 · payTo <code>{config.PAY_TO}</code> · <a href="mailto:{config.CONTACT_EMAIL}">{config.CONTACT_EMAIL}</a></footer>
 </body></html>"""
 
 
@@ -72,7 +72,7 @@ def home() -> str:
     )
     base = config.PUBLIC_BASE_URL
     body = f"""
-<div class="hero"><span class="eyebrow">x402 · USDC on Base · no API keys</span>
+<div class="hero"><span class="eyebrow">x402 · USDC on {config.NETWORK_LABELS} · no API keys</span>
 <h1>Safe web access for AI agents.</h1>
 <p class="lede">Read any page as clean Markdown, search the live web, get grounded answers and fact-check claims — with
 prompt-injection screening on every page and every quote checked verbatim against its source. Pay per call; you're only charged when it works.</p>
@@ -141,7 +141,7 @@ def docs() -> str:
 <p class="lede">Five endpoints, one payment flow. GET endpoints take query parameters; POST endpoints take a JSON body.</p></div>
 <section><div class="table-wrap"><table><tr><th>Endpoint</th><th>Route</th><th>Price</th></tr>{rows}</table></div></section>
 <section><h2>Payment flow</h2><ol>
-<li>Call the endpoint. Without payment you receive <code>402</code> with base64 JSON requirements in <code>PAYMENT-REQUIRED</code> (scheme <code>exact</code>, network <code>{config.NETWORK}</code>, USDC <code>{config.BASE_USDC_ADDRESS}</code>, payTo <code>{config.PAY_TO}</code>).</li>
+<li>Call the endpoint. Without payment you receive <code>402</code> with base64 JSON requirements in <code>PAYMENT-REQUIRED</code> (scheme <code>exact</code>, one entry per network: {', '.join(f'{r.label} <code>{r.network}</code>' for r in payments.rails())}; on EVM networks payTo is <code>{config.PAY_TO}</code>).</li>
 <li>Sign an EIP-3009 USDC authorization with an x402 client and retry with <code>PAYMENT-SIGNATURE</code>.</li>
 <li>On success you get the result plus a <code>PAYMENT-RESPONSE</code> header with the settlement transaction. Errors are not settled.</li></ol>
 <p>Errors use <code>{{"error": code, "message": text}}</code>: <code>400 invalid_url / invalid_request</code>, <code>413 too_large</code>, <code>415 unsupported_content</code>, <code>424 target_error / no_sources</code>, <code>429 rate_limited</code>, <code>503 search_unavailable / reasoning_unavailable</code>, <code>504 timeout</code>.</p></section>

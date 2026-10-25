@@ -57,6 +57,38 @@ X402_ENABLED = _env_bool("AXONGATE_X402_ENABLED", True)
 
 
 @dataclass(frozen=True)
+class Rail:
+    """One way to pay: a network, its USDC asset and the address that receives it."""
+
+    network: str  # CAIP-2
+    label: str
+    asset: str
+    pay_to: str
+    extra: tuple[tuple[str, str], ...] = ()  # EIP-712 domain for EVM USDC
+
+
+_USDC_DOMAIN = (("name", "USD Coin"), ("version", "2"))
+_EVM_RAILS = {
+    "polygon": Rail("eip155:137", "Polygon", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", PAY_TO, _USDC_DOMAIN),
+    "arbitrum": Rail("eip155:42161", "Arbitrum", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", PAY_TO, _USDC_DOMAIN),
+}
+SOLANA_MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"
+SOLANA_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+# The Solana payTo must already own a USDC token account: x402 clients transfer into it but never create it.
+SOLANA_PAY_TO = _env("AXONGATE_SOLANA_PAY_TO")
+
+# Base is always first (it is what Bazaar and most buyers use). The other rails need the CDP facilitator.
+RAILS: tuple[Rail, ...] = (Rail(NETWORK, "Base", BASE_USDC_ADDRESS, PAY_TO, _USDC_DOMAIN),)
+if FACILITATOR == "cdp":
+    for _name in (n.strip().lower() for n in _env("AXONGATE_EXTRA_NETWORKS", "polygon,arbitrum").split(",")):
+        if _name in _EVM_RAILS:
+            RAILS += (_EVM_RAILS[_name],)
+    if SOLANA_PAY_TO:
+        RAILS += (Rail(SOLANA_MAINNET, "Solana", SOLANA_USDC_MINT, SOLANA_PAY_TO),)
+NETWORK_LABELS = ", ".join(r.label for r in RAILS)
+
+
+@dataclass(frozen=True)
 class Product:
     key: str
     path: str

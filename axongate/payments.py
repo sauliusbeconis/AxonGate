@@ -19,6 +19,11 @@ except ImportError:  # pragma: no cover - x402 is a hard requirement in producti
     PaymentMiddlewareASGI = None
 
 try:
+    from x402.mechanisms.svm.exact import ExactSvmServerScheme
+except ImportError:  # pragma: no cover - only needed when a Solana payTo is configured
+    ExactSvmServerScheme = None
+
+try:
     from cdp.x402 import create_facilitator_config
 except ImportError:  # pragma: no cover
     create_facilitator_config = None
@@ -151,16 +156,23 @@ def bazaar_extension(product: Product, method: str) -> dict[str, Any] | None:
     return extension
 
 
-def accepts_descriptor(product: Product, resource: str) -> dict[str, Any]:
-    return {
-        "scheme": "exact",
-        "network": config.NETWORK,
-        "amount": atomic_amount(product.price),
-        "asset": config.BASE_USDC_ADDRESS,
-        "payTo": config.PAY_TO,
-        "maxTimeoutSeconds": 120,
-        "extra": {"name": "USD Coin", "version": "2"},
-    }
+def rails() -> tuple[config.Rail, ...]:
+    return tuple(r for r in config.RAILS if r.network.startswith("eip155:") or ExactSvmServerScheme is not None)
+
+
+def accepts_descriptors(product: Product) -> list[dict[str, Any]]:
+    return [
+        {
+            "scheme": "exact",
+            "network": rail.network,
+            "amount": atomic_amount(product.price),
+            "asset": rail.asset,
+            "payTo": rail.pay_to,
+            "maxTimeoutSeconds": 120,
+            "extra": dict(rail.extra),
+        }
+        for rail in rails()
+    ]
 
 
 def resource_listing() -> list[dict[str, Any]]:
@@ -179,7 +191,7 @@ def resource_listing() -> list[dict[str, Any]]:
             "description": product.summary,
             "price_usdc": str(product.price),
             "tags": list(product.tags),
-            "accepts": [accepts_descriptor(product, resource)],
+            "accepts": accepts_descriptors(product),
             "input": {"schema": _input_schema(product.key), "example": INPUTS[product.key][2]},
             "output": {"example": OUTPUT_EXAMPLES[product.key]},
         })
@@ -194,8 +206,8 @@ def _unpaid_body(product: Product):
                 "error": "payment_required",
                 "product": product.key,
                 "price_usdc": str(product.price),
-                "network": config.NETWORK,
-                "how_to_pay": "Retry with an x402 PAYMENT-SIGNATURE header (exact scheme, USDC on Base). Any x402 client works.",
+                "networks": [r.network for r in rails()],
+                "how_to_pay": f"Retry with an x402 PAYMENT-SIGNATURE header (exact scheme, USDC on {config.NETWORK_LABELS}). Any x402 client works.",
                 "docs": f"{config.PUBLIC_BASE_URL}/docs",
                 "catalog": f"{config.PUBLIC_BASE_URL}/.well-known/x402",
             },
@@ -212,13 +224,10 @@ def _discoverable(product: Product, method: str, path: str) -> bool:
 def _route(product: Product, method: str, path: str) -> RouteConfig:
     resource = f"{config.PUBLIC_BASE_URL}{path}"
     return RouteConfig(
-        accepts=PaymentOption(
-            scheme="exact",
-            pay_to=config.PAY_TO,
-            price=f"${product.price}",
-            network=config.NETWORK,
-            max_timeout_seconds=120,
-        ),
+        accepts=[
+            PaymentOption(scheme="exact", pay_to=rail.pay_to, price=f"${product.price}", network=rail.network, max_timeout_seconds=120)
+            for rail in rails()
+        ],
         resource=resource,
         description=product.summary,
         mime_type="application/json",
@@ -259,7 +268,8 @@ def install(app) -> bool:
     else:
         facilitator = HTTPFacilitatorClient(FacilitatorConfig(url=config.PAYAI_FACILITATOR_URL, timeout=30.0))
     server = x402ResourceServer(facilitator)
-    server.register(config.NETWORK, ExactEvmServerScheme())
+    for rail in rails():
+        server.register(rail.network, ExactEvmServerScheme() if rail.network.startswith("eip155:") else ExactSvmServerScheme())
     server.register_extension(bazaar_resource_server_extension)
     app.add_middleware(PaymentMiddlewareASGI, routes=paid_routes(), server=server)
     return True

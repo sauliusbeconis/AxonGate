@@ -338,7 +338,7 @@ def _operator_ok(request: Request) -> bool:
 async def metrics(request: Request):
     if not _operator_ok(request):
         return error(401, "unauthorized", "operator token required")
-    buckets = ["http", "challenges", "challenge_paths", "paid_attempts", "settled", "revenue_micro_usdc", "supplier_cost_micro_usd", "paid_failures", "clients"]
+    buckets = ["http", "challenges", "challenge_paths", "paid_attempts", "settled", "settled_networks", "revenue_micro_usdc", "supplier_cost_micro_usd", "paid_failures", "clients"]
     data = {b: await store.read_counters(b) for b in buckets}
     total_rev = sum(data["revenue_micro_usdc"].get("total", {}).values()) / 1e6
     total_cost = sum(data["supplier_cost_micro_usd"].get("total", {}).values()) / 1e6
@@ -348,11 +348,13 @@ async def metrics(request: Request):
         "store": store.backend,
         "redis_ok": await store.ping(),
         "facilitator": payments.facilitator_label(),
+        "networks": [r.network for r in payments.rails()],
         "summary": {
             "revenue_usdc": round(total_rev, 6),
             "supplier_cost_usd": round(total_cost, 6),
             "gross_margin_usd": round(total_rev - total_cost, 6),
             "settled_calls": data["settled"].get("total", {}),
+            "settled_by_network": data["settled_networks"].get("total", {}),
             "challenges": data["challenges"].get("total", {}),
         },
         "top_clients_on_paid_routes": dict(top_clients),

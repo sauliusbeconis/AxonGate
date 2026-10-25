@@ -13,8 +13,12 @@ DESCRIPTION = (
     "AxonGate gives autonomous agents safe, pay-per-call web access: read any public page as clean Markdown, "
     "search the live web, get grounded answers and fact-check claims. Every page is screened for prompt "
     "injection, and every quote in an answer or verdict is checked verbatim against the fetched source. "
-    "No account or API key: pay per call in USDC on Base over x402."
+    f"No account or API key: pay per call in USDC on {config.NETWORK_LABELS} over x402."
 )
+
+
+def _networks() -> list[dict[str, str]]:
+    return [{"network": r.network, "name": r.label, "asset": r.asset, "pay_to": r.pay_to} for r in payments.rails()]
 
 
 def _resource(key: str) -> str:
@@ -27,6 +31,7 @@ def pricing() -> dict[str, Any]:
         "network": config.NETWORK,
         "asset": config.BASE_USDC_ADDRESS,
         "pay_to": config.PAY_TO,
+        "networks": _networks(),
         "protocol": "x402 v2, exact scheme",
         "facilitator": payments.facilitator_label(),
         "billing": "Charged only when the call succeeds (HTTP 2xx). Errors are never settled.",
@@ -76,7 +81,7 @@ def manifest() -> dict[str, Any]:
         "agent_name": "AxonGate",
         "basename": "axongate.base.eth",
         "payment_protocol": "x402",
-        "supported_networks": ["base-mainnet"],
+        "supported_networks": [r.network for r in payments.rails()],
         "identity": {"name": "AxonGate", "basename": "axongate.base.eth", "vault_address": config.PAY_TO, "version": config.VERSION, "status": "active"},
         "service": {
             "name": TAGLINE,
@@ -90,7 +95,7 @@ def manifest() -> dict[str, Any]:
             {"name": p.title, "url": _resource(p.key), "methods": list(payments.product_methods(p)), "price_usdc": str(p.price), "description": p.summary}
             for p in PRODUCTS.values()
         ],
-        "payment": {"protocol": "x402", "version": 2, "scheme": "exact", "network": config.NETWORK, "asset": config.BASE_USDC_ADDRESS, "pay_to": config.PAY_TO},
+        "payment": {"protocol": "x402", "version": 2, "scheme": "exact", "network": config.NETWORK, "asset": config.BASE_USDC_ADDRESS, "pay_to": config.PAY_TO, "networks": _networks()},
         "links": {"docs": f"{config.PUBLIC_BASE_URL}/docs", "llms_txt": f"{config.PUBLIC_BASE_URL}/llms.txt", "openapi": f"{config.PUBLIC_BASE_URL}/openapi.json", "source": config.GITHUB_REPO_URL},
     }
 
@@ -111,7 +116,7 @@ def agent_card() -> dict[str, Any]:
             {"id": p.key, "name": p.title, "description": p.summary, "tags": list(p.tags), "examples": [str(payments.INPUTS[p.key][2])]}
             for p in PRODUCTS.values()
         ],
-        "payments": {"x402": {"network": config.NETWORK, "asset": config.BASE_USDC_ADDRESS, "payTo": config.PAY_TO, "catalog": f"{config.PUBLIC_BASE_URL}/.well-known/x402"}},
+        "payments": {"x402": {"network": config.NETWORK, "asset": config.BASE_USDC_ADDRESS, "payTo": config.PAY_TO, "networks": _networks(), "catalog": f"{config.PUBLIC_BASE_URL}/.well-known/x402"}},
     }
 
 
@@ -121,7 +126,7 @@ def llms_txt() -> str:
         "",
         f"> {DESCRIPTION}",
         "",
-        "## Endpoints (pay per call, USDC on Base, x402 v2 exact scheme)",
+        f"## Endpoints (pay per call, USDC on {config.NETWORK_LABELS}, x402 v2 exact scheme)",
         "",
     ]
     for p in PRODUCTS.values():

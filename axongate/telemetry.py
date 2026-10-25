@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import re
 import time
 
@@ -16,6 +18,14 @@ for _legacy, _key in config.LEGACY_ALIASES.items():
     _PATH_PRODUCT[_legacy] = _key
     for _source in config.SOURCE_ALIAS_PATHS:
         _PATH_PRODUCT[f"/from/{_source}{_legacy}"] = _key
+
+def _settlement(header: bytes) -> tuple[str, str]:
+    try:
+        data = json.loads(base64.b64decode(header))
+        return str(data.get("network") or ""), str(data.get("transaction") or "")
+    except Exception:
+        return "", ""
+
 
 _BOT_TOKEN = re.compile(r"(?:compatible;\s*)?([A-Za-z][\w.\-]{1,40})/[\d.]+")
 
@@ -64,12 +74,15 @@ class TelemetryMiddleware:
         product = _PATH_PRODUCT.get(path)
         has_payment = "payment-signature" in headers or "x-payment" in headers
         started = time.monotonic()
-        status_holder = {"status": 500, "settled": False}
+        status_holder = {"status": 500, "settled": False, "network": "", "tx": ""}
 
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 status_holder["status"] = message["status"]
-                status_holder["settled"] = any(k.lower() in (b"payment-response", b"x-payment-response") for k, _ in message.get("headers") or [])
+                for key, value in message.get("headers") or []:
+                    if key.lower() in (b"payment-response", b"x-payment-response"):
+                        status_holder["settled"] = True
+                        status_holder["network"], status_holder["tx"] = _settlement(value)
             await send(message)
 
         try:
@@ -89,12 +102,15 @@ class TelemetryMiddleware:
                             price = PRODUCTS[product].price
                             await store.incr("settled", product)
                             await store.incr("revenue_micro_usdc", product, int(price * 1_000_000))
+                            await store.incr("settled_networks", status_holder["network"] or "unknown")
                             await store.push_event("paid_events", {
                                 "ts": int(time.time()),
                                 "product": product,
                                 "path": path,
                                 "price_usdc": str(price),
                                 "client": family,
+                                "network": status_holder["network"],
+                                "tx": status_holder["tx"],
                                 "elapsed_ms": int((time.monotonic() - started) * 1000),
                             })
                         else:
