@@ -24,7 +24,7 @@ on success.
 | Claim Verify | `POST /v1/verify` | $0.02 |
 | Token Check | `GET/POST /v1/token-check` | $0.01 |
 
-MCP server: [`mcp/`](mcp) (`npx axongate-mcp`).
+MCP: hosted at `https://api.axongate.one/mcp` (each tool call paid via the x402 MCP transport), or run locally with [`mcp/`](mcp) (`npx axongate-mcp`).
 
 ## Why v2
 
@@ -77,6 +77,7 @@ axongate/
   research.py    answer/verify pipeline and quote verification
   safety.py      rule-based prompt-injection scanner
   tokens.py      token-check verdicts (GoPlus Security + honeypot.is simulation)
+  mcp_server.py  hosted MCP endpoint (/mcp) with per-call x402 payment
   llm.py         structured-output chat client
   store.py       Redis cache/counters with in-memory fallback, rate limiter
   telemetry.py   ASGI middleware: rate limits, challenges, settlements, revenue
@@ -85,7 +86,7 @@ axongate/
 axongate_gateway.py   entry point kept for `uvicorn axongate_gateway:app`
 scripts/ci_smoke.py   offline test suite (x402 surface + mocked handlers)
 scripts/paid_smoke.py real paid calls from a CDP account (operator tool)
-mcp/                  MCP server, published to npm as axongate-mcp
+mcp/                  local MCP server, published to npm as axongate-mcp
 examples/             Python client, curl
 ```
 

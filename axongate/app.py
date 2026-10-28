@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 
-from . import config, discovery, pages, payments, research, safety
+from . import config, discovery, mcp_server, pages, payments, research, safety
 from .config import PRODUCTS
 from .fetcher import FetchError, fetch_page, new_client
 from .llm import LLMError
@@ -310,6 +310,29 @@ async def llms_txt():
     return PlainTextResponse(discovery.llms_txt(), headers={"Cache-Control": "public, max-age=300"})
 
 
+MCP_CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "content-type, accept, authorization, mcp-protocol-version, mcp-session-id",
+    "Access-Control-Expose-Headers": "mcp-session-id",
+}
+
+
+@app.api_route("/mcp", methods=["GET", "POST", "DELETE", "OPTIONS"], include_in_schema=False)
+async def mcp_endpoint(request: Request):
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=MCP_CORS)
+    response = await mcp_server.handle(request, HANDLERS)
+    response.headers.update(MCP_CORS)
+    return response
+
+
+@app.get("/.well-known/mcp/server-card.json", include_in_schema=False)
+@app.get("/.well-known/mcp.json", include_in_schema=False)
+async def mcp_server_card():
+    return JSONResponse(mcp_server.server_card(), headers={"Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*"})
+
+
 @app.get("/.well-known/x402", include_in_schema=False)
 @app.get("/.well-known/x402.json", include_in_schema=False)
 async def well_known_x402():
@@ -401,7 +424,7 @@ def _operator_ok(request: Request) -> bool:
 async def metrics(request: Request):
     if not _operator_ok(request):
         return error(401, "unauthorized", "operator token required")
-    buckets = ["http", "challenges", "challenge_paths", "paid_attempts", "settled", "settled_networks", "revenue_micro_usdc", "supplier_cost_micro_usd", "paid_failures", "clients"]
+    buckets = ["http", "challenges", "challenge_paths", "paid_attempts", "settled", "settled_networks", "revenue_micro_usdc", "supplier_cost_micro_usd", "paid_failures", "mcp", "clients"]
     data = {b: await store.read_counters(b) for b in buckets}
     total_rev = sum(data["revenue_micro_usdc"].get("total", {}).values()) / 1e6
     total_cost = sum(data["supplier_cost_micro_usd"].get("total", {}).values()) / 1e6

@@ -79,6 +79,21 @@ async def part_a() -> None:
         check(r.status_code == 200 and "summary" in r.json(), "/metrics works with operator token")
         check(r.json()["summary"]["challenges"].get("read", 0) >= 1, "challenges are counted")
 
+        rpc = lambda i, method, params=None: c.post("/mcp", json={"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}})
+        r = await rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "ci", "version": "1"}})
+        check(r.status_code == 200 and r.json()["result"]["protocolVersion"] == "2025-06-18", "MCP initialize negotiates the protocol version")
+        r = await c.post("/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"})
+        check(r.status_code == 202, "MCP notification -> 202")
+        tools = (await rpc(2, "tools/list")).json()["result"]["tools"]
+        check(len(tools) == len(PRODUCTS) and all(t["inputSchema"]["type"] == "object" for t in tools), "MCP lists one tool per product")
+        result = (await rpc(3, "tools/call", {"name": "axongate_token_check", "arguments": {"address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"}})).json()["result"]
+        required = result.get("structuredContent") or {}
+        check(result["isError"] and required.get("accepts", [{}])[0].get("amount") == "10000", "MCP unpaid tools/call returns x402 PaymentRequired")
+        check("bazaar" in (required.get("extensions") or {}), "MCP PaymentRequired carries Bazaar MCP metadata")
+        check("error" in (await rpc(4, "tools/call", {"name": "nope"})).json(), "MCP unknown tool -> JSON-RPC error")
+        check((await c.get("/mcp")).status_code == 405, "MCP GET -> 405 (no SSE stream)")
+        check((await c.get("/.well-known/mcp/server-card.json")).json()["transport"]["url"].endswith("/mcp"), "MCP server card")
+
 
 async def part_b() -> None:
     from axongate import app as app_module, fetcher, research, safety
@@ -174,9 +189,51 @@ async def part_b() -> None:
         check((await c.post("/v1/scan", json={})).status_code == 400, "scan requires text")
         check((await c.post("/v1/verify", json={})).status_code == 400, "verify requires claim")
 
+    await mcp_paid_flow(app)
+
     check(research.quote_found("reserved for future use", "It is **reserved** for future   use."), "quote matching tolerates markdown/whitespace")
     check(not research.quote_found("reserved for past use", "reserved for future use"), "quote matching rejects altered quotes")
     check(safety.scan_text("a​b\U000e0041")["risk"] != "low", "scan catches invisible unicode")
+
+
+async def mcp_paid_flow(app) -> None:
+    """MCP tools/call with an x402 payment in _meta, against a fake resource server."""
+    from types import SimpleNamespace
+
+    from axongate import mcp_server, payments
+
+    settled: list[str] = []
+
+    class FakeServer:
+        _initialized = True
+
+        def build_payment_requirements(self, config):
+            return [SimpleNamespace(network=config.network, amount="10000")]
+
+        def find_matching_requirements(self, accepts, payload):
+            return accepts[0]
+
+        async def verify_payment(self, payload, requirements):
+            return SimpleNamespace(is_valid=True)
+
+        async def settle_payment(self, payload, requirements):
+            settled.append(requirements.network)
+            return SimpleNamespace(success=True, network=requirements.network, transaction="0xfeed", model_dump=lambda **_: {"success": True, "transaction": "0xfeed"})
+
+        async def create_payment_required_response(self, accepts, resource, error, extensions):
+            return {"x402Version": 2, "error": error, "accepts": [{"amount": a.amount} for a in accepts]}
+
+    payments.SERVER = FakeServer()
+    mcp_server._wrappers.clear()
+    payment = {"x402Version": 2, "payload": {"signature": "0x"}, "accepted": {"scheme": "exact", "network": "eip155:8453", "asset": "0x", "amount": "10000", "payTo": "0x", "maxTimeoutSeconds": 120}}
+    async with await client_for(app) as c:
+        call = lambda args: c.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "axongate_token_check", "arguments": args, "_meta": {"x402/payment": payment}}})
+        result = (await call({"address": "0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed"})).json()["result"]
+        check(not result["isError"] and result["structuredContent"]["verdict"] == "avoid", "MCP paid tools/call runs the tool")
+        check(result["_meta"]["x402/payment-response"]["transaction"] == "0xfeed" and len(settled) == 1, "MCP paid call settles once")
+        result = (await call({"address": "not-an-address"})).json()["result"]
+        check(result["isError"] and len(settled) == 1, "MCP failed tool call is not settled")
+    payments.SERVER = None
 
 
 def main() -> int:

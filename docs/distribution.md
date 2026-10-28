@@ -79,6 +79,11 @@ The MCP server lives in `mcp/` and is published to npm as `axongate-mcp`.
    (https://github.com/modelcontextprotocol/registry), then
    `cd mcp && mcp-publisher login github && mcp-publisher publish`. The
    `mcpName` in `package.json` must match `name` in `server.json`.
-3. Directories that index the official registry or npm (Smithery, Glama,
-   PulseMCP, mcp.so) pick it up from there; Smithery and Glama also accept a
-   GitHub URL submission.
+3. Directories that index the official registry or npm (PulseMCP, mcp.so)
+   pick it up from there. Glama takes a GitHub URL submission ("Runs from
+   source"). Smithery only lists hosted servers: submit
+   `https://api.axongate.one/mcp` (served by `axongate/mcp_server.py`;
+   server card at `/.well-known/mcp/server-card.json`).
+
+Published 2026-10-28: npm `axongate-mcp@2.1.0`, registry
+`io.github.sauliusbeconis/axongate`.

@@ -295,6 +295,10 @@ def paid_routes() -> dict[str, RouteConfig]:
     return routes
 
 
+# The resource server built by install(); the hosted MCP endpoint settles through it too.
+SERVER = None
+
+
 def facilitator_label() -> str:
     return "coinbase-cdp" if config.FACILITATOR == "cdp" and create_facilitator_config else "payai"
 
@@ -312,4 +316,6 @@ def install(app) -> bool:
         server.register(rail.network, ExactEvmServerScheme() if rail.network.startswith("eip155:") else ExactSvmServerScheme())
     server.register_extension(bazaar_resource_server_extension)
     app.add_middleware(PaymentMiddlewareASGI, routes=paid_routes(), server=server)
+    global SERVER
+    SERVER = server
     return True
