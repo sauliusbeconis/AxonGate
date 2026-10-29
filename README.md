@@ -24,7 +24,7 @@ on success.
 | Claim Verify | `POST /v1/verify` | $0.02 |
 | Token Check | `GET/POST /v1/token-check` | $0.01 |
 
-MCP: hosted at `https://api.axongate.one/mcp` (each tool call paid via the x402 MCP transport), or run locally with [`mcp/`](mcp) (`npx axongate-mcp`).
+MCP: hosted at `https://api.axongate.one/mcp` (each tool call paid via the x402 MCP transport), or run locally with [`mcp/`](mcp) (`npx axongate-mcp`). Agent skill: [`skills/axongate`](skills/axongate/SKILL.md).
 
 ## Why v2
 
@@ -87,6 +87,7 @@ axongate_gateway.py   entry point kept for `uvicorn axongate_gateway:app`
 scripts/ci_smoke.py   offline test suite (x402 surface + mocked handlers)
 scripts/paid_smoke.py real paid calls from a CDP account (operator tool)
 mcp/                  local MCP server, published to npm as axongate-mcp
+skills/axongate/      agent skill (SKILL.md) for the MCP tools; listed on skill marketplaces
 examples/             Python client, curl
 ```
 
