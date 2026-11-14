@@ -29,8 +29,11 @@ MCP: hosted at `https://api.axongate.one/mcp` (each tool call paid via the x402 
 ## Why v2
 
 v1 (Proof Packs, Stripe bundles, tiered extraction at $0.012–$1.00) logged
-~40k payment challenges and zero outside paid calls in six months. Most of that
-traffic was x402 directories crawling each other. The October 2026 relaunch is
+~40k payment challenges in six months but only 18 outside paid calls, from 2
+wallets (on-chain, Apr 30 – Jun 18 2026), and no Stripe sales. Most of the
+traffic was x402 directories crawling each other. v1 also ran a per-request
+margin guard (live Base gas + supplier cost against a profit floor); v2 drops it
+for fixed market prices and per-product margin tracking in `/metrics`. The October 2026 relaunch is
 built from what agents actually pay for in the Coinbase Bazaar (30-day paid
 calls by category):
 
