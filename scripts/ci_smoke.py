@@ -46,6 +46,16 @@ async def part_a() -> None:
             r = await c.get(path)
             check(r.status_code == 200, f"GET {path} -> 200")
 
+        spec = (await c.get("/openapi.json")).json()
+        for product in PRODUCTS.values():
+            for method in payments.product_methods(product):
+                op = spec["paths"].get(product.path, {}).get(method.lower(), {})
+                ok = op.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {})
+                check(bool(ok.get("schema", {}).get("properties")), f"OpenAPI {method} {product.path} documents its 200 schema")
+                check("402" in op.get("responses", {}), f"OpenAPI {method} {product.path} documents 402")
+                has_input = bool(op.get("requestBody")) if method == "POST" else bool(op.get("parameters"))
+                check(has_input, f"OpenAPI {method} {product.path} documents its input")
+
         doc = (await c.get("/.well-known/x402")).json()
         check(len(doc["resources"]) == len(PRODUCTS), "/.well-known/x402 lists every product")
 

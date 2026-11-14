@@ -13,7 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 
-from . import config, discovery, mcp_server, pages, payments, research, safety
+from . import config, discovery, mcp_server, openapi_spec, pages, payments, research, safety
 from .config import PRODUCTS
 from .fetcher import FetchError, fetch_page, new_client
 from .llm import LLMError
@@ -39,6 +39,7 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
     lifespan=lifespan,
+    contact=openapi_spec.info_extra()["contact"],
 )
 
 
@@ -267,6 +268,7 @@ for _product in PRODUCTS.values():
             tags=["paid"],
             summary=f"{_product.title} (${_product.price} USDC)",
             description=_product.summary,
+            openapi_extra=openapi_spec.operation_extra(_product, _method),
         )
 
 # Directory probes pay legacy URLs with no input at all. Rather than return a non-billable 400,
